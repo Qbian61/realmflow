@@ -1,0 +1,562 @@
+.global-workbench-layout {
+  position: relative;
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr);
+  overflow: hidden;
+  background: var(--sidebar);
+}
+
+.global-workbench-layout.open {
+  grid-template-columns:
+    minmax(548px, 1fr)
+    4px
+    minmax(448px, var(--global-workbench-width));
+}
+
+.global-workbench-layout.open .app-content {
+  margin-right: 0;
+}
+
+.global-workbench-layout.open.maximized {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.global-workbench-layout.open.maximized .global-workbench-resizer {
+  display: none;
+}
+
+.global-workbench-layout.open.maximized .global-workbench {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  width: calc(100% - 16px);
+  margin: 8px;
+}
+
+.global-workbench-layout.maximized .sidebar-edge-toggle,
+.global-workbench-layout.maximized .global-workbench-tools {
+  display: none;
+}
+
+.global-workbench-layout.maximized .global-workbench-header {
+  padding-left: 76px;
+}
+
+.global-workbench-layout.maximized .global-workbench-header-actions {
+  margin-right: 0;
+}
+
+.global-workbench-page {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--sidebar);
+}
+
+.global-workbench-tools {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.global-workbench-tools button,
+.global-workbench-header button,
+.global-workbench-tabs button,
+.global-web-workbench button {
+  font: inherit;
+}
+
+.global-workbench-tools button {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  padding: 0;
+  color: #353535;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.global-workbench-tools button:hover {
+  color: #202020;
+  background: #ededed;
+}
+
+.global-workbench-resizer {
+  position: relative;
+  z-index: 22;
+  width: 4px;
+  cursor: col-resize;
+  background: transparent;
+}
+
+.global-workbench-resizer::after {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 1.5px;
+  width: 1px;
+  background: linear-gradient(to bottom, transparent 0%, var(--ink) 50%, transparent 100%);
+  content: '';
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.global-workbench-resizer:hover::after,
+.global-workbench-resizer:focus-visible::after,
+body.resizing-global-workbench .global-workbench-resizer::after {
+  opacity: 1;
+}
+
+body.resizing-global-workbench {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.global-workbench {
+  position: relative;
+  z-index: 20;
+  display: grid;
+  width: calc(100% - 8px);
+  min-width: 440px;
+  min-height: 0;
+  grid-template-rows: 48px minmax(0, 1fr);
+  margin: 8px 8px 8px 0;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #e1e1e1;
+  border-radius: 12px;
+  box-shadow: none;
+}
+
+.global-workbench.empty {
+  grid-template-rows: 48px minmax(0, 1fr);
+}
+
+.global-workbench[hidden],
+.global-workbench-resizer[hidden],
+.global-workspace-tab-content[hidden],
+.global-terminal-tab-content[hidden] {
+  display: none;
+}
+
+.global-workbench-header {
+  position: relative;
+  display: flex;
+  height: 48px;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px;
+  border-bottom: 1px solid #e5e5e5;
+}
+
+.global-workbench-tabbar {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  flex: 1 1 0;
+  align-items: stretch;
+  overflow: hidden;
+  background: #fff;
+}
+
+.global-workbench-add {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  flex: 0 0 42px;
+  place-items: center;
+  background: #fff;
+}
+
+.global-workbench-header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.global-workbench-add > button,
+.global-workbench-header-actions button {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  padding: 0;
+  color: #3b3b3b;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.global-workbench-add > button:hover,
+.global-workbench-header-actions button:hover {
+  background: #ededed;
+}
+
+.global-workbench-empty {
+  display: grid;
+  min-height: 0;
+  align-content: start;
+  gap: 26px;
+  padding: clamp(72px, 16vh, 150px) clamp(24px, 8vw, 72px);
+  color: #2d2d2d;
+}
+
+.global-workbench-empty > p {
+  margin: 0;
+  color: #999;
+  font-size: 14px;
+}
+
+.global-workbench-empty > div {
+  display: grid;
+  gap: 8px;
+}
+
+.global-workbench-empty button {
+  display: grid;
+  min-width: 0;
+  min-height: 44px;
+  grid-template-columns: 26px max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 0 6px;
+  color: #222;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.global-workbench-empty button:hover {
+  background: #f4f4f4;
+}
+
+.global-workbench-empty strong {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.global-workbench-empty button span {
+  overflow: hidden;
+  color: #999;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.global-workbench-tabs {
+  display: flex;
+  width: max-content;
+  max-width: calc(100% - 42px);
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow-x: auto;
+  padding-left: 8px;
+  background: #fff;
+  scrollbar-width: thin;
+}
+
+.global-workbench-tabs:empty {
+  width: 0;
+  padding-left: 0;
+}
+
+.global-workbench-tabs > div {
+  display: flex;
+  min-width: 0;
+  flex: 0 0 auto;
+  align-items: center;
+  color: #6b6b6b;
+  border-right: 0;
+}
+
+.global-workbench-tabs > div.active {
+  color: #202020;
+  background: #fff;
+  box-shadow: inset 0 -2px #333;
+}
+
+.global-workbench-tabs button {
+  height: 47px;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.global-workbench-tabs button[role='tab'] {
+  display: flex;
+  max-width: 180px;
+  align-items: center;
+  gap: 6px;
+  padding-left: 12px;
+}
+
+.global-workbench-tabs button[role='tab'] span {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.global-workbench-tabs > div > button:last-child {
+  display: grid;
+  width: 28px;
+  place-items: center;
+}
+
+.global-workspace-tab-content {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.global-terminal-tab-content {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #fff;
+}
+
+.global-terminal-loading {
+  display: grid;
+  height: 100%;
+  place-items: center;
+  color: #888;
+  font-size: 12px;
+}
+
+.global-terminal-pane {
+  width: 100%;
+  height: 100%;
+  padding: 10px 12px;
+}
+
+.global-terminal-pane .xterm {
+  height: 100%;
+}
+
+.global-workspace-tab-content > .artifact-workbench {
+  height: 100%;
+  min-height: 0;
+}
+
+.global-workspace-tab-content
+  > .artifact-workbench
+  > .artifact-workbench-header {
+  display: none;
+}
+
+.global-web-workbench {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  background: #fff;
+}
+
+.global-web-workbench form {
+  display: grid;
+  height: 42px;
+  grid-template-columns: 30px 30px 30px minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 3px;
+  padding: 5px 8px;
+  border-bottom: 1px solid #e2e2e2;
+}
+
+.global-web-workbench form button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  padding: 0;
+  color: #606060;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.global-web-workbench form button:hover:not(:disabled) {
+  color: #202020;
+  background: #ededed;
+}
+
+.global-web-workbench form button:disabled {
+  color: #c4c4c4;
+  cursor: default;
+}
+
+.global-web-workbench input {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 0 9px;
+  color: #333;
+  background: #f5f5f5;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  outline: none;
+  font: inherit;
+  font-size: 11px;
+}
+
+.global-web-workbench input:focus {
+  background: #fff;
+  border-color: #aaa;
+}
+
+.global-web-error {
+  position: absolute;
+  inset: 42px 0 0;
+  z-index: 2;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  padding: 30px;
+  color: #777;
+  background: #fff;
+  text-align: center;
+}
+
+.global-web-error strong {
+  color: #333;
+  font-size: 14px;
+}
+
+.global-web-error span {
+  font-size: 12px;
+}
+
+.global-url-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 140;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(20, 20, 20, 0.24);
+  backdrop-filter: blur(3px);
+}
+
+.global-url-dialog {
+  display: grid;
+  width: min(430px, 100%);
+  gap: 12px;
+  padding: 22px;
+  background: #fff;
+  border: 1px solid #d8d8d8;
+  border-radius: 8px;
+  box-shadow: 0 22px 55px rgba(0, 0, 0, 0.18);
+}
+
+.global-url-dialog > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.global-url-dialog h2 {
+  margin: 0;
+  color: #262626;
+  font-size: 16px;
+}
+
+.global-url-dialog label {
+  margin-top: 4px;
+  color: #555;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.global-url-dialog input {
+  width: 100%;
+  height: 38px;
+  padding: 0 11px;
+  color: #282828;
+  background: #fff;
+  border: 1px solid #ccc;
+  border-radius: 5px;
+  outline: none;
+  font: inherit;
+  font-size: 13px;
+}
+
+.global-url-dialog input:focus {
+  border-color: #777;
+}
+
+.global-url-dialog p {
+  margin: 0;
+  color: #b42318;
+  font-size: 12px;
+}
+
+.global-url-dialog footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.global-url-dialog footer button {
+  min-width: 68px;
+  height: 34px;
+  padding: 0 14px;
+  color: #333;
+  background: #fff;
+  border: 1px solid #d2d2d2;
+  border-radius: 5px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+
+.global-url-dialog footer button[type='submit'] {
+  color: #fff;
+  background: #292929;
+  border-color: #292929;
+}
+
+.global-url-dialog footer button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+@media (max-width: 1100px) {
+  .global-workbench-layout.open {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .global-workbench-resizer {
+    display: none;
+  }
+
+  .global-workbench-layout.open .app-content {
+    margin-right: 8px;
+  }
+
+  .global-workbench {
+    position: absolute;
+    inset: 0;
+    z-index: 30;
+  }
+}

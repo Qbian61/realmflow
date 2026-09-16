@@ -1,0 +1,33 @@
+appId: com.realmflow.desktop
+productName: RealmFlow
+directories:
+  output: release
+files:
+  - out/**/*
+  - package.json
+extraResources:
+  - from: logo.png
+    to: logo.png
+  - from: python-service
+    to: python-service
+    filter:
+      - "**/*"
+      - "!tests/**/*"
+  - from: resources/sidecar
+    to: sidecar
+    filter:
+      - "**/*"
+asar: true
+asarUnpack:
+  - node_modules/node-pty/**/*
+mac:
+  icon: logo.png
+  target:
+    - dmg
+    - zip
+win:
+  target:
+    - nsis
+linux:
+  target:
+    - AppImage

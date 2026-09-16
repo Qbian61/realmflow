@@ -1,0 +1,84 @@
+html.native-overlay-root,
+body.native-overlay-body,
+body.native-overlay-body #root {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+}
+
+body.native-overlay-body {
+  display: grid;
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+.native-workbench-menu {
+  display: grid;
+  width: 100%;
+  min-height: 100vh;
+  padding: 10px;
+  color: #292929;
+  background: #fff;
+  border: 1px solid #e2e2e2;
+  border-radius: 10px;
+  box-shadow: 0 16px 38px rgba(0, 0, 0, 0.14);
+  font-family:
+    Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+.native-workbench-menu label {
+  display: grid;
+  height: 36px;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+}
+
+.native-workbench-menu input {
+  min-width: 0;
+  padding: 0;
+  color: #292929;
+  background: transparent;
+  border: 0;
+  outline: none;
+  font: inherit;
+  font-size: 13px;
+}
+
+.native-workbench-menu kbd {
+  color: #8a8a8a;
+  font-family: inherit;
+  font-size: 11px;
+}
+
+.native-workbench-menu-divider {
+  height: 1px;
+  margin: 4px 0 6px;
+  background: #e7e7e7;
+}
+
+.native-workbench-menu > button {
+  display: grid;
+  height: 34px;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  padding: 0 8px;
+  color: #292929;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+}
+
+.native-workbench-menu > button:hover,
+.native-workbench-menu > button:focus-visible {
+  background: #f1f1f1;
+  outline: none;
+}
