@@ -9,22 +9,12 @@ import {
 } from 'lucide-react'
 import { useState } from 'react'
 import { Navigate, useParams } from 'react-router-dom'
-import type { RequirementStageId } from '../../shared/workspace'
+import type { RequirementStageId } from '../domain/requirement'
+import type {
+  WorkspaceRequirement,
+  WorkspaceSpace
+} from '../domain/workspace'
 import { useWorkbench } from '../features/workbench/WorkbenchProvider'
-
-export type WorkspaceSpace = {
-  path: string
-  label: string
-  description: string
-}
-
-export type WorkspaceRequirement = {
-  id: string
-  title: string
-  stage?: RequirementStageId
-  status?: 'pending' | 'active' | 'completed'
-  updatedAt?: number
-}
 
 type RequirementDetailPageProps = {
   spaces: WorkspaceSpace[]

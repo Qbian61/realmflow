@@ -65,7 +65,9 @@ a {
 }
 
 .app-content {
+  display: grid;
   grid-column: 2;
+  grid-template-rows: minmax(0, 1fr);
   min-width: 320px;
   min-height: 0;
   height: auto;
@@ -76,6 +78,28 @@ a {
   background: #fff;
   border: 1px solid #dedede;
   border-radius: 12px;
+}
+
+.app-content.has-status {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.app-content-body {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.persistence-notice {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  padding: 7px 14px;
+  color: #6b4700;
+  background: #fff8e6;
+  border-bottom: 1px solid #ead7a3;
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .sidebar {
@@ -759,6 +783,10 @@ a {
   overflow: hidden;
   color: #242424;
   background: #fff;
+}
+
+.space-detail-page.has-persistence-issue {
+  grid-template-rows: 64px auto minmax(0, 1fr);
 }
 
 .space-detail-tabs {

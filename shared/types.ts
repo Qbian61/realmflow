@@ -1,4 +1,5 @@
 import type { NativeOverlayApi } from './native-overlay'
+import type { PersistenceApi } from './persistence'
 import type { WorkspaceApi } from './workspace'
 import type { WebWorkbenchApi } from './workbench'
 import type { TerminalApi } from './terminal'
@@ -9,6 +10,7 @@ export interface RealmFlowApi {
   platform: NodeJS.Platform
   getSidecarStatus: () => Promise<SidecarStatus>
   quitApp: () => Promise<void>
+  persistence: PersistenceApi
   nativeOverlay?: NativeOverlayApi
   workspace: WorkspaceApi
   webWorkbench: WebWorkbenchApi

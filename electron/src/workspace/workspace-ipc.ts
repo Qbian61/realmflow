@@ -1,4 +1,9 @@
-import type { RequirementManifest, WriteWorkspaceFileInput } from '../../../shared/workspace'
+import { IPC_INVOKE_CHANNELS } from '../../../shared/ipc-contract'
+import {
+  requireRequirementManifest,
+  requireString,
+  requireWriteWorkspaceFileInput
+} from '../ipc/runtime-validation'
 import type { WorkspaceService } from './workspace-service'
 
 type InvokeHandler = (event: unknown, ...args: any[]) => unknown
@@ -26,14 +31,14 @@ export function registerWorkspaceIpc({
   dialog,
   shell
 }: WorkspaceIpcDependencies): void {
-  ipcMain.handle('workspace:choose-files', async () => {
+  ipcMain.handle(IPC_INVOKE_CHANNELS.workspaceChooseFiles, async () => {
     const selection = await dialog.showOpenDialog({
       properties: ['openFile', 'multiSelections']
     })
     if (selection.canceled || selection.filePaths.length === 0) return null
     return workspace.openSessionFiles(selection.filePaths)
   })
-  ipcMain.handle('workspace:choose-folder', async () => {
+  ipcMain.handle(IPC_INVOKE_CHANNELS.workspaceChooseFolder, async () => {
     const selection = await dialog.showOpenDialog({
       properties: ['openDirectory', 'createDirectory']
     })
@@ -41,52 +46,101 @@ export function registerWorkspaceIpc({
     return workspace.bindSessionDirectory(selection.filePaths[0])
   })
   ipcMain.handle(
-    'workspace:choose-directory',
-    async (_event, requirementId: string) => {
+    IPC_INVOKE_CHANNELS.workspaceChooseDirectory,
+    async (_event, requirementId: unknown) => {
+      const channel = IPC_INVOKE_CHANNELS.workspaceChooseDirectory
+      const validRequirementId = requireString(
+        requirementId,
+        channel,
+        'requirementId'
+      )
       const selection = await dialog.showOpenDialog({
         properties: ['openDirectory', 'createDirectory']
       })
       if (selection.canceled || selection.filePaths.length === 0) return null
-      return workspace.bindRequirement(requirementId, selection.filePaths[0])
+      return workspace.bindRequirement(
+        validRequirementId,
+        selection.filePaths[0]
+      )
     }
   )
   ipcMain.handle(
-    'workspace:get-binding',
-    (_event, requirementId: string) => workspace.getBinding(requirementId)
+    IPC_INVOKE_CHANNELS.workspaceGetBinding,
+    (_event, requirementId: unknown) => {
+      const channel = IPC_INVOKE_CHANNELS.workspaceGetBinding
+      return workspace.getBinding(
+        requireString(requirementId, channel, 'requirementId')
+      )
+    }
   )
   ipcMain.handle(
-    'workspace:list-directory',
-    (_event, requirementId: string, path = '') =>
-      workspace.listDirectory(requirementId, path)
+    IPC_INVOKE_CHANNELS.workspaceListDirectory,
+    (_event, requirementId: unknown, path: unknown = '') => {
+      const channel = IPC_INVOKE_CHANNELS.workspaceListDirectory
+      return workspace.listDirectory(
+        requireString(requirementId, channel, 'requirementId'),
+        requireString(path, channel, 'path', { allowEmpty: true })
+      )
+    }
   )
   ipcMain.handle(
-    'workspace:read-file',
-    (_event, requirementId: string, path: string) =>
-      workspace.readFile(requirementId, path)
+    IPC_INVOKE_CHANNELS.workspaceReadFile,
+    (_event, requirementId: unknown, path: unknown) => {
+      const channel = IPC_INVOKE_CHANNELS.workspaceReadFile
+      return workspace.readFile(
+        requireString(requirementId, channel, 'requirementId'),
+        requireString(path, channel, 'path')
+      )
+    }
   )
   ipcMain.handle(
-    'workspace:write-file',
-    (_event, input: WriteWorkspaceFileInput) => workspace.writeFile(input)
+    IPC_INVOKE_CHANNELS.workspaceWriteFile,
+    (_event, input: unknown) =>
+      workspace.writeFile(
+        requireWriteWorkspaceFileInput(
+          input,
+          IPC_INVOKE_CHANNELS.workspaceWriteFile
+        )
+      )
   )
   ipcMain.handle(
-    'workspace:read-manifest',
-    (_event, requirementId: string) => workspace.readManifest(requirementId)
+    IPC_INVOKE_CHANNELS.workspaceReadManifest,
+    (_event, requirementId: unknown) => {
+      const channel = IPC_INVOKE_CHANNELS.workspaceReadManifest
+      return workspace.readManifest(
+        requireString(requirementId, channel, 'requirementId')
+      )
+    }
   )
   ipcMain.handle(
-    'workspace:write-manifest',
-    (_event, requirementId: string, manifest: RequirementManifest) =>
-      workspace.writeManifest(requirementId, manifest)
+    IPC_INVOKE_CHANNELS.workspaceWriteManifest,
+    (_event, requirementId: unknown, manifest: unknown) => {
+      const channel = IPC_INVOKE_CHANNELS.workspaceWriteManifest
+      return workspace.writeManifest(
+        requireString(requirementId, channel, 'requirementId'),
+        requireRequirementManifest(manifest, channel)
+      )
+    }
   )
   ipcMain.handle(
-    'workspace:get-preview-url',
-    (_event, requirementId: string, path: string) =>
-      workspace.getPreviewUrl(requirementId, path)
+    IPC_INVOKE_CHANNELS.workspaceGetPreviewUrl,
+    (_event, requirementId: unknown, path: unknown) => {
+      const channel = IPC_INVOKE_CHANNELS.workspaceGetPreviewUrl
+      return workspace.getPreviewUrl(
+        requireString(requirementId, channel, 'requirementId'),
+        requireString(path, channel, 'path')
+      )
+    }
   )
   ipcMain.handle(
-    'workspace:show-item',
-    async (_event, requirementId: string, path: string) => {
+    IPC_INVOKE_CHANNELS.workspaceShowItem,
+    async (_event, requirementId: unknown, path: unknown) => {
+      const channel = IPC_INVOKE_CHANNELS.workspaceShowItem
       shell.showItemInFolder(
-        await workspace.resolvePreviewPath(requirementId, path)
+        await workspace.resolvePreviewPath(
+          requireString(requirementId, channel, 'requirementId'),
+          requireString(path, channel, 'path', { allowEmpty: true })
+        )
       )
     }
   )

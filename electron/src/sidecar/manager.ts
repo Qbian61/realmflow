@@ -4,9 +4,39 @@ import { createServer } from 'node:net'
 import { join } from 'node:path'
 import { app } from 'electron'
 import type { SidecarStatus } from '../../../shared/types'
+import { SidecarClient, type SidecarHealth } from './client'
 
 const HEALTH_RETRIES = 20
 const HEALTH_INTERVAL_MS = 250
+
+type HealthClient = {
+  getHealth: () => Promise<SidecarHealth>
+}
+
+type HealthWaitOptions = {
+  retries?: number
+  intervalMs?: number
+  delay?: (milliseconds: number) => Promise<void>
+}
+
+export async function waitUntilSidecarHealthy(
+  client: HealthClient,
+  {
+    retries = HEALTH_RETRIES,
+    intervalMs = HEALTH_INTERVAL_MS,
+    delay = wait
+  }: HealthWaitOptions = {}
+): Promise<boolean> {
+  for (let attempt = 0; attempt < retries; attempt += 1) {
+    try {
+      await client.getHealth()
+      return true
+    } catch {
+      if (attempt + 1 < retries) await delay(intervalMs)
+    }
+  }
+  return false
+}
 
 export class SidecarManager {
   private process: ChildProcessWithoutNullStreams | undefined
@@ -58,7 +88,8 @@ export class SidecarManager {
       this.status = 'error'
     })
 
-    this.status = (await this.waitUntilHealthy()) ? 'ready' : 'error'
+    const client = new SidecarClient(`http://127.0.0.1:${this.port}`)
+    this.status = (await waitUntilSidecarHealthy(client)) ? 'ready' : 'error'
   }
 
   stop(): void {
@@ -66,19 +97,6 @@ export class SidecarManager {
     this.process.kill('SIGTERM')
     this.process = undefined
     this.status = 'stopped'
-  }
-
-  private async waitUntilHealthy(): Promise<boolean> {
-    for (let attempt = 0; attempt < HEALTH_RETRIES; attempt += 1) {
-      try {
-        const response = await fetch(`http://127.0.0.1:${this.port}/health`)
-        if (response.ok) return true
-      } catch {
-        // The process may still be importing dependencies.
-      }
-      await new Promise((resolve) => setTimeout(resolve, HEALTH_INTERVAL_MS))
-    }
-    return false
   }
 
   private reservePort(): Promise<number> {
@@ -101,4 +119,8 @@ export class SidecarManager {
     const extension = process.platform === 'win32' ? '.exe' : ''
     return `realmflow-agent-${process.platform}-${process.arch}${extension}`
   }
+}
+
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }

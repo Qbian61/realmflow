@@ -1,6 +1,6 @@
 import { ChevronDown, MessageCircle } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
-import type { WorkspaceSpace } from '../../pages/RequirementDetailPage'
+import type { WorkspaceSpace } from '../../domain/workspace'
 import type { ChatSession } from './session-store'
 
 type RecentSessionsProps = {

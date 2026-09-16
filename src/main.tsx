@@ -2,6 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
 import { NativeWorkbenchMenu } from './features/workbench/NativeWorkbenchMenu'
+import { createRendererRepositories } from './infrastructure/storage/renderer-repositories'
 import './styles.css'
 
 const nativeOverlay = new URLSearchParams(window.location.search).get(
@@ -13,19 +14,28 @@ if (nativeOverlay) {
   document.body.classList.add('native-overlay-body')
 }
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    {nativeOverlay === 'workbench-menu' ? (
-      <NativeWorkbenchMenu
-        onAction={(action) => {
-          window.nativeOverlayMenu?.select(action)
-        }}
-        onClose={() => {
-          window.nativeOverlayMenu?.close()
-        }}
-      />
-    ) : (
-      <App />
-    )}
-  </React.StrictMode>
-)
+async function renderApplication(): Promise<void> {
+  const repositories =
+    nativeOverlay === 'workbench-menu'
+      ? undefined
+      : await createRendererRepositories()
+
+  ReactDOM.createRoot(document.getElementById('root')!).render(
+    <React.StrictMode>
+      {nativeOverlay === 'workbench-menu' ? (
+        <NativeWorkbenchMenu
+          onAction={(action) => {
+            window.nativeOverlayMenu?.select(action)
+          }}
+          onClose={() => {
+            window.nativeOverlayMenu?.close()
+          }}
+        />
+      ) : (
+        <App repositories={repositories} />
+      )}
+    </React.StrictMode>
+  )
+}
+
+void renderApplication()

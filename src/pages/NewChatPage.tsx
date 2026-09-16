@@ -6,7 +6,7 @@ import {
   type TemplateDefinition,
   UseTemplateDialog
 } from './TemplateDialogs'
-import type { WorkspaceSpace } from './RequirementDetailPage'
+import type { WorkspaceSpace } from '../domain/workspace'
 
 const templates: TemplateDefinition[] = [
   {

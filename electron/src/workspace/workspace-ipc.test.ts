@@ -2,6 +2,7 @@ import { mkdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { mkdtemp } from 'node:fs/promises'
+import { vi } from 'vitest'
 import { WorkspaceService } from './workspace-service'
 import { registerWorkspaceIpc } from './workspace-ipc'
 
@@ -74,5 +75,42 @@ describe('registerWorkspaceIpc', () => {
     expect(shownItems).toEqual([await realpath(workspaceDirectory)])
 
     await rm(temporaryDirectory, { recursive: true, force: true })
+  })
+
+  it('rejects malformed workspace payloads before calling the service', () => {
+    const handlers = new Map<string, (...args: unknown[]) => unknown>()
+    const workspace = {
+      getBinding: vi.fn(),
+      writeFile: vi.fn()
+    }
+
+    registerWorkspaceIpc({
+      workspace: workspace as never,
+      ipcMain: {
+        handle: (channel, handler) => handlers.set(channel, handler)
+      },
+      dialog: {
+        showOpenDialog: vi.fn()
+      },
+      shell: {
+        showItemInFolder: vi.fn()
+      }
+    })
+
+    expect(() =>
+      handlers.get('workspace:get-binding')?.({}, 42)
+    ).toThrow('Invalid IPC payload for workspace:get-binding')
+    expect(() =>
+      handlers.get('workspace:write-file')?.(
+        {},
+        {
+          requirementId: 'requirement-1',
+          path: 'notes.md',
+          content: 'updated'
+        }
+      )
+    ).toThrow('Invalid IPC payload for workspace:write-file')
+    expect(workspace.getBinding).not.toHaveBeenCalled()
+    expect(workspace.writeFile).not.toHaveBeenCalled()
   })
 })

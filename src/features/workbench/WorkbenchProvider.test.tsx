@@ -48,6 +48,17 @@ function createApi(): RealmFlowApi {
     platform: 'darwin',
     getSidecarStatus: vi.fn().mockResolvedValue('ready'),
     quitApp: vi.fn().mockResolvedValue(undefined),
+    persistence: {
+      load: vi.fn().mockResolvedValue({
+        status: 'loaded',
+        snapshot: { revision: 0, value: null }
+      }),
+      save: vi.fn().mockResolvedValue({
+        status: 'saved',
+        snapshot: { revision: 1, value: null }
+      }),
+      onChanged: vi.fn().mockReturnValue(() => undefined)
+    },
     workspace: {
       chooseFiles: vi.fn().mockResolvedValue({
         binding: {

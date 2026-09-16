@@ -7,7 +7,7 @@ import type {
   ChatSession,
   ChatSessionMessage
 } from '../features/sessions/session-store'
-import type { WorkspaceSpace } from './RequirementDetailPage'
+import type { WorkspaceSpace } from '../domain/workspace'
 
 const followUpSuggestions = [
   '如何调整需求优先级？',

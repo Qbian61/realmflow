@@ -1,4 +1,5 @@
 import { BrowserWindow } from 'electron'
+import { IPC_EVENT_CHANNELS } from '../../../shared/ipc-contract'
 import type {
   NativeOverlayEvent,
   NativeOverlayKind,
@@ -163,7 +164,7 @@ export class NativeOverlayManager {
   private emit(event: NativeOverlayEvent): void {
     const host = this.options.getHostWindow()
     if (!host || host.isDestroyed()) return
-    host.webContents.send('native-overlay:event', event)
+    host.webContents.send(IPC_EVENT_CHANNELS.nativeOverlayEvent, event)
   }
 
   private requireOwner(ownerId: number): BrowserWindow {

@@ -24,12 +24,12 @@ import rehypeSanitize from 'rehype-sanitize'
 import remarkGfm from 'remark-gfm'
 import type {
   RequirementManifest,
-  RequirementStageId,
   WorkspaceApi,
   WorkspaceBinding,
   WorkspaceEntry,
   WorkspaceFile
 } from '../../../shared/workspace'
+import type { RequirementStageId } from '../../domain/requirement'
 import WorkspaceTree from './WorkspaceTree'
 import './artifact-workbench.css'
 

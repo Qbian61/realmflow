@@ -15,42 +15,31 @@ import { Navigate, useParams } from 'react-router-dom'
 import type { RealmFlowApi } from '../../shared/types'
 import type {
   OpenedSessionFiles,
-  RequirementStageId,
   WorkspaceFile
 } from '../../shared/workspace'
 import { Composer } from '../components/Composer'
-import { useWorkbench } from '../features/workbench/WorkbenchProvider'
+import type { SpaceResourceRepository } from '../application/ports/repositories'
+import type {
+  SpaceResource,
+  SpaceResourceStore,
+  SpaceResourceType
+} from '../domain/space-resource'
+import type { RequirementStageId } from '../domain/requirement'
 import type {
   WorkspaceRequirement,
   WorkspaceSpace
-} from './RequirementDetailPage'
-
-type SpaceResourceType = 'file' | 'document' | 'repository'
-
-type SpaceResource = {
-  id: string
-  name: string
-  type: SpaceResourceType
-  locator: string
-  detail: string
-  updatedAt: number
-}
-
-type ResourceStore = {
-  version: 1
-  resourcesBySpace: Record<string, SpaceResource[]>
-}
+} from '../domain/workspace'
+import { useWorkbench } from '../features/workbench/WorkbenchProvider'
 
 type ResourceDialog = Exclude<SpaceResourceType, 'file'> | null
 
 type SpaceDetailPageProps = {
   spaces: WorkspaceSpace[]
   requirementsBySpace: Record<string, WorkspaceRequirement[]>
+  resourceRepository: SpaceResourceRepository
   api?: RealmFlowApi
   onCreateSession?: (spacePath: string, prompt: string) => void
 }
-
-const RESOURCE_STORAGE_KEY = 'realmflow:space-resources:v1'
 
 const stageLabels: Record<RequirementStageId, string> = {
   analysis: '需求分析',
@@ -65,45 +54,6 @@ const resourceLabels: Record<SpaceResourceType, string> = {
   file: '本地文件',
   document: '在线文档',
   repository: '代码仓库'
-}
-
-function isResource(value: unknown): value is SpaceResource {
-  if (!value || typeof value !== 'object') return false
-  const resource = value as Partial<SpaceResource>
-  return (
-    typeof resource.id === 'string' &&
-    typeof resource.name === 'string' &&
-    (resource.type === 'file' ||
-      resource.type === 'document' ||
-      resource.type === 'repository') &&
-    typeof resource.locator === 'string' &&
-    typeof resource.detail === 'string' &&
-    typeof resource.updatedAt === 'number'
-  )
-}
-
-function readResources(): ResourceStore {
-  try {
-    const rawValue = window.localStorage.getItem(RESOURCE_STORAGE_KEY)
-    if (!rawValue) return { version: 1, resourcesBySpace: {} }
-    const value = JSON.parse(rawValue) as Partial<ResourceStore>
-    if (
-      value.version !== 1 ||
-      !value.resourcesBySpace ||
-      typeof value.resourcesBySpace !== 'object'
-    ) {
-      return { version: 1, resourcesBySpace: {} }
-    }
-    const resourcesBySpace = Object.fromEntries(
-      Object.entries(value.resourcesBySpace).filter(
-        (entry): entry is [string, SpaceResource[]] =>
-          Array.isArray(entry[1]) && entry[1].every(isResource)
-      )
-    )
-    return { version: 1, resourcesBySpace }
-  } catch {
-    return { version: 1, resourcesBySpace: {} }
-  }
 }
 
 function formatUpdatedAt(value?: number): string {
@@ -132,6 +82,7 @@ function localFileResource(
 export default function SpaceDetailPage({
   spaces,
   requirementsBySpace,
+  resourceRepository,
   api = window.realmflow,
   onCreateSession
 }: SpaceDetailPageProps): JSX.Element {
@@ -143,7 +94,10 @@ export default function SpaceDetailPage({
   const [activeTab, setActiveTab] = useState<'overview' | 'resources'>('overview')
   const [prompt, setPrompt] = useState('')
   const [submittedPrompt, setSubmittedPrompt] = useState('')
-  const [resourceStore, setResourceStore] = useState(readResources)
+  const [initialResourceSnapshot] = useState(resourceRepository.load)
+  const [resourceStore, setResourceStore] = useState<SpaceResourceStore>(
+    initialResourceSnapshot.value
+  )
   const [resourceDialog, setResourceDialog] = useState<ResourceDialog>(null)
   const [resourceName, setResourceName] = useState('')
   const [resourceLocator, setResourceLocator] = useState('')
@@ -152,19 +106,92 @@ export default function SpaceDetailPage({
     'all' | SpaceResourceType
   >('all')
   const [resourceSearch, setResourceSearch] = useState('')
+  const [
+    resourcePersistenceUnavailable,
+    setResourcePersistenceUnavailable
+  ] = useState(resourceRepository.initializationUnavailable ?? false)
+  const resourceRevisionRef = useRef(initialResourceSnapshot.revision)
+  const skipNextResourceSaveRef = useRef(
+    resourceRepository.skipInitialSave ?? false
+  )
+  const resourceSaveQueueRef = useRef<Promise<void> | null>(null)
   const sessionFilesRef = useRef(new Map<string, OpenedSessionFiles>())
   const resources = resourceStore.resourcesBySpace[spacePath] ?? []
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(
-        RESOURCE_STORAGE_KEY,
-        JSON.stringify(resourceStore)
-      )
-    } catch {
-      // Resource management remains usable when local storage is unavailable.
+    if (skipNextResourceSaveRef.current) {
+      skipNextResourceSaveRef.current = false
+      return
     }
-  }, [resourceStore])
+    const applySaveResult = (
+      result: Awaited<ReturnType<SpaceResourceRepository['save']>>
+    ): void => {
+      if (result.status === 'saved') {
+        setResourcePersistenceUnavailable(false)
+        resourceRevisionRef.current = result.snapshot.revision
+      } else if (result.status === 'conflict') {
+        setResourcePersistenceUnavailable(false)
+        resourceRevisionRef.current = result.snapshot.revision
+        skipNextResourceSaveRef.current = true
+        setResourceStore(result.snapshot.value)
+      } else {
+        setResourcePersistenceUnavailable(true)
+      }
+    }
+    if (resourceRepository.saveSync) {
+      applySaveResult(
+        resourceRepository.saveSync(
+          resourceStore,
+          resourceRevisionRef.current
+        )
+      )
+      return
+    }
+    const saveResources = async (): Promise<void> => {
+      applySaveResult(
+        await resourceRepository.save(
+          resourceStore,
+          resourceRevisionRef.current
+        )
+      )
+    }
+    if (!resourceRepository.serializeSaves) {
+      void saveResources().catch(() =>
+        setResourcePersistenceUnavailable(true)
+      )
+      return
+    }
+    const previousSave = resourceSaveQueueRef.current
+    const queuedSave = previousSave
+      ? previousSave.then(saveResources)
+      : saveResources()
+    resourceSaveQueueRef.current = queuedSave
+    void queuedSave.then(
+      () => {
+        if (resourceSaveQueueRef.current === queuedSave) {
+          resourceSaveQueueRef.current = null
+        }
+      },
+      () => {
+        if (resourceSaveQueueRef.current === queuedSave) {
+          resourceSaveQueueRef.current = null
+        }
+        setResourcePersistenceUnavailable(true)
+      }
+    )
+  }, [resourceRepository, resourceStore])
+
+  useEffect(
+    () =>
+      resourceRepository.subscribe?.(() => {
+        const snapshot = resourceRepository.load()
+        setResourcePersistenceUnavailable(false)
+        resourceRevisionRef.current = snapshot.revision
+        skipNextResourceSaveRef.current = true
+        setResourceStore(snapshot.value)
+      }),
+    [resourceRepository]
+  )
 
   const stageCounts = useMemo(() => {
     const counts = new Map<RequirementStageId, number>()
@@ -190,10 +217,9 @@ export default function SpaceDetailPage({
   if (!space) return <Navigate to="/chat/new" replace />
 
   const updateSpaceResources = (
-    update: (current: SpaceResource[]) => SpaceResource[]
+    update: (resources: SpaceResource[]) => SpaceResource[]
   ): void => {
     setResourceStore((current) => ({
-      version: 1,
       resourcesBySpace: {
         ...current.resourcesBySpace,
         [spacePath]: update(current.resourcesBySpace[spacePath] ?? [])
@@ -276,7 +302,13 @@ export default function SpaceDetailPage({
   const activeCount = requirements.length - completedCount - pendingCount
 
   return (
-    <main className="space-detail-page">
+    <main
+      className={
+        resourcePersistenceUnavailable
+          ? 'space-detail-page has-persistence-issue'
+          : 'space-detail-page'
+      }
+    >
       <div className="space-detail-tabs" role="tablist" aria-label="空间详情">
         <button
           type="button"
@@ -295,6 +327,16 @@ export default function SpaceDetailPage({
           空间知识库 ({resources.length})
         </button>
       </div>
+
+      {resourcePersistenceUnavailable ? (
+        <div
+          className="persistence-notice"
+          role="status"
+          aria-label="空间资源存储状态"
+        >
+          空间资源的更改暂时无法保存，请检查本地存储权限或可用空间。
+        </div>
+      ) : null}
 
       {activeTab === 'overview' ? (
         <div className="space-detail-scroll">

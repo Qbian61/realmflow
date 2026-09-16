@@ -1,15 +1,14 @@
 import { join } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, protocol, shell } from 'electron'
 import { resolveAppIconPath } from './app-icon'
-import { registerNativeOverlayIpc } from './overlay/native-overlay-ipc'
+import { registerMainIpc } from './ipc/register-main-ipc'
 import { NativeOverlayManager } from './overlay/native-overlay-manager'
+import { PersistenceService } from './persistence/persistence-service'
+import { IPC_EVENT_CHANNELS } from '../../shared/ipc-contract'
 import { SidecarManager } from './sidecar/manager'
-import { registerTerminalIpc } from './terminal/terminal-ipc'
 import { TerminalManager } from './terminal/terminal-manager'
 import { WebWorkbenchManager } from './workbench/web-workbench'
-import { registerWebWorkbenchIpc } from './workbench/web-workbench-ipc'
 import { createArtifactProtocolHandler } from './workspace/artifact-protocol'
-import { registerWorkspaceIpc } from './workspace/workspace-ipc'
 import { WorkspaceService } from './workspace/workspace-service'
 
 const sidecar = new SidecarManager()
@@ -90,11 +89,18 @@ app.whenReady().then(() => {
   const workspace = new WorkspaceService(
     join(app.getPath('userData'), 'workspace-bindings.json')
   )
-  ipcMain.handle('sidecar:get-status', () => sidecar.getStatus())
-  ipcMain.handle('app:quit', () => app.quit())
-  registerWorkspaceIpc({ workspace, ipcMain, dialog, shell })
+  const persistence = new PersistenceService(
+    join(app.getPath('userData'), 'renderer-state.json'),
+    (event) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        window.webContents.send(
+          IPC_EVENT_CHANNELS.persistenceChanged,
+          event
+        )
+      }
+    }
+  )
   terminalManager = new TerminalManager({ workspace })
-  registerTerminalIpc({ manager: terminalManager, ipcMain })
   nativeOverlayManager = new NativeOverlayManager({
     getHostWindow: () => mainWindow,
     preloadPath: join(
@@ -104,9 +110,19 @@ app.whenReady().then(() => {
     rendererUrl: process.env.ELECTRON_RENDERER_URL,
     rendererFile: join(__dirname, '../renderer/index.html')
   })
-  registerNativeOverlayIpc({ manager: nativeOverlayManager, ipcMain })
   webWorkbench = new WebWorkbenchManager(() => mainWindow)
-  registerWebWorkbenchIpc({ manager: webWorkbench, ipcMain })
+  registerMainIpc({
+    sidecar,
+    quitApp: () => app.quit(),
+    persistence,
+    workspace,
+    terminalManager,
+    nativeOverlayManager,
+    webWorkbenchManager: webWorkbench,
+    ipcMain,
+    dialog,
+    shell
+  })
   protocol.handle(
     'realmflow-artifact',
     createArtifactProtocolHandler(workspace)

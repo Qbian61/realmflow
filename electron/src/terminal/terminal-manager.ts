@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { spawn as spawnPty } from 'node-pty'
+import { IPC_EVENT_CHANNELS } from '../../../shared/ipc-contract'
 import type {
   TerminalDimensions,
   TerminalEvent,
@@ -94,14 +95,14 @@ export class TerminalManager {
     }
     managed.disposables.push(
       process.onData((data) => {
-        sender.send('terminal:event', {
+        sender.send(IPC_EVENT_CHANNELS.terminalEvent, {
           sessionId: id,
           type: 'data',
           data
         })
       }),
       process.onExit(({ exitCode }) => {
-        sender.send('terminal:event', {
+        sender.send(IPC_EVENT_CHANNELS.terminalEvent, {
           sessionId: id,
           type: 'exit',
           exitCode

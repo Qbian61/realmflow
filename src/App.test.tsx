@@ -7,6 +7,10 @@ describe('RealmFlow navigation', () => {
     window.localStorage.clear()
   })
 
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   it('renders the main navigation entries', () => {
     render(<App />)
 
@@ -296,6 +300,19 @@ describe('RealmFlow navigation', () => {
     expect(
       within(recent).getByRole('link', { name: '测试对话 2' })
     ).toBeInTheDocument()
+  })
+
+  it('shows a non-blocking status when workspace persistence is unavailable', async () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('Storage unavailable')
+    })
+
+    render(<App />)
+
+    expect(
+      await screen.findByRole('status', { name: '本地存储状态' })
+    ).toHaveTextContent('当前更改暂时无法保存')
+    expect(screen.getByRole('link', { name: '新对话' })).toBeInTheDocument()
   })
 
   it('lists persisted conversations from every space under recent', () => {

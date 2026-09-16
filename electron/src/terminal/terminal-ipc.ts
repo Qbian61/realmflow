@@ -1,4 +1,8 @@
-import type { TerminalDimensions } from '../../../shared/terminal'
+import { IPC_INVOKE_CHANNELS } from '../../../shared/ipc-contract'
+import {
+  requireString,
+  requireTerminalDimensions
+} from '../ipc/runtime-validation'
 import type { TerminalManager } from './terminal-manager'
 
 type TerminalIpcEvent = {
@@ -31,12 +35,15 @@ export function registerTerminalIpc({
   const observedSenders = new Set<number>()
 
   ipcMain.handle(
-    'terminal:create',
-    (
-      event,
-      workspaceId: string,
-      dimensions: TerminalDimensions
-    ) => {
+    IPC_INVOKE_CHANNELS.terminalCreate,
+    (event, workspaceId: unknown, dimensions: unknown) => {
+      const channel = IPC_INVOKE_CHANNELS.terminalCreate
+      const validWorkspaceId = requireString(
+        workspaceId,
+        channel,
+        'workspaceId'
+      )
+      const validDimensions = requireTerminalDimensions(dimensions, channel)
       if (!observedSenders.has(event.sender.id)) {
         observedSenders.add(event.sender.id)
         event.sender.once('destroyed', () => {
@@ -44,25 +51,42 @@ export function registerTerminalIpc({
           manager.disposeOwner(event.sender.id)
         })
       }
-      return manager.create(event.sender, workspaceId, dimensions)
+      return manager.create(event.sender, validWorkspaceId, validDimensions)
     }
   )
   ipcMain.handle(
-    'terminal:write',
-    (event, sessionId: string, data: string) =>
-      manager.write(event.sender.id, sessionId, data)
+    IPC_INVOKE_CHANNELS.terminalWrite,
+    (event, sessionId: unknown, data: unknown) => {
+      const channel = IPC_INVOKE_CHANNELS.terminalWrite
+      return manager.write(
+        event.sender.id,
+        requireString(sessionId, channel, 'sessionId'),
+        requireString(data, channel, 'data', {
+          allowEmpty: true,
+          maxLength: 64 * 1024
+        })
+      )
+    }
   )
   ipcMain.handle(
-    'terminal:resize',
-    (
-      event,
-      sessionId: string,
-      dimensions: TerminalDimensions
-    ) => manager.resize(event.sender.id, sessionId, dimensions)
+    IPC_INVOKE_CHANNELS.terminalResize,
+    (event, sessionId: unknown, dimensions: unknown) => {
+      const channel = IPC_INVOKE_CHANNELS.terminalResize
+      return manager.resize(
+        event.sender.id,
+        requireString(sessionId, channel, 'sessionId'),
+        requireTerminalDimensions(dimensions, channel)
+      )
+    }
   )
   ipcMain.handle(
-    'terminal:destroy',
-    (event, sessionId: string) =>
-      manager.destroy(event.sender.id, sessionId)
+    IPC_INVOKE_CHANNELS.terminalDestroy,
+    (event, sessionId: unknown) => {
+      const channel = IPC_INVOKE_CHANNELS.terminalDestroy
+      return manager.destroy(
+        event.sender.id,
+        requireString(sessionId, channel, 'sessionId')
+      )
+    }
   )
 }

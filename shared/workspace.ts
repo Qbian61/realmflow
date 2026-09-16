@@ -1,10 +1,6 @@
-export type RequirementStageId =
-  | 'analysis'
-  | 'design'
-  | 'implementation'
-  | 'testing'
-  | 'release'
-  | 'retrospective'
+import type { RequirementStageId } from '../domain/requirement'
+
+export type { RequirementStageId } from '../domain/requirement'
 
 export type WorkspaceEntryType = 'directory' | 'file'
 export type WorkspaceFileKind = 'code' | 'markdown' | 'html' | 'image' | 'text'

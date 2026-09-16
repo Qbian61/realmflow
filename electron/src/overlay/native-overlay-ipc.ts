@@ -1,9 +1,13 @@
 import type { IpcMain } from 'electron'
-import type {
-  NativeOverlayKind,
-  NativeOverlayRequest,
-  WorkbenchActionId
-} from '../../../shared/native-overlay'
+import {
+  IPC_INVOKE_CHANNELS,
+  IPC_SEND_CHANNELS
+} from '../../../shared/ipc-contract'
+import {
+  requireNativeOverlayKind,
+  requireNativeOverlayRequest,
+  requireWorkbenchAction
+} from '../ipc/runtime-validation'
 import type { NativeOverlayManager } from './native-overlay-manager'
 
 type RegisterNativeOverlayIpcOptions = {
@@ -16,21 +20,39 @@ export function registerNativeOverlayIpc({
   ipcMain
 }: RegisterNativeOverlayIpcOptions): void {
   ipcMain.handle(
-    'native-overlay:show',
-    (event, request: NativeOverlayRequest) =>
-      manager.show(event.sender.id, request)
+    IPC_INVOKE_CHANNELS.nativeOverlayShow,
+    (event, request: unknown) =>
+      manager.show(
+        event.sender.id,
+        requireNativeOverlayRequest(
+          request,
+          IPC_INVOKE_CHANNELS.nativeOverlayShow
+        )
+      )
   )
   ipcMain.handle(
-    'native-overlay:hide',
-    (event, kind: NativeOverlayKind) =>
-      manager.hide(event.sender.id, kind)
+    IPC_INVOKE_CHANNELS.nativeOverlayHide,
+    (event, kind: unknown) =>
+      manager.hide(
+        event.sender.id,
+        requireNativeOverlayKind(
+          kind,
+          IPC_INVOKE_CHANNELS.nativeOverlayHide
+        )
+      )
   )
   ipcMain.on(
-    'native-overlay:select',
-    (event, action: WorkbenchActionId) =>
-      manager.select(event.sender.id, action)
+    IPC_SEND_CHANNELS.nativeOverlaySelect,
+    (event, action: unknown) =>
+      manager.select(
+        event.sender.id,
+        requireWorkbenchAction(
+          action,
+          IPC_SEND_CHANNELS.nativeOverlaySelect
+        )
+      )
   )
-  ipcMain.on('native-overlay:close', (event) => {
+  ipcMain.on(IPC_SEND_CHANNELS.nativeOverlayClose, (event) => {
     manager.close(event.sender.id)
   })
 }

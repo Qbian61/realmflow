@@ -6,6 +6,7 @@ import {
   WebContentsView,
   type Rectangle
 } from 'electron'
+import { IPC_EVENT_CHANNELS } from '../../../shared/ipc-contract'
 import type { WebPageState, WorkbenchBounds } from '../../../shared/workbench'
 import { normalizeWebUrl } from './web-url'
 
@@ -180,7 +181,7 @@ export class WebWorkbenchManager {
     const hostWindow = this.getHostWindow()
     if (!hostWindow || hostWindow.isDestroyed() || !this.views.has(id)) return
     hostWindow.webContents.send(
-      'web-workbench:state-changed',
+      IPC_EVENT_CHANNELS.webWorkbenchStateChanged,
       this.getState(id, error)
     )
   }
