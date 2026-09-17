@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import App from './App'
-import { CHAT_SESSION_STORAGE_KEY } from './features/sessions/session-store'
+import { createInMemoryRendererRepositories } from './infrastructure/storage/renderer-repositories'
 
 describe('RealmFlow navigation', () => {
   beforeEach(() => {
@@ -287,12 +287,7 @@ describe('RealmFlow navigation', () => {
     ).toBeInTheDocument()
   })
 
-  it('repairs empty current session storage with test conversations', () => {
-    window.localStorage.setItem(
-      CHAT_SESSION_STORAGE_KEY,
-      JSON.stringify({ version: 4, sessions: [] })
-    )
-
+  it('provides default conversations in degraded in-memory mode', () => {
     render(<App />)
 
     const recent = screen.getByRole('region', { name: '最近对话' })
@@ -302,21 +297,25 @@ describe('RealmFlow navigation', () => {
     ).toBeInTheDocument()
   })
 
-  it('shows a non-blocking status when workspace persistence is unavailable', async () => {
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
-      throw new DOMException('Storage unavailable')
-    })
+  it('shows the persistence status when repository initialization degraded', () => {
+    render(<App degraded />)
 
+    expect(
+      screen.getByRole('status', { name: '本地存储状态' })
+    ).toHaveTextContent('当前更改暂时无法保存')
+  })
+
+  it('does not show the persistence status after normal initialization', () => {
     render(<App />)
 
     expect(
-      await screen.findByRole('status', { name: '本地存储状态' })
-    ).toHaveTextContent('当前更改暂时无法保存')
-    expect(screen.getByRole('link', { name: '新对话' })).toBeInTheDocument()
+      screen.queryByRole('status', { name: '本地存储状态' })
+    ).not.toBeInTheDocument()
   })
 
-  it('lists persisted conversations from every space under recent', () => {
-    const { unmount } = render(<App />)
+  it('lists persisted conversations from every space under recent', async () => {
+    const repositories = createInMemoryRendererRepositories()
+    const { unmount } = render(<App repositories={repositories} />)
 
     expect(
       screen.getByRole('region', { name: '最近对话' })
@@ -341,8 +340,17 @@ describe('RealmFlow navigation', () => {
       within(screen.getByTestId('app-content')).getByText('xxx 空间')
     ).toBeInTheDocument()
 
+    await vi.waitFor(() =>
+      expect(
+        repositories.chatSessions
+          .getSnapshot()
+          .value.some(
+            (session) => session.title === '梳理登录流程优化方案'
+          )
+      ).toBe(true)
+    )
     unmount()
-    render(<App />)
+    render(<App repositories={repositories} />)
 
     expect(
       within(screen.getByRole('region', { name: '最近对话' })).getByRole(
@@ -372,8 +380,9 @@ describe('RealmFlow navigation', () => {
     ).toBeInTheDocument()
   })
 
-  it('persists online documents and code repositories in a space', () => {
-    const { unmount } = render(<App />)
+  it('persists online documents and code repositories in a space', async () => {
+    const repositories = createInMemoryRendererRepositories()
+    const { unmount } = render(<App repositories={repositories} />)
     fireEvent.click(screen.getByRole('link', { name: 'xxx 空间' }))
     fireEvent.click(screen.getByRole('tab', { name: /^空间知识库/ }))
 
@@ -400,8 +409,15 @@ describe('RealmFlow navigation', () => {
     expect(screen.getByText('RealmFlow 技术方案')).toBeInTheDocument()
     expect(screen.getByText('realmflow')).toBeInTheDocument()
 
+    await vi.waitFor(() =>
+      expect(
+        repositories.spaceResources.getSnapshot().value.resourcesBySpace[
+          '/spaces/xxx'
+        ]
+      ).toHaveLength(2)
+    )
     unmount()
-    render(<App />)
+    render(<App repositories={repositories} />)
     fireEvent.click(screen.getByRole('link', { name: 'xxx 空间' }))
     fireEvent.click(screen.getByRole('tab', { name: /^空间知识库/ }))
 
@@ -474,8 +490,9 @@ describe('RealmFlow navigation', () => {
     ).toEqual(['需求 A', '需求 B', '测试需求'])
   })
 
-  it('restores sidebar spaces, requirements, and their order after remounting', () => {
-    const { unmount } = render(<App />)
+  it('restores sidebar spaces, requirements, and their order after remounting', async () => {
+    const repositories = createInMemoryRendererRepositories()
+    const { unmount } = render(<App repositories={repositories} />)
 
     for (const name of ['产品空间', '研发空间']) {
       fireEvent.click(screen.getByRole('button', { name: '空间操作' }))
@@ -503,8 +520,15 @@ describe('RealmFlow navigation', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: '确认新建需求' }))
 
+    await vi.waitFor(() =>
+      expect(
+        repositories.workspaceNavigation
+          .getSnapshot()
+          .value.spaces.map((space) => space.label)
+      ).toEqual(['产品空间', '研发空间', 'xxx 空间'])
+    )
     unmount()
-    render(<App />)
+    render(<App repositories={repositories} />)
 
     const section = screen.getByRole('region', { name: '空间' })
     expect(
@@ -559,7 +583,7 @@ describe('RealmFlow navigation', () => {
     ).toEqual(['产品需求'])
   })
 
-  it('repairs invalid persisted sidebar data with the default navigation', () => {
+  it('does not read business data from localStorage', () => {
     window.localStorage.setItem(
       'realmflow:workspace-navigation:v1',
       '{"version":1,"spaces":"invalid"}'
@@ -570,7 +594,7 @@ describe('RealmFlow navigation', () => {
     expect(screen.getByRole('link', { name: 'xxx 空间' })).toBeInTheDocument()
     expect(
       window.localStorage.getItem('realmflow:workspace-navigation:v1')
-    ).not.toContain('"spaces":"invalid"')
+    ).toContain('"spaces":"invalid"')
   })
 
   it('opens a requirement detail page with the software lifecycle flow', () => {
@@ -673,6 +697,34 @@ describe('RealmFlow navigation', () => {
     expect(
       screen.queryByRole('link', { name: '测试需求' })
     ).not.toBeInTheDocument()
+  })
+
+  it('opens a requirement menu above its trigger near the viewport bottom', () => {
+    vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(1024)
+    vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(768)
+    render(<App />)
+
+    const trigger = screen.getByRole('button', { name: '测试需求操作' })
+    vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({
+      x: 200,
+      y: 730,
+      top: 730,
+      right: 240,
+      bottom: 750,
+      left: 200,
+      width: 40,
+      height: 20,
+      toJSON: () => ({})
+    })
+
+    fireEvent.click(trigger)
+
+    expect(
+      screen.getByRole('menu', { name: '测试需求操作' })
+    ).toHaveStyle({
+      top: '679px',
+      right: '784px'
+    })
   })
 
   it('shows space icons and independently collapses each space', () => {
@@ -972,7 +1024,10 @@ describe('RealmFlow navigation', () => {
     })
 
     fireEvent.click(screen.getByRole('button', { name: '发送消息' }))
-    expect(screen.getByText('已准备处理：帮我规划并开发一个应用')).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { name: '帮我规划并开发一个应用' })
+    ).toBeInTheDocument()
+    expect(screen.getByText('本地对话')).toBeInTheDocument()
   })
 
   it('shows templates directly in descending usage order', () => {

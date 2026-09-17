@@ -2,7 +2,7 @@
 
 RealmFlow 是一个本地优先的软件研发全流程桌面工作区，用于组织需求、研发阶段、模板、定时任务及各阶段交付产物。
 
-当前版本为 `0.1.0`，重点完成了桌面客户端基础框架、空间与需求管理，以及需求本地目录中的 Markdown、HTML 和代码产物浏览与编辑能力。
+当前版本为 `0.1.0`，已完成桌面客户端基础框架、空间与需求管理、SQLite 业务主存储、AI Run 流式执行，以及需求目录中的 Markdown、HTML 和代码产物浏览与编辑能力。
 
 ## 当前能力
 
@@ -18,7 +18,14 @@ RealmFlow 是一个本地优先的软件研发全流程桌面工作区，用于�
   - 发布上线
   - 迭代复盘
 - 每个需求可绑定一个独立的本地工作目录。
-- 通过清单将本地文件关联到对应研发阶段。
+- 通过 SQLite 产物元数据将本地文件关联到对应研发阶段。
+- 需求阶段可通过 Python Sidecar 流式生成阶段产物：
+  - Electron Main 负责业务编排、运行状态和最终提交。
+  - SSE 支持分帧、心跳、sequence 去重和 `Last-Event-ID` 重连。
+  - 支持实时进度、内容预览、取消、失败和完成状态。
+  - 只有产物校验与数据库事务成功后才替换正式文件。
+- SQLite 持久化空间、需求、会话、资源、产物元数据、AI Run 和运行事件。
+- 应用重启后将未结束 Run 标记为 `interrupted`，保留历史并允许重试。
 - 应用级右侧工作区默认收起，由页面内容按需触发：
   - 点击页面中的本地文件或文件夹入口后打开对应资源。
   - 点击页面中的 `HTTP/HTTPS` 链接后在隔离网页视图中打开。
@@ -41,28 +48,32 @@ RealmFlow 是一个本地优先的软件研发全流程桌面工作区，用于�
 flowchart LR
   UI[React Renderer] -->|类型化 API| Preload[Context-isolated Preload]
   Preload -->|共享 Channel Registry| Validate[IPC Runtime Validators]
-  Validate --> Main[Electron Main Process]
-  Main --> FS[本地需求目录]
-  Main --> Protocol[realmflow-artifact 协议]
+  Validate --> UseCase[Main Application Use Cases]
+  UseCase --> Ports[Repository Ports]
+  Ports --> SQLite[(SQLite)]
+  UseCase --> FS[本地需求目录]
+  UseCase --> Protocol[realmflow-artifact 协议]
   Protocol --> Preview[HTML / 图片沙箱预览]
-  Main --> WebView[隔离 WebContentsView]
+  UseCase --> WebView[隔离 WebContentsView]
   WebView --> Web[HTTP / HTTPS 网页]
-  Main --> Client[Typed Sidecar Client]
+  UseCase --> Client[Typed Sidecar Client]
   Client --> Sidecar[Python FastAPI Sidecar]
+  Sidecar -->|SSE events| UseCase
 ```
 
 | 层级 | 技术与职责 |
 | --- | --- |
 | 领域层 | 纯 TypeScript 业务模型与校验，不依赖 React、页面或存储实现 |
-| 应用层 | Workspace / Workbench reducer 与用例控制器 |
+| 应用层 | Main Use Case、Repository Ports，以及 Renderer Controller / Reducer |
 | 展示层 | React 页面、功能组件、路由与纯视图布局 |
-| 基础设施层 | 版本化浏览器仓储、Preload IPC 适配和 Electron 服务 |
-| 桌面容器 | Electron 30，负责窗口、生命周期、IPC 和本地文件访问 |
+| 基础设施层 | SQLite Repository、Sidecar Gateway、文件服务与 Renderer IPC Repository |
+| 桌面容器 | Electron 30，负责窗口、生命周期、业务编排、IPC 和本地文件访问 |
+| 主存储 | `better-sqlite3`，启用外键、WAL、busy timeout、Migration 和 revision CAS |
 | 编辑器 | Monaco Editor，本地加载编辑器和语言 Worker |
 | 文档预览 | React Markdown、GFM、HTML 沙箱 iframe |
 | Preload | 类型化、白名单化的 IPC 桥接，共享 channel registry |
 | IPC 边界 | 对所有 privileged command 做运行时 payload 校验 |
-| Sidecar | Python 3.11、FastAPI、Uvicorn |
+| Sidecar | Python 3.11、FastAPI、Uvicorn、确定性 Fake AI Provider 和 SSE |
 | 测试 | Vitest、Testing Library、Pytest |
 | 构建 | electron-vite、electron-builder、PyInstaller |
 
@@ -75,39 +86,35 @@ nodeIntegration: false
 webSecurity: true
 ```
 
-React 不直接访问 Node.js 或文件系统。目录选择、文件读取、保存、清单操作和 Finder 定位均由主进程校验后执行。
+React 不直接访问 Node.js、SQLite、Sidecar 或文件系统。目录选择、文件读取、保存、产物元数据和 Finder 定位均由主进程校验后执行。
 
 详细依赖规则、状态归属和运行时边界见
 [`docs/architecture.md`](docs/architecture.md)。
 
-## 需求产物清单
+## 数据与产物存储
 
-每个需求绑定一个本地目录。目录内的 `.realmflow/requirement.json` 用于记录各阶段关联的产物：
+Electron Main 是业务数据的唯一所有者。数据库位于：
 
-```json
-{
-  "version": 1,
-  "requirementId": "test-requirement",
-  "stages": {
-    "analysis": {
-      "artifacts": [
-        {
-          "path": "docs/requirement.md",
-          "primary": true
-        }
-      ]
-    },
-    "implementation": {
-      "artifacts": [
-        {
-          "path": "src/main.ts",
-          "primary": true
-        }
-      ]
-    }
-  }
-}
+```text
+app.getPath('userData')/realmflow.db
 ```
+
+| 数据 | 所有权与存储 |
+| --- | --- |
+| 空间、需求和阶段 | SQLite |
+| 对话会话和消息 | SQLite |
+| 空间资源元数据 | SQLite |
+| 产物路径、类型、校验和与版本 | SQLite |
+| AI Run、终态、错误和控制事件 | SQLite |
+| 需求正文和正式阶段产物 | 需求绑定目录 |
+| 用户导入文件 | 文件系统 |
+| 侧栏宽度等纯 UI 偏好 | Renderer `localStorage` |
+
+旧版 `renderer-state.json`、workspace bindings 和必要的
+`.realmflow/requirement.json` 只作为一次性迁移源。迁移会先校验数据，在一个
+SQLite 事务内导入并验证关联关系，成功后写入 marker 和时间戳备份；失败时回滚数据库且不修改源文件。
+
+正式产物采用临时文件与 SQLite 事务协调提交：Main 写入临时文件，在同一事务中更新需求阶段、Artifact 元数据、Run 终态和完成事件，完成原子 rename 后才提交事务。
 
 阶段标识为：
 
@@ -120,7 +127,7 @@ React 不直接访问 Node.js 或文件系统。目录选择、文件读取、�
 | `release` | 发布上线 |
 | `retrospective` | 迭代复盘 |
 
-文件路径必须相对于绑定目录。主进程会拒绝绝对路径、目录穿越和指向目录外部的符号链接。
+产物路径必须相对于绑定目录。主进程会拒绝绝对路径、目录穿越和指向目录外部的符号链接。
 
 ## 环境要求
 
@@ -153,6 +160,10 @@ pip install pytest httpx pyinstaller
 npm run dev
 ```
 
+`npm run dev` 会先通过 `electron-rebuild` 将 `better-sqlite3` 和
+`node-pty` 重建为 Electron ABI。`npm test` 会自动恢复 Node.js 测试 ABI，
+因此开发启动和测试可以交替执行。
+
 开发模式优先使用 `.venv/bin/python` 启动 Sidecar，也可以显式指定：
 
 ```bash
@@ -174,10 +185,16 @@ npm test
 npm run test:watch
 
 # Python Sidecar 测试
-python3.11 -m pytest python-service/tests
+.venv/bin/python -m pytest python-service/tests
 
 # 生产构建，不生成安装包
 npm run build
+
+# 强制重建 Electron native 模块
+npm run rebuild:native
+
+# 在 Electron 运行时验证 SQLite
+npm run verify:sqlite
 ```
 
 ## macOS 打包
@@ -201,38 +218,53 @@ PKG 默认安装到 `/Applications/RealmFlow.app`。当前构建使用本地临�
 
 ```text
 .
+├── domain/                         # 跨 Main/Renderer 的核心领域模型
 ├── electron/
 │   └── src/
-│       ├── main.ts                 # Electron 主进程
-│       ├── preload.ts              # 类型化 IPC 桥接
-│       ├── ipc/                     # Channel 注册与运行时参数校验
-│       ├── sidecar/                # FastAPI Sidecar 生命周期管理
+│       ├── main.ts                 # Main Composition Root
+│       ├── preload.ts              # 类型化、白名单化 IPC 桥接
+│       ├── application/            # Main Use Case 与 Repository Ports
+│       ├── infrastructure/sqlite/  # Migration、Repository 和 Legacy 导入
+│       ├── ai-run/                 # AI Run、SSE Adapter 与 Artifact 事务提交
+│       ├── ipc/                    # Channel 注册与运行时参数校验
+│       ├── persistence/            # Renderer 聚合数据的 SQLite 访问服务
+│       ├── sidecar/                # Sidecar 生命周期和 typed client
+│       ├── terminal/               # node-pty 终端管理
+│       ├── overlay/                # 原生浮层管理
 │       ├── workbench/              # 隔离网页视图和导航控制
-│       └── workspace/              # 安全文件服务、IPC 和预览协议
+│       └── workspace/              # 安全文件服务、元数据 Store 和预览协议
 ├── python-service/
-│   ├── app/                        # FastAPI 应用
+│   ├── app/api/                    # Health、Info 和 Run API
+│   ├── app/core/                   # Sidecar 配置
+│   ├── app/services/               # Run 执行、回放、取消和 Fake Provider
+│   ├── app/agents/                 # 多 Agent 预留目录
+│   ├── app/rag/                    # RAG 预留目录
 │   ├── tests/                      # Sidecar 测试
 │   └── main.py                     # Sidecar 入口
 ├── shared/
 │   ├── ipc-contract.ts             # Preload / Main channel 单一注册表
+│   ├── ai-run.ts                   # AI Run 跨进程契约
+│   ├── persistence.ts              # 持久化与 revision conflict 契约
 │   ├── types.ts                    # Renderer / Electron 公共类型
 │   ├── workbench.ts                # 网页工作区数据契约
 │   └── workspace.ts                # 文件工作区数据契约
 ├── src/
-│   ├── app/                        # 页面路由装配
-│   ├── application/                # 用例控制器与纯状态机
+│   ├── app/                        # 路由装配与 Controller Hooks
+│   ├── application/                # Renderer Ports、Reducer 与纯状态机
 │   ├── components/                 # 通用 UI 组件
 │   ├── domain/                     # 空间、会话和资源领域模型
-│   ├── features/artifacts/         # 文件树、预览和代码编辑器
-│   ├── features/workbench/         # 工作台 Provider 与纯视图
-│   ├── infrastructure/storage/     # 版本化本地仓储
+│   ├── features/                   # Artifact、导航、会话和 Workbench 模块
+│   ├── infrastructure/storage/     # 类型化 IPC Repository 与 Domain Codec
 │   ├── pages/                      # 新对话、定时任务、需求详情
 │   ├── App.tsx                     # 全局 Provider、侧栏和应用壳
 │   └── styles.css                  # 全局界面样式
+├── docs/                            # 架构、规格和实施计划
+├── resources/sidecar/               # 打包使用的 Sidecar 二进制
 ├── scripts/
 │   ├── build-mac-installer.sh      # macOS PKG/ZIP 打包
 │   ├── build-python.sh             # PyInstaller Sidecar 构建
-│   └── dev.mjs                     # 开发启动入口
+│   ├── verify-electron-sqlite.cjs  # Electron SQLite ABI 验证
+│   └── dev.mjs                     # Electron 开发启动入口
 └── build/electron-builder.yml      # Electron 打包配置
 ```
 
@@ -247,14 +279,19 @@ PKG 默认安装到 `/Applications/RealmFlow.app`。当前构建使用本地临�
 - HTML 预览禁用脚本、网络连接、表单、弹窗和 Node.js 能力。
 - 网页视图仅允许 `HTTP/HTTPS`，使用隔离会话并拒绝权限、弹窗和下载。
 - Renderer 不暴露任意文件系统、Shell 或通用 IPC 调用。
+- Renderer 与 Python Sidecar 均禁止直接访问 SQLite。
+- IPC 不接收任意 SQL，也不暴露数据库路径、Statement 或连接对象。
+- SQLite Repository 只使用预编译语句，并通过 Application Port 暴露能力。
+- 可并发修改的聚合使用 revision CAS；冲突返回最新快照，不静默覆盖。
 - IPC handler 在调用主进程服务前校验字符串、枚举、尺寸和嵌套对象。
 - Preload 与 Main 的 channel 集合由自动化契约测试保持一致。
 
 ## 当前限制
 
-- 空间、需求、会话和空间知识库使用版本化浏览器仓储；定时任务仍为运行时状态。
-- 需求与本地目录的绑定保存在 Electron 用户数据目录中。
-- Python Sidecar 当前只提供健康检查与服务信息，尚未承载 AI/RAG 业务。
+- 当前 Sidecar 使用确定性 Fake AI Provider，尚未接入真实 LLM。
+- 尚未实现 RAG、Embedding、Chroma 和向量索引。
+- 尚未实现多 Agent、流程引擎、技能引擎和定时调度执行。
+- Sidecar 内存中的活动流不会跨应用重启恢复；Main 会将未结束 Run 标记为 `interrupted`。
 - 产物工作区暂不提供文件创建、重命名和删除操作。
 - HTML 预览以安全性优先，不运行 JavaScript，也不访问外部网络。
 - 当前安装包流程仅验证 macOS Apple Silicon。

@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { vi } from 'vitest'
 import type {
   ChatSessionRepository,
@@ -8,6 +8,7 @@ import type {
 import type { ChatSession } from '../../domain/chat-session'
 import type { WorkspaceNavigation } from '../../domain/workspace'
 import { useWorkspaceController } from './use-workspace-controller'
+import type { BusinessApi, SpaceDto } from '../../../shared/business'
 
 const initialNavigation: WorkspaceNavigation = {
   spaces: [
@@ -41,7 +42,8 @@ function createSessionRepository(): ChatSessionRepository {
     revision: 0
   }
   return {
-    load: () => snapshot,
+    hydrate: async () => snapshot,
+    getSnapshot: () => snapshot,
     save: async (value, expectedRevision) => ({
       status: 'saved',
       snapshot: {
@@ -66,6 +68,7 @@ function ControllerHarness({
   return (
     <>
       <div>{controller.spaces.map((space) => space.label).join(',')}</div>
+      <button onClick={() => controller.createSpace('本地空间')}>新增</button>
       {controller.persistenceIssues.length > 0 ? (
         <div role="status">{controller.persistenceIssues.join(',')}</div>
       ) : null}
@@ -74,6 +77,53 @@ function ControllerHarness({
 }
 
 describe('useWorkspaceController persistence', () => {
+  it('refreshes Main-owned queries after a create command', async () => {
+    let spaces: SpaceDto[] = []
+    const business = {
+      listSpaces: vi.fn(async () => spaces),
+      listRequirements: vi.fn(async () => []),
+      listRecentConversations: vi.fn(async () => []),
+      createSpace: vi.fn(async ({ id, name }) => {
+        const created: SpaceDto = {
+          id,
+          path: `/work/${name}`,
+          label: name,
+          description: '',
+          sortOrder: 0,
+          revision: 1,
+          createdAt: 1,
+          updatedAt: 1
+        }
+        spaces = [created]
+        return created
+      })
+    } as unknown as BusinessApi
+
+    function BusinessHarness(): JSX.Element {
+      const controller = useWorkspaceController({
+        navigationRepository: createNavigationRepository(initialNavigation),
+        sessionRepository,
+        business
+      })
+      return (
+        <>
+          <div>{controller.spaces.map((space) => space.label).join(',')}</div>
+          <button onClick={() => controller.createSpace('Main 空间')}>
+            新增
+          </button>
+        </>
+      )
+    }
+
+    render(<BusinessHarness />)
+    await waitFor(() => expect(business.listSpaces).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: '新增' }))
+
+    expect(await screen.findByText('Main 空间')).toBeInTheDocument()
+    expect(business.createSpace).toHaveBeenCalledOnce()
+    expect(business.listSpaces).toHaveBeenCalledTimes(2)
+  })
+
   it('applies an external snapshot without writing it back', async () => {
     let listener: (() => void) | undefined
     let snapshot: RepositorySnapshot<WorkspaceNavigation> = {
@@ -88,7 +138,8 @@ describe('useWorkspaceController persistence', () => {
       }
     }))
     const repository: WorkspaceNavigationRepository = {
-      load: () => snapshot,
+      hydrate: async () => snapshot,
+      getSnapshot: () => snapshot,
       save,
       subscribe: (nextListener) => {
         listener = nextListener
@@ -99,7 +150,7 @@ describe('useWorkspaceController persistence', () => {
     }
 
     render(<ControllerHarness navigationRepository={repository} />)
-    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+    expect(save).not.toHaveBeenCalled()
 
     snapshot = {
       value: remoteNavigation,
@@ -108,7 +159,7 @@ describe('useWorkspaceController persistence', () => {
     act(() => listener?.())
 
     expect(await screen.findByText('远端空间')).toBeInTheDocument()
-    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+    expect(save).not.toHaveBeenCalled()
   })
 
   it('uses the latest snapshot after a save conflict without retrying stale state', async () => {
@@ -120,7 +171,11 @@ describe('useWorkspaceController persistence', () => {
       }
     }))
     const repository: WorkspaceNavigationRepository = {
-      load: () => ({
+      hydrate: async () => ({
+        value: initialNavigation,
+        revision: 1
+      }),
+      getSnapshot: () => ({
         value: initialNavigation,
         revision: 1
       }),
@@ -128,6 +183,7 @@ describe('useWorkspaceController persistence', () => {
     }
 
     render(<ControllerHarness navigationRepository={repository} />)
+    fireEvent.click(screen.getByRole('button', { name: '新增' }))
 
     expect(await screen.findByText('远端空间')).toBeInTheDocument()
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
@@ -135,7 +191,11 @@ describe('useWorkspaceController persistence', () => {
 
   it('exposes unavailable repositories without blocking in-memory state', async () => {
     const repository: WorkspaceNavigationRepository = {
-      load: () => ({
+      hydrate: async () => ({
+        value: initialNavigation,
+        revision: 1
+      }),
+      getSnapshot: () => ({
         value: initialNavigation,
         revision: 1
       }),
@@ -149,8 +209,23 @@ describe('useWorkspaceController persistence', () => {
     }
 
     render(<ControllerHarness navigationRepository={repository} />)
+    fireEvent.click(screen.getByRole('button', { name: '新增' }))
 
     expect(await screen.findByRole('status')).toHaveTextContent('navigation')
-    expect(screen.getByText('初始空间')).toBeInTheDocument()
+    expect(screen.getByText(/初始空间/)).toBeInTheDocument()
   })
 })
+
+function createNavigationRepository(
+  value: WorkspaceNavigation
+): WorkspaceNavigationRepository {
+  const snapshot = { value, revision: 0 }
+  return {
+    hydrate: async () => snapshot,
+    getSnapshot: () => snapshot,
+    save: async (nextValue, expectedRevision) => ({
+      status: 'saved',
+      snapshot: { value: nextValue, revision: expectedRevision + 1 }
+    })
+  }
+}

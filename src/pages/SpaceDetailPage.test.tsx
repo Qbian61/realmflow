@@ -1,10 +1,4 @@
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor
-} from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { vi } from 'vitest'
 import type { RealmFlowApi } from '../../shared/types'
@@ -20,14 +14,19 @@ function createApi(): RealmFlowApi {
     platform: 'darwin',
     getSidecarStatus: vi.fn().mockResolvedValue('ready'),
     quitApp: vi.fn().mockResolvedValue(undefined),
+    aiRuns: {
+      start: vi.fn(),
+      cancel: vi.fn(),
+      get: vi.fn(),
+      attach: vi.fn(),
+      listEvents: vi.fn(),
+      onEvent: vi.fn().mockReturnValue(() => undefined)
+    },
+    business: {} as never,
     persistence: {
       load: vi.fn().mockResolvedValue({
         status: 'loaded',
         snapshot: { revision: 0, value: null }
-      }),
-      save: vi.fn().mockResolvedValue({
-        status: 'saved',
-        snapshot: { revision: 1, value: null }
       }),
       onChanged: vi.fn().mockReturnValue(() => undefined)
     },
@@ -102,7 +101,11 @@ describe('SpaceDetailPage', () => {
                 <SpaceDetailPage
                   api={api}
                   resourceRepository={{
-                    load: () => ({
+                    hydrate: async () => ({
+                      value: { resourcesBySpace: {} },
+                      revision: 0
+                    }),
+                    getSnapshot: () => ({
                       value: { resourcesBySpace: {} },
                       revision: 0
                     }),
@@ -188,7 +191,8 @@ describe('SpaceDetailPage', () => {
                 <SpaceDetailPage
                   api={api}
                   resourceRepository={{
-                    load: () => snapshot,
+                    hydrate: async () => snapshot,
+                    getSnapshot: () => snapshot,
                     save,
                     subscribe: (nextListener) => {
                       listener = nextListener
@@ -213,7 +217,7 @@ describe('SpaceDetailPage', () => {
       </MemoryRouter>
     )
 
-    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+    expect(save).not.toHaveBeenCalled()
     snapshot = {
       value: {
         resourcesBySpace: {
@@ -233,11 +237,9 @@ describe('SpaceDetailPage', () => {
     }
     act(() => listener?.())
 
-    fireEvent.click(
-      await screen.findByRole('tab', { name: '空间知识库 (1)' })
-    )
+    fireEvent.click(await screen.findByRole('tab', { name: '空间知识库 (1)' }))
     expect(screen.getByText('远端文档')).toBeInTheDocument()
-    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+    expect(save).not.toHaveBeenCalled()
   })
 
   it('shows a non-blocking status when resource persistence is unavailable', async () => {
@@ -253,7 +255,11 @@ describe('SpaceDetailPage', () => {
                 <SpaceDetailPage
                   api={api}
                   resourceRepository={{
-                    load: () => ({
+                    hydrate: async () => ({
+                      value: { resourcesBySpace: {} },
+                      revision: 0
+                    }),
+                    getSnapshot: () => ({
                       value: { resourcesBySpace: {} },
                       revision: 0
                     }),
@@ -281,6 +287,8 @@ describe('SpaceDetailPage', () => {
       </MemoryRouter>
     )
 
+    fireEvent.click(screen.getByRole('tab', { name: '空间知识库 (0)' }))
+    fireEvent.click(screen.getByRole('button', { name: '上传本地文件' }))
     expect(
       await screen.findByRole('status', { name: '空间资源存储状态' })
     ).toHaveTextContent('空间资源的更改暂时无法保存')

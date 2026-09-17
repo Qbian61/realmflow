@@ -7,6 +7,7 @@ import {
   UseTemplateDialog
 } from './TemplateDialogs'
 import type { WorkspaceSpace } from '../domain/workspace'
+import { useModelProfiles } from '../app/hooks/use-model-profiles'
 
 const templates: TemplateDefinition[] = [
   {
@@ -97,7 +98,11 @@ const templates: TemplateDefinition[] = [
 
 type NewChatPageProps = {
   spaces?: WorkspaceSpace[]
-  onCreateSession?: (spacePath: string, prompt: string) => void
+  onCreateSession?: (
+    spacePath: string,
+    prompt: string,
+    modelProfileId?: string
+  ) => void
 }
 
 export function NewChatPage({
@@ -107,6 +112,11 @@ export function NewChatPage({
   const [prompt, setPrompt] = useState('')
   const [submittedPrompt, setSubmittedPrompt] = useState('')
   const [selectedWorkspace, setSelectedWorkspace] = useState('none')
+  const models = useModelProfiles()
+  const [selectedFolder, setSelectedFolder] = useState<{
+    value: string
+    label: string
+  } | null>(null)
   const [activeTemplateTag, setActiveTemplateTag] = useState('全部')
   const [templateSearch, setTemplateSearch] = useState('')
   const [customTemplates, setCustomTemplates] = useState<TemplateDefinition[]>([])
@@ -129,8 +139,12 @@ export function NewChatPage({
   const submitPrompt = (): void => {
     const nextPrompt = prompt.trim()
     if (!nextPrompt) return
-    if (selectedWorkspace !== 'none' && onCreateSession) {
-      onCreateSession(selectedWorkspace, nextPrompt)
+    if (onCreateSession) {
+      onCreateSession(
+        selectedWorkspace,
+        nextPrompt,
+        models.selectedId || undefined
+      )
       setPrompt('')
       return
     }
@@ -160,14 +174,36 @@ export function NewChatPage({
             connector: '使用连接器：'
           }}
           fileInputId="chat-attachment"
+          modelOptions={models.options}
+          modelProfileId={models.selectedId}
+          onModelProfileChange={models.select}
           workspaceOptions={[
-            { value: 'none', label: '选择工作空间' },
+            { value: 'none', label: '不绑定工作空间' },
+            { value: 'local-folder', label: '选择本地文件夹…' },
+            ...(selectedFolder ? [selectedFolder] : []),
             ...spaces.map((space) => ({
               value: space.path,
               label: space.label
             }))
           ]}
-          onWorkspaceChange={setSelectedWorkspace}
+          onWorkspaceChange={(value) => {
+            if (value !== 'local-folder') {
+              setSelectedWorkspace(value)
+              return
+            }
+            void window.realmflow?.workspace.chooseFolder().then((binding) => {
+              if (!binding) {
+                setSelectedWorkspace('none')
+                return
+              }
+              const option = {
+                value: `folder:${binding.rootPath}`,
+                label: binding.rootName
+              }
+              setSelectedFolder(option)
+              setSelectedWorkspace(option.value)
+            })
+          }}
           onChange={setPrompt}
           onSubmit={submitPrompt}
         />

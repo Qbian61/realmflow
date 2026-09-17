@@ -6,8 +6,9 @@ import { Composer } from '../components/Composer'
 import type {
   ChatSession,
   ChatSessionMessage
-} from '../features/sessions/session-store'
+} from '../domain/chat-session'
 import type { WorkspaceSpace } from '../domain/workspace'
+import { useModelProfiles } from '../app/hooks/use-model-profiles'
 
 const followUpSuggestions = [
   '如何调整需求优先级？',
@@ -35,7 +36,11 @@ function formatTaskDuration(
 type ChatSessionPageProps = {
   sessions: ChatSession[]
   spaces: WorkspaceSpace[]
-  onAppendMessage: (sessionId: string, content: string) => void
+  onAppendMessage: (
+    sessionId: string,
+    content: string,
+    modelProfileId?: string
+  ) => void
 }
 
 export default function ChatSessionPage({
@@ -45,18 +50,24 @@ export default function ChatSessionPage({
 }: ChatSessionPageProps): JSX.Element {
   const { sessionId } = useParams()
   const [prompt, setPrompt] = useState('')
+  const models = useModelProfiles()
   const session = sessions.find((item) => item.id === sessionId)
 
   if (!session) return <Navigate to="/chat/new" replace />
 
   const space = spaces.find((item) => item.path === session.spacePath)
+  const contextLabel =
+    space?.label ??
+    (session.folderPath
+      ? session.folderPath.split(/[\\/]/).filter(Boolean).at(-1)
+      : '本地对话')
 
   return (
     <main className="chat-session-page">
       <header className="chat-session-header">
         <h1>{session.title}</h1>
         <p>
-          <span>{space?.label ?? '未知空间'}</span>
+          <span>{contextLabel}</span>
           <span>AI 生成内容请核实</span>
         </p>
       </header>
@@ -130,12 +141,15 @@ export default function ChatSessionPage({
             connector: '使用连接器：'
           }}
           fileInputId={`session-attachment-${session.id}`}
+          modelOptions={models.options}
+          modelProfileId={models.selectedId}
+          onModelProfileChange={models.select}
           showContext={false}
           onChange={setPrompt}
           onSubmit={() => {
             const content = prompt.trim()
             if (!content) return
-            onAppendMessage(session.id, content)
+            onAppendMessage(session.id, content, models.selectedId || undefined)
             setPrompt('')
           }}
         />

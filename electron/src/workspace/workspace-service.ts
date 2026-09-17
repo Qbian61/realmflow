@@ -4,11 +4,12 @@ import {
   readdir,
   realpath,
   rename,
+  rm,
   stat,
   writeFile
 } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type {
   RequirementManifest,
   OpenedSessionFiles,
@@ -18,6 +19,11 @@ import type {
   WorkspaceFileKind,
   WriteWorkspaceFileInput
 } from '../../../shared/workspace'
+import type { RequirementStageId } from '../../../domain/requirement'
+import type {
+  ArtifactMetadataInput,
+  WorkspaceMetadataStore
+} from './workspace-metadata-store'
 
 const MAX_TEXT_FILE_SIZE = 2 * 1024 * 1024
 const IMAGE_EXTENSIONS = new Set(['.avif', '.gif', '.jpeg', '.jpg', '.png', '.webp'])
@@ -61,16 +67,170 @@ const LANGUAGE_BY_EXTENSION: Record<string, string> = {
   '.zsh': 'shell'
 }
 
-type StoredBindings = Record<string, string>
 type SessionBinding = {
   rootPath: string
   allowedFiles: Set<string> | null
 }
 
+export type ManagedDirectory = {
+  path: string
+  directoryName: string
+}
+
+export type PendingManagedDirectory = ManagedDirectory & {
+  commit: () => Promise<ManagedDirectory>
+  rollback: () => Promise<void>
+}
+
+export type PendingManagedDirectoryMove = {
+  originalPath: string
+  movedPath: string
+  rollback: () => Promise<void>
+}
+
+export type CreateManagedSpaceDirectoryInput = {
+  rootPath: string
+  spaceId: string
+  name: string
+}
+
+export type CreateManagedRequirementDirectoryInput = {
+  spacePath: string
+  spaceId: string
+  requirementId: string
+  name: string
+}
+
 export class WorkspaceService {
   private readonly sessionBindings = new Map<string, SessionBinding>()
 
-  constructor(private readonly bindingsFile: string) {}
+  constructor(private readonly metadata: WorkspaceMetadataStore) {}
+
+  async initializeWorkRoot(rootPath: string, rootId: string): Promise<string> {
+    const canonicalRoot = await realpath(rootPath)
+    if (!(await stat(canonicalRoot)).isDirectory()) {
+      throw new Error('Work root must be a directory')
+    }
+    const metadataPath = resolve(canonicalRoot, '.realmflow')
+    await mkdir(resolve(metadataPath, 'tmp'), { recursive: true })
+    await mkdir(resolve(metadataPath, 'trash'), { recursive: true })
+    await this.writeJsonAtomically(resolve(metadataPath, 'root.json'), {
+      version: 1,
+      rootId
+    })
+    return canonicalRoot
+  }
+
+  async prepareManagedSpaceDirectory(
+    input: CreateManagedSpaceDirectoryInput
+  ): Promise<PendingManagedDirectory> {
+    const canonicalRoot = await realpath(input.rootPath)
+    await this.assertManagedRoot(canonicalRoot)
+    return this.prepareManagedDirectory({
+      parentPath: canonicalRoot,
+      temporaryRoot: resolve(canonicalRoot, '.realmflow', 'tmp'),
+      entityId: input.spaceId,
+      name: input.name,
+      manifestName: 'space.json',
+      manifest: {
+        version: 1,
+        spaceId: input.spaceId,
+        rootPath: canonicalRoot
+      },
+      directories: []
+    })
+  }
+
+  async createManagedSpaceDirectory(
+    input: CreateManagedSpaceDirectoryInput
+  ): Promise<ManagedDirectory> {
+    const pending = await this.prepareManagedSpaceDirectory(input)
+    try {
+      return await pending.commit()
+    } catch (error) {
+      await pending.rollback()
+      throw error
+    }
+  }
+
+  async prepareManagedRequirementDirectory(
+    input: CreateManagedRequirementDirectoryInput
+  ): Promise<PendingManagedDirectory> {
+    const canonicalSpace = await realpath(input.spacePath)
+    const manifest = JSON.parse(
+      await readFile(resolve(canonicalSpace, '.realmflow', 'space.json'), 'utf8')
+    ) as { spaceId?: unknown }
+    if (manifest.spaceId !== input.spaceId) {
+      throw new Error('Managed space manifest does not match')
+    }
+    return this.prepareManagedDirectory({
+      parentPath: canonicalSpace,
+      temporaryRoot: resolve(canonicalSpace, '.realmflow', 'tmp'),
+      entityId: input.requirementId,
+      name: input.name,
+      manifestName: 'requirement.json',
+      manifest: {
+        version: 1,
+        requirementId: input.requirementId,
+        spaceId: input.spaceId
+      },
+      directories: ['artifacts', 'attachments', 'workspace']
+    })
+  }
+
+  async createManagedRequirementDirectory(
+    input: CreateManagedRequirementDirectoryInput
+  ): Promise<ManagedDirectory> {
+    const pending = await this.prepareManagedRequirementDirectory(input)
+    try {
+      return await pending.commit()
+    } catch (error) {
+      await pending.rollback()
+      throw error
+    }
+  }
+
+  async moveManagedDirectoryToTrash(input: {
+    workRootPath: string
+    entityType: 'space' | 'requirement'
+    entityId: string
+    path: string
+  }): Promise<PendingManagedDirectoryMove> {
+    const workRootPath = await realpath(input.workRootPath)
+    await this.assertManagedRoot(workRootPath)
+    const originalPath = await realpath(input.path)
+    this.assertInside(workRootPath, originalPath)
+    const trashRoot = resolve(workRootPath, '.realmflow', 'trash')
+    await mkdir(trashRoot, { recursive: true })
+    const movedPath = resolve(
+      trashRoot,
+      `${input.entityType}-${this.safeStableId(input.entityId)}-${randomUUID()}`
+    )
+    this.assertInside(trashRoot, movedPath)
+    await rename(originalPath, movedPath)
+    return {
+      originalPath,
+      movedPath,
+      rollback: async () => {
+        await rename(movedPath, originalPath)
+      }
+    }
+  }
+
+  async restoreManagedDirectory(input: {
+    originalPath: string
+    trashPath: string
+  }): Promise<PendingManagedDirectoryMove> {
+    const trashPath = await realpath(input.trashPath)
+    await rename(trashPath, input.originalPath)
+    return {
+      originalPath: trashPath,
+      movedPath: input.originalPath,
+      rollback: async () => {
+        await rename(input.originalPath, trashPath)
+      }
+    }
+  }
 
   async bindRequirement(
     requirementId: string,
@@ -83,9 +243,7 @@ export class WorkspaceService {
       throw new Error('Workspace root must be a directory')
     }
 
-    const bindings = await this.readBindings()
-    bindings[requirementId] = canonicalRoot
-    await this.writeBindings(bindings)
+    await this.metadata.setBinding(requirementId, canonicalRoot)
     return this.createBinding(requirementId, canonicalRoot)
   }
 
@@ -93,7 +251,7 @@ export class WorkspaceService {
     this.assertRequirementId(requirementId)
     const rootPath =
       this.sessionBindings.get(requirementId)?.rootPath ??
-      (await this.readBindings())[requirementId]
+      (await this.metadata.getBinding(requirementId))
     if (!rootPath) return null
 
     try {
@@ -224,16 +382,7 @@ export class WorkspaceService {
   }
 
   async readManifest(requirementId: string): Promise<RequirementManifest> {
-    const binding = await this.requireBinding(requirementId)
-    const manifestPath = resolve(binding.rootPath, '.realmflow', 'requirement.json')
-
-    try {
-      const parsed = JSON.parse(await readFile(manifestPath, 'utf8')) as unknown
-      return this.validateManifest(requirementId, parsed)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-      return { version: 1, requirementId, stages: {} }
-    }
+    return this.metadata.readManifest(requirementId)
   }
 
   async writeManifest(
@@ -248,13 +397,26 @@ export class WorkspaceService {
       }
     }
 
-    const binding = await this.requireBinding(requirementId)
-    const manifestDirectory = resolve(binding.rootPath, '.realmflow')
-    const manifestPath = resolve(manifestDirectory, 'requirement.json')
-    await mkdir(manifestDirectory, { recursive: true })
-    const temporaryPath = `${manifestPath}.${randomUUID()}.tmp`
-    await writeFile(temporaryPath, `${JSON.stringify(validatedManifest, null, 2)}\n`, 'utf8')
-    await rename(temporaryPath, manifestPath)
+    const artifacts: ArtifactMetadataInput[] = []
+    for (const [stageId, stage] of Object.entries(
+      validatedManifest.stages
+    )) {
+      if (!stage) continue
+      for (const artifact of stage.artifacts) {
+        const file = await this.readFile(requirementId, artifact.path)
+        artifacts.push({
+          stageId: stageId as RequirementStageId,
+          path: artifact.path,
+          kind: file.kind,
+          checksum: `sha256:${createHash('sha256')
+            .update(file.content)
+            .digest('hex')}`,
+          byteSize: file.size,
+          primary: artifact.primary === true
+        })
+      }
+    }
+    await this.metadata.replaceManifest(requirementId, artifacts)
     return validatedManifest
   }
 
@@ -305,6 +467,91 @@ export class WorkspaceService {
     ) {
       throw new Error('Path is outside the bound workspace')
     }
+  }
+
+  private async assertManagedRoot(rootPath: string): Promise<void> {
+    const manifest = JSON.parse(
+      await readFile(resolve(rootPath, '.realmflow', 'root.json'), 'utf8')
+    ) as { version?: unknown; rootId?: unknown }
+    if (manifest.version !== 1 || typeof manifest.rootId !== 'string') {
+      throw new Error('Work root manifest is invalid')
+    }
+  }
+
+  private async prepareManagedDirectory(input: {
+    parentPath: string
+    temporaryRoot: string
+    entityId: string
+    name: string
+    manifestName: string
+    manifest: Record<string, unknown>
+    directories: string[]
+  }): Promise<PendingManagedDirectory> {
+    const directoryName = `${this.safeDirectoryName(input.name)}--${this.safeStableId(
+      input.entityId
+    )}`
+    const finalPath = resolve(input.parentPath, directoryName)
+    this.assertInside(input.parentPath, finalPath)
+    await mkdir(input.temporaryRoot, { recursive: true })
+    const temporaryPath = resolve(
+      input.temporaryRoot,
+      `${directoryName}-${randomUUID()}.tmp`
+    )
+    await mkdir(resolve(temporaryPath, '.realmflow'), { recursive: true })
+    for (const directory of input.directories) {
+      await mkdir(resolve(temporaryPath, directory), { recursive: true })
+    }
+    await this.writeJsonAtomically(
+      resolve(temporaryPath, '.realmflow', input.manifestName),
+      input.manifest
+    )
+
+    let committed = false
+    return {
+      path: finalPath,
+      directoryName,
+      commit: async () => {
+        await rename(temporaryPath, finalPath)
+        committed = true
+        return { path: finalPath, directoryName }
+      },
+      rollback: async () => {
+        await rm(committed ? finalPath : temporaryPath, {
+          recursive: true,
+          force: true
+        })
+      }
+    }
+  }
+
+  private async writeJsonAtomically(
+    targetPath: string,
+    value: Record<string, unknown>
+  ): Promise<void> {
+    const temporaryPath = `${targetPath}.${randomUUID()}.tmp`
+    await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, {
+      encoding: 'utf8',
+      mode: 0o600
+    })
+    await rename(temporaryPath, targetPath)
+  }
+
+  private safeDirectoryName(name: string): string {
+    const safe = name
+      .normalize('NFKC')
+      .trim()
+      .replace(/\s+/gu, '-')
+      .replace(/[^\p{L}\p{N}._-]+/gu, '-')
+      .replace(/-+/gu, '-')
+      .replace(/^[-.]+|[-.]+$/gu, '')
+    if (!safe) throw new Error('Managed directory name is invalid')
+    return safe.slice(0, 80)
+  }
+
+  private safeStableId(id: string): string {
+    const safe = id.replace(/[^A-Za-z0-9_-]/g, '')
+    if (!safe) throw new Error('Managed directory id is invalid')
+    return safe.slice(-24)
   }
 
   private async readWorkspaceFile(
@@ -416,21 +663,4 @@ export class WorkspaceService {
     }
   }
 
-  private async readBindings(): Promise<StoredBindings> {
-    try {
-      const parsed = JSON.parse(await readFile(this.bindingsFile, 'utf8')) as unknown
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
-      return parsed as StoredBindings
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}
-      throw error
-    }
-  }
-
-  private async writeBindings(bindings: StoredBindings): Promise<void> {
-    await mkdir(dirname(this.bindingsFile), { recursive: true })
-    const temporaryPath = `${this.bindingsFile}.${randomUUID()}.tmp`
-    await writeFile(temporaryPath, `${JSON.stringify(bindings, null, 2)}\n`, 'utf8')
-    await rename(temporaryPath, this.bindingsFile)
-  }
 }

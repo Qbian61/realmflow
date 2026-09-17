@@ -4,14 +4,22 @@ export type ChatSessionMessage = {
   id: string
   content: string
   createdAt: number
-  role?: 'user' | 'assistant'
+  role?: 'user' | 'assistant' | 'tool'
+  sortOrder?: number
 }
 
 export type ChatSession = {
   id: string
+  kind?: 'general' | 'space' | 'requirement_node'
+  workspaceId?: string
+  requirementId?: string
+  nodeRunId?: string
+  folderPath?: string
   title: string
   spacePath: string
   messages: ChatSessionMessage[]
+  sortOrder?: number
+  revision?: number
   createdAt: number
   updatedAt: number
 }
@@ -100,7 +108,8 @@ function isChatSessionMessage(value: unknown): value is ChatSessionMessage {
     typeof value.createdAt === 'number' &&
     (value.role === undefined ||
       value.role === 'user' ||
-      value.role === 'assistant')
+      value.role === 'assistant' ||
+      value.role === 'tool')
   )
 }
 

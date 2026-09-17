@@ -1,12 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { IPC_SEND_CHANNELS } from '../../../shared/ipc-contract'
 import type { WorkbenchActionId } from '../../../shared/native-overlay'
+import { NATIVE_OVERLAY_SEND_CHANNELS } from './native-overlay-channels'
 
 contextBridge.exposeInMainWorld('nativeOverlayMenu', {
-select: (action: WorkbenchActionId) => {
-    ipcRenderer.send(IPC_SEND_CHANNELS.nativeOverlaySelect, action)
+  select: (action: WorkbenchActionId) => {
+    ipcRenderer.send(NATIVE_OVERLAY_SEND_CHANNELS.select, action)
   },
   close: () => {
-    ipcRenderer.send(IPC_SEND_CHANNELS.nativeOverlayClose)
+    ipcRenderer.send(NATIVE_OVERLAY_SEND_CHANNELS.close)
   }
 })

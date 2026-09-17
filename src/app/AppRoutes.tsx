@@ -1,16 +1,19 @@
 import { ArrowUpRight } from 'lucide-react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import type { SpaceResourceRepository } from '../application/ports/repositories'
+import type { AiRunController } from './hooks/use-ai-run-controller'
 import type { ChatSession } from '../domain/chat-session'
 import type {
   WorkspaceRequirement,
   WorkspaceSpace
 } from '../domain/workspace'
 import { primaryNavigation, utilityPages } from '../navigation'
+import AnalyticsPage from '../pages/AnalyticsPage'
 import ChatSessionPage from '../pages/ChatSessionPage'
 import { NewChatPage } from '../pages/NewChatPage'
 import RequirementDetailPage from '../pages/RequirementDetailPage'
 import SchedulePage from '../pages/SchedulePage'
+import SettingsPage from '../pages/SettingsPage'
 import SpaceDetailPage from '../pages/SpaceDetailPage'
 
 type AppRoutesProps = {
@@ -18,8 +21,17 @@ type AppRoutesProps = {
   requirementsBySpace: Record<string, WorkspaceRequirement[]>
   sessions: ChatSession[]
   resourceRepository: SpaceResourceRepository
-  onCreateSession: (spacePath: string, prompt: string) => void
-  onAppendMessage: (sessionId: string, content: string) => void
+  onCreateSession: (
+    spacePath: string,
+    prompt: string,
+    modelProfileId?: string
+  ) => void
+  onAppendMessage: (
+    sessionId: string,
+    content: string,
+    modelProfileId?: string
+  ) => void
+  aiRuns: AiRunController
 }
 
 export function AppRoutes({
@@ -28,7 +40,8 @@ export function AppRoutes({
   sessions,
   resourceRepository,
   onCreateSession,
-  onAppendMessage
+  onAppendMessage,
+  aiRuns
 }: AppRoutesProps): JSX.Element {
   const allPages = [...primaryNavigation, ...spaces, ...utilityPages]
   return (
@@ -43,6 +56,8 @@ export function AppRoutes({
         }
       />
       <Route path="/schedules" element={<SchedulePage />} />
+      <Route path="/analytics" element={<AnalyticsPage />} />
+      <Route path="/settings" element={<SettingsPage />} />
       <Route
         path="/spaces/:spaceId"
         element={
@@ -70,6 +85,7 @@ export function AppRoutes({
           <RequirementDetailPage
             spaces={spaces}
             requirementsBySpace={requirementsBySpace}
+            aiRuns={aiRuns}
           />
         }
       />
@@ -78,6 +94,8 @@ export function AppRoutes({
           ({ path }) =>
             path !== '/chat/new' &&
             path !== '/schedules' &&
+            path !== '/analytics' &&
+            path !== '/settings' &&
             !path.startsWith('/spaces/')
         )
         .map(({ path, label, description }) => (

@@ -8,6 +8,9 @@ export type SpaceResource = {
   type: SpaceResourceType
   locator: string
   detail: string
+  sortOrder?: number
+  revision?: number
+  createdAt?: number
   updatedAt: number
 }
 

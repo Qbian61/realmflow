@@ -35,7 +35,25 @@ import {
 import { WorkspaceUserMenu } from './WorkspaceUserMenu'
 
 const SPACE_ITEM_MENU_HEIGHT = 125
+const REQUIREMENT_MENU_HEIGHT = 46
 const VIEWPORT_MENU_MARGIN = 8
+
+type ViewportMenuPosition = { top: number; right: number }
+
+function getViewportMenuPosition(
+  bounds: DOMRect,
+  menuHeight: number
+): ViewportMenuPosition {
+  const preferredTop = bounds.bottom + 5
+  return {
+    top:
+      preferredTop + menuHeight <=
+      window.innerHeight - VIEWPORT_MENU_MARGIN
+        ? preferredTop
+        : Math.max(VIEWPORT_MENU_MARGIN, bounds.top - menuHeight - 5),
+    right: Math.max(VIEWPORT_MENU_MARGIN, window.innerWidth - bounds.right)
+  }
+}
 
 type SidebarDragState =
   | { kind: 'space'; spacePath: string }
@@ -74,13 +92,13 @@ export function WorkspaceSidebar({
   const [recentOpen, setRecentOpen] = useState(true)
   const [spaceMenuOpen, setSpaceMenuOpen] = useState(false)
   const [spaceItemMenuPath, setSpaceItemMenuPath] = useState<string | null>(null)
-  const [spaceItemMenuPosition, setSpaceItemMenuPosition] = useState<{
-    top: number
-    right: number
-  } | null>(null)
+  const [spaceItemMenuPosition, setSpaceItemMenuPosition] =
+    useState<ViewportMenuPosition | null>(null)
   const [requirementMenuKey, setRequirementMenuKey] = useState<string | null>(
     null
   )
+  const [requirementMenuPosition, setRequirementMenuPosition] =
+    useState<ViewportMenuPosition | null>(null)
   const [sidebarDropTarget, setSidebarDropTarget] = useState<string | null>(null)
   const [collapsedSpacePaths, setCollapsedSpacePaths] = useState<Set<string>>(
     () => new Set()
@@ -100,6 +118,7 @@ export function WorkspaceSidebar({
       if (!spaceListRef.current?.contains(event.target as Node)) {
         setSpaceItemMenuPath(null)
         setRequirementMenuKey(null)
+        setRequirementMenuPosition(null)
       }
     }
     const closeOnEscape = (event: KeyboardEvent): void => {
@@ -107,6 +126,7 @@ export function WorkspaceSidebar({
       setSpaceMenuOpen(false)
       setSpaceItemMenuPath(null)
       setRequirementMenuKey(null)
+      setRequirementMenuPosition(null)
       closeNameDialog()
     }
 
@@ -122,6 +142,7 @@ export function WorkspaceSidebar({
     setSpaceMenuOpen(false)
     setSpaceItemMenuPath(null)
     setRequirementMenuKey(null)
+    setRequirementMenuPosition(null)
     setNameDraft('')
     setNameDialog(dialog)
   }
@@ -311,6 +332,7 @@ export function WorkspaceSidebar({
                     activeMenuPath={spaceItemMenuPath}
                     activeRequirementMenuKey={requirementMenuKey}
                     menuPosition={spaceItemMenuPosition}
+                    requirementMenuPosition={requirementMenuPosition}
                     dragRef={sidebarDragRef}
                     onDropTargetChange={setSidebarDropTarget}
                     onClearDrag={clearSidebarDrag}
@@ -325,33 +347,28 @@ export function WorkspaceSidebar({
                       })
                     }}
                     onOpenSpaceMenu={(bounds) => {
-                      const preferredTop = bounds.bottom + 5
-                      const top =
-                        preferredTop + SPACE_ITEM_MENU_HEIGHT <=
-                        window.innerHeight - VIEWPORT_MENU_MARGIN
-                          ? preferredTop
-                          : Math.max(
-                              VIEWPORT_MENU_MARGIN,
-                              bounds.top - SPACE_ITEM_MENU_HEIGHT - 5
-                            )
                       setSpaceMenuOpen(false)
                       setRequirementMenuKey(null)
-                      setSpaceItemMenuPosition({
-                        top,
-                        right: Math.max(
-                          VIEWPORT_MENU_MARGIN,
-                          window.innerWidth - bounds.right
-                        )
-                      })
+                      setRequirementMenuPosition(null)
+                      setSpaceItemMenuPosition(
+                        getViewportMenuPosition(bounds, SPACE_ITEM_MENU_HEIGHT)
+                      )
                       setSpaceItemMenuPath((current) =>
                         current === space.path ? null : space.path
                       )
                     }}
-                    onOpenRequirementMenu={(key) => {
+                    onOpenRequirementMenu={(key, bounds) => {
+                      if (requirementMenuKey === key) {
+                        setRequirementMenuKey(null)
+                        setRequirementMenuPosition(null)
+                        return
+                      }
                       setSpaceItemMenuPath(null)
-                      setRequirementMenuKey((current) =>
-                        current === key ? null : key
+                      setSpaceItemMenuPosition(null)
+                      setRequirementMenuPosition(
+                        getViewportMenuPosition(bounds, REQUIREMENT_MENU_HEIGHT)
                       )
+                      setRequirementMenuKey(key)
                     }}
                     onOpenNameDialog={openNameDialog}
                   />
@@ -389,7 +406,8 @@ type SpaceEntryProps = {
   dropTarget: string | null
   activeMenuPath: string | null
   activeRequirementMenuKey: string | null
-  menuPosition: { top: number; right: number } | null
+  menuPosition: ViewportMenuPosition | null
+  requirementMenuPosition: ViewportMenuPosition | null
   dragRef: MutableRefObject<SidebarDragState | null>
   onDropTargetChange: (target: string) => void
   onClearDrag: () => void
@@ -401,7 +419,7 @@ type SpaceEntryProps = {
   ) => void
   onToggleRequirements: () => void
   onOpenSpaceMenu: (bounds: DOMRect) => void
-  onOpenRequirementMenu: (key: string) => void
+  onOpenRequirementMenu: (key: string, bounds: DOMRect) => void
   onOpenNameDialog: (dialog: WorkspaceNameDialogState) => void
 }
 
@@ -413,6 +431,7 @@ function SpaceEntry({
   activeMenuPath,
   activeRequirementMenuKey,
   menuPosition,
+  requirementMenuPosition,
   dragRef,
   onDropTargetChange,
   onClearDrag,
@@ -630,7 +649,12 @@ function SpaceEntry({
                     aria-haspopup="menu"
                     aria-expanded={activeRequirementMenuKey === menuKey}
                     title={`${requirement.title}操作`}
-                    onClick={() => onOpenRequirementMenu(menuKey)}
+                    onClick={(event) =>
+                      onOpenRequirementMenu(
+                        menuKey,
+                        event.currentTarget.getBoundingClientRect()
+                      )
+                    }
                   >
                     <Ellipsis size={16} />
                   </button>
@@ -639,6 +663,7 @@ function SpaceEntry({
                       className="requirement-actions-menu"
                       role="menu"
                       aria-label={`${requirement.title}操作`}
+                      style={requirementMenuPosition ?? undefined}
                     >
                       <button
                         className="danger"

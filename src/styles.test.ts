@@ -293,6 +293,16 @@ describe('Composer focus styles', () => {
     expect(menuRule).toContain('position: fixed;')
   })
 
+  it('positions requirement menus outside the scroll clipping context', () => {
+    const menuRules = [
+      ...styles.matchAll(
+        /(?:^|\n)\.requirement-actions-menu\s*\{([^}]*)\}/g
+      )
+    ].map((match) => match[1])
+
+    expect(menuRules.some((rule) => rule.includes('position: fixed;'))).toBe(true)
+  })
+
   it('keeps primary navigation rows compact', () => {
     const navigationRule =
       styles.match(/\.sidebar > nav\s*\{([^}]*)\}/)?.[1] ?? ''

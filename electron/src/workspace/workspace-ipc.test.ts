@@ -13,7 +13,19 @@ describe('registerWorkspaceIpc', () => {
     await mkdir(workspaceDirectory)
     const selectedFile = join(workspaceDirectory, 'notes.md')
     await writeFile(selectedFile, 'notes')
-    const service = new WorkspaceService(join(temporaryDirectory, 'bindings.json'))
+    const bindings = new Map<string, string>()
+    const service = new WorkspaceService({
+      getBinding: async (requirementId) => bindings.get(requirementId),
+      setBinding: async (requirementId, rootPath) => {
+        bindings.set(requirementId, rootPath)
+      },
+      readManifest: async (requirementId) => ({
+        version: 1,
+        requirementId,
+        stages: {}
+      }),
+      replaceManifest: async () => undefined
+    })
     const handlers = new Map<string, (...args: unknown[]) => unknown>()
     const shownItems: string[] = []
 

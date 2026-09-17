@@ -6,19 +6,23 @@
   "main": "out/main/main.js",
   "type": "module",
   "scripts": {
-    "dev": "node scripts/dev.mjs",
+    "dev": "npm run rebuild:native && node scripts/dev.mjs",
     "build": "npm run typecheck && electron-vite build",
+    "rebuild:native": "electron-rebuild -f -w better-sqlite3,node-pty",
+    "rebuild:test-native": "npm rebuild better-sqlite3 node-pty",
+    "verify:sqlite": "electron scripts/verify-electron-sqlite.cjs",
     "dist": "npm run dist:mac",
     "dist:mac": "bash scripts/build-mac-installer.sh",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test": "npm run rebuild:test-native && vitest run",
+    "test:watch": "npm run rebuild:test-native && vitest"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
+    "better-sqlite3": "^11.10.0",
     "lucide-react": "^0.468.0",
     "monaco-editor": "^0.56.0",
     "node-pty": "^1.1.0",
@@ -30,8 +34,10 @@
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
+    "@electron/rebuild": "^3.7.2",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.1.0",
+    "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^20.17.10",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",

@@ -2,10 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom'
 import { vi } from 'vitest'
 import type { RealmFlowApi } from '../../../shared/types'
-import {
-  WorkbenchProvider,
-  useWorkbench
-} from './WorkbenchProvider'
+import { WorkbenchProvider, useWorkbench } from './WorkbenchProvider'
 
 vi.mock('../artifacts/ArtifactWorkbench', () => ({
   default: () => <textarea aria-label="工作区编辑内容" defaultValue="" />
@@ -28,7 +25,10 @@ function TestPage(): JSX.Element {
       <button type="button" onClick={() => void workbench.openFolder()}>
         打开测试文件夹
       </button>
-      <button type="button" onClick={() => void workbench.openUrl('example.com')}>
+      <button
+        type="button"
+        onClick={() => void workbench.openUrl('example.com')}
+      >
         打开测试网页
       </button>
       <button type="button" onClick={() => void workbench.openUrl()}>
@@ -48,14 +48,19 @@ function createApi(): RealmFlowApi {
     platform: 'darwin',
     getSidecarStatus: vi.fn().mockResolvedValue('ready'),
     quitApp: vi.fn().mockResolvedValue(undefined),
+    aiRuns: {
+      start: vi.fn(),
+      cancel: vi.fn(),
+      get: vi.fn(),
+      attach: vi.fn(),
+      listEvents: vi.fn(),
+      onEvent: vi.fn().mockReturnValue(() => undefined)
+    },
+    business: {} as never,
     persistence: {
       load: vi.fn().mockResolvedValue({
         status: 'loaded',
         snapshot: { revision: 0, value: null }
-      }),
-      save: vi.fn().mockResolvedValue({
-        status: 'saved',
-        snapshot: { revision: 1, value: null }
       }),
       onChanged: vi.fn().mockReturnValue(() => undefined)
     },
@@ -173,27 +178,37 @@ describe('WorkbenchProvider', () => {
     const openButton = screen.getByRole('button', { name: '打开工作区' })
     expect(openButton.closest('.global-workbench-page')).not.toBeNull()
     expect(openButton.querySelector('svg')).toHaveAttribute('width', '18')
-    expect(openButton.querySelector('svg')).toHaveAttribute('stroke-width', '1.8')
+    expect(openButton.querySelector('svg')).toHaveAttribute(
+      'stroke-width',
+      '1.8'
+    )
     fireEvent.click(openButton)
 
     expect(
       screen.getByRole('complementary', { name: '全局工作区' })
     ).toBeInTheDocument()
     expect(screen.getByText('从这里开始')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '文件 浏览和预览文件' }))
-      .toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '文件夹 浏览文件夹目录' }))
-      .toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '浏览器 浏览及调试网页' }))
-      .toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '终端 运行命令及脚本' }))
-      .toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: '文件 浏览和预览文件' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: '文件夹 浏览文件夹目录' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: '浏览器 浏览及调试网页' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: '终端 运行命令及脚本' })
+    ).toBeInTheDocument()
 
     const closeButton = screen.getByRole('button', { name: '收起工作区' })
     expect(closeButton.closest('.global-workbench-page')).not.toBeNull()
     expect(closeButton.closest('.global-workbench-header')).toBeNull()
     expect(closeButton.querySelector('svg')).toHaveAttribute('width', '18')
-    expect(closeButton.querySelector('svg')).toHaveAttribute('stroke-width', '1.8')
+    expect(closeButton.querySelector('svg')).toHaveAttribute(
+      'stroke-width',
+      '1.8'
+    )
     fireEvent.click(closeButton)
 
     expect(
@@ -278,10 +293,14 @@ describe('WorkbenchProvider', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: '打开测试文件夹' }))
-    expect(await screen.findByRole('tab', { name: 'project' })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('tab', { name: 'project' })
+    ).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '打开测试网页' }))
-    expect(await screen.findByRole('tab', { name: 'Example' })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('tab', { name: 'Example' })
+    ).toBeInTheDocument()
     expect(api.webWorkbench.create).toHaveBeenCalledWith('example.com')
   })
 
@@ -424,9 +443,10 @@ describe('WorkbenchProvider', () => {
         rows: 24
       })
     })
-    expect(screen.getByRole('tab', { name: '终端 · project' }))
-      .toBeInTheDocument()
-    expect(screen.getByLabelText('终端 · project')).toBeInTheDocument()
+    expect(
+      screen.getByRole('tab', { name: '终端 · project' })
+    ).toBeInTheDocument()
+    expect(await screen.findByLabelText('终端 · project')).toBeInTheDocument()
   })
 
   it('maximizes and restores the workbench panel', () => {
@@ -445,7 +465,9 @@ describe('WorkbenchProvider', () => {
     expect(panel.closest('.global-workbench-layout')).toHaveClass('maximized')
 
     fireEvent.click(screen.getByRole('button', { name: '还原工作区' }))
-    expect(panel.closest('.global-workbench-layout')).not.toHaveClass('maximized')
+    expect(panel.closest('.global-workbench-layout')).not.toHaveClass(
+      'maximized'
+    )
   })
 
   it('opens page web links inside the global workbench', async () => {
@@ -501,7 +523,9 @@ describe('WorkbenchProvider', () => {
     fireEvent.click(screen.getByRole('button', { name: '打开' }))
 
     await waitFor(() => {
-      expect(api.webWorkbench.create).toHaveBeenCalledWith('https://example.com')
+      expect(api.webWorkbench.create).toHaveBeenCalledWith(
+        'https://example.com'
+      )
     })
     expect(dialog).not.toBeInTheDocument()
   })

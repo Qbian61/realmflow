@@ -2,25 +2,77 @@ import {
   mkdtemp,
   mkdir,
   readFile,
+  readdir,
   realpath,
   rm,
+  stat,
   symlink,
   writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { RequirementManifest } from '../../../shared/workspace'
 import { WorkspaceService } from './workspace-service'
+import type {
+  ArtifactMetadataInput,
+  WorkspaceMetadataStore
+} from './workspace-metadata-store'
+
+class MemoryWorkspaceMetadataStore implements WorkspaceMetadataStore {
+  readonly bindings = new Map<string, string>()
+  readonly manifests = new Map<string, RequirementManifest>()
+
+  async getBinding(requirementId: string): Promise<string | undefined> {
+    return this.bindings.get(requirementId)
+  }
+
+  async setBinding(requirementId: string, rootPath: string): Promise<void> {
+    this.bindings.set(requirementId, rootPath)
+  }
+
+  async readManifest(requirementId: string): Promise<RequirementManifest> {
+    return (
+      this.manifests.get(requirementId) ?? {
+        version: 1,
+        requirementId,
+        stages: {}
+      }
+    )
+  }
+
+  async replaceManifest(
+    requirementId: string,
+    artifacts: ArtifactMetadataInput[]
+  ): Promise<void> {
+    const stages: RequirementManifest['stages'] = {}
+    for (const artifact of artifacts) {
+      const stage = stages[artifact.stageId] ?? { artifacts: [] }
+      stage.artifacts.push({
+        path: artifact.path,
+        ...(artifact.primary ? { primary: true } : {})
+      })
+      stages[artifact.stageId] = stage
+    }
+    this.manifests.set(requirementId, {
+      version: 1,
+      requirementId,
+      stages
+    })
+  }
+}
 
 describe('WorkspaceService', () => {
   let temporaryDirectory: string
   let workspaceDirectory: string
   let service: WorkspaceService
+  let metadata: MemoryWorkspaceMetadataStore
 
   beforeEach(async () => {
     temporaryDirectory = await mkdtemp(join(tmpdir(), 'realmflow-workspace-'))
     workspaceDirectory = join(temporaryDirectory, 'project')
     await mkdir(workspaceDirectory)
-    service = new WorkspaceService(join(temporaryDirectory, 'bindings.json'))
+    metadata = new MemoryWorkspaceMetadataStore()
+    service = new WorkspaceService(metadata)
     await service.bindRequirement('requirement-1', workspaceDirectory)
   })
 
@@ -44,6 +96,76 @@ describe('WorkspaceService', () => {
         type: 'file'
       }
     ])
+  })
+
+  it('initializes a managed work root with private metadata directories', async () => {
+    const rootPath = join(temporaryDirectory, 'managed-root')
+    await mkdir(rootPath)
+
+    await service.initializeWorkRoot(rootPath, 'root-1')
+
+    await expect(
+      readFile(join(rootPath, '.realmflow', 'root.json'), 'utf8').then(JSON.parse)
+    ).resolves.toEqual({ version: 1, rootId: 'root-1' })
+    expect((await stat(join(rootPath, '.realmflow', 'tmp'))).isDirectory()).toBe(
+      true
+    )
+    expect((await stat(join(rootPath, '.realmflow', 'trash'))).isDirectory()).toBe(
+      true
+    )
+  })
+
+  it('creates a managed space and requirement under the selected root', async () => {
+    const rootPath = join(temporaryDirectory, 'managed-root')
+    await mkdir(rootPath)
+    await service.initializeWorkRoot(rootPath, 'root-1')
+
+    const space = await service.createManagedSpaceDirectory({
+      rootPath,
+      spaceId: 'sp_a1b2c3',
+      name: 'Product Space'
+    })
+    const requirement = await service.createManagedRequirementDirectory({
+      spacePath: space.path,
+      spaceId: 'sp_a1b2c3',
+      requirementId: 'req_d4e5f6',
+      name: 'Login Flow'
+    })
+
+    expect(space.directoryName).toBe('Product-Space--sp_a1b2c3')
+    expect(requirement.directoryName).toBe('Login-Flow--req_d4e5f6')
+    expect(requirement.path.startsWith(`${space.path}/`)).toBe(true)
+    await expect(
+      readFile(join(space.path, '.realmflow', 'space.json'), 'utf8').then(
+        JSON.parse
+      )
+    ).resolves.toMatchObject({ version: 1, spaceId: 'sp_a1b2c3' })
+    await expect(
+      readFile(
+        join(requirement.path, '.realmflow', 'requirement.json'),
+        'utf8'
+      ).then(JSON.parse)
+    ).resolves.toMatchObject({
+      version: 1,
+      requirementId: 'req_d4e5f6',
+      spaceId: 'sp_a1b2c3'
+    })
+  })
+
+  it('cleans temporary directories when a managed directory is rolled back', async () => {
+    const rootPath = join(temporaryDirectory, 'managed-root')
+    await mkdir(rootPath)
+    await service.initializeWorkRoot(rootPath, 'root-1')
+    const pending = await service.prepareManagedSpaceDirectory({
+      rootPath,
+      spaceId: 'sp_rollback',
+      name: 'Rollback'
+    })
+
+    await pending.rollback()
+
+    await expect(readdir(join(rootPath, '.realmflow', 'tmp'))).resolves.toEqual([])
+    await expect(stat(pending.path)).rejects.toThrow()
   })
 
   it('rejects traversal and symbolic links outside the bound directory', async () => {
@@ -120,9 +242,7 @@ describe('WorkspaceService', () => {
     await expect(
       service.readFile(opened.binding.requirementId, 'private.md')
     ).rejects.toThrow('File is not authorized for this session')
-    await expect(
-      readFile(join(temporaryDirectory, 'bindings.json'), 'utf8')
-    ).resolves.not.toContain(opened.binding.requirementId)
+    expect(metadata.bindings.has(opened.binding.requirementId)).toBe(false)
   })
 
   it('opens a folder through an ephemeral browseable workspace', async () => {
@@ -138,9 +258,7 @@ describe('WorkspaceService', () => {
         type: 'file'
       }
     ])
-    await expect(
-      readFile(join(temporaryDirectory, 'bindings.json'), 'utf8')
-    ).resolves.not.toContain(binding.requirementId)
+    expect(metadata.bindings.has(binding.requirementId)).toBe(false)
   })
 
   it('allows terminals only for full folder bindings', async () => {

@@ -45,3 +45,8 @@ export interface PersistenceApi {
     listener: (event: PersistenceChangedEvent) => void
   ) => () => void
 }
+
+export type LegacyPersistenceReadApi = Pick<
+  PersistenceApi,
+  'load' | 'onChanged'
+>

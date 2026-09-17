@@ -2,8 +2,13 @@ import { vi } from 'vitest'
 import type { PersistenceApi } from '../../../shared/persistence'
 import { createMainProcessRepository } from './main-process-repository'
 
-function createPersistenceApi(): PersistenceApi {
-  let snapshot = { revision: 0, value: null as unknown }
+function createPersistenceApi(
+  initial: { revision: number; value: unknown } = {
+    revision: 1,
+    value: 'default'
+  }
+): PersistenceApi {
+  let snapshot = initial
   return {
     load: vi.fn(async () => ({ status: 'loaded' as const, snapshot })),
     save: vi.fn(async (_dataset, value, expectedRevision) => {
@@ -18,26 +23,24 @@ function createPersistenceApi(): PersistenceApi {
 }
 
 describe('createMainProcessRepository', () => {
-  it('imports a legacy snapshot with compare-and-swap before use', async () => {
-    const persistence = createPersistenceApi()
+  it('hydrates its initial snapshot before use without writing', async () => {
+    const persistence = createPersistenceApi({
+      revision: 4,
+      value: ['persisted']
+    })
     const repository = await createMainProcessRepository({
       dataset: 'chatSessions',
       persistence,
-      legacySnapshot: () => ({ value: ['legacy'], revision: 0 }),
       fallback: () => [],
       decode: (value) => (Array.isArray(value) ? value as string[] : null),
       encode: (value) => value
     })
 
-    expect(repository.load()).toEqual({
-      value: ['legacy'],
-      revision: 1
+    expect(repository.getSnapshot()).toEqual({
+      value: ['persisted'],
+      revision: 4
     })
-    expect(persistence.save).toHaveBeenCalledWith(
-      'chatSessions',
-      ['legacy'],
-      0
-    )
+    expect(persistence.save).not.toHaveBeenCalled()
   })
 
   it('returns the latest decoded snapshot after a stale save', async () => {
@@ -45,7 +48,6 @@ describe('createMainProcessRepository', () => {
     const first = await createMainProcessRepository({
       dataset: 'workspaceNavigation',
       persistence,
-      legacySnapshot: () => ({ value: 'default', revision: 0 }),
       fallback: () => 'default',
       decode: (value) => typeof value === 'string' ? value : null,
       encode: (value) => value
@@ -53,7 +55,6 @@ describe('createMainProcessRepository', () => {
     const second = await createMainProcessRepository({
       dataset: 'workspaceNavigation',
       persistence,
-      legacySnapshot: () => ({ value: 'default', revision: 0 }),
       fallback: () => 'default',
       decode: (value) => typeof value === 'string' ? value : null,
       encode: (value) => value
@@ -86,7 +87,6 @@ describe('createMainProcessRepository', () => {
     const repository = await createMainProcessRepository({
       dataset: 'spaceResources',
       persistence,
-      legacySnapshot: () => ({ value: 'default', revision: 0 }),
       fallback: () => 'default',
       decode: (value) => typeof value === 'string' ? value : null,
       encode: (value) => value
@@ -97,24 +97,23 @@ describe('createMainProcessRepository', () => {
 
     changed?.({ dataset: 'spaceResources', revision: 2 })
     await vi.waitFor(() => expect(listener).toHaveBeenCalledTimes(1))
-    expect(repository.load()).toEqual({ value: 'remote', revision: 2 })
+    expect(repository.getSnapshot()).toEqual({ value: 'remote', revision: 2 })
   })
 
-  it('exposes initialization failure without attempting a fallback write', async () => {
+  it('rejects initialization failure without attempting a fallback write', async () => {
     const persistence = createPersistenceApi()
     persistence.load = vi.fn(async () => ({
       status: 'unavailable' as const
     }))
-    const repository = await createMainProcessRepository({
-      dataset: 'chatSessions',
-      persistence,
-      legacySnapshot: () => ({ value: ['legacy'], revision: 0 }),
-      fallback: () => [],
-      decode: (value) => (Array.isArray(value) ? value as string[] : null),
-      encode: (value) => value
-    })
-
-    expect(repository.initializationUnavailable).toBe(true)
+    await expect(
+      createMainProcessRepository({
+        dataset: 'chatSessions',
+        persistence,
+        fallback: () => [],
+        decode: (value) => (Array.isArray(value) ? value as string[] : null),
+        encode: (value) => value
+      })
+    ).rejects.toThrow('Repository is unavailable: chatSessions')
     expect(persistence.save).not.toHaveBeenCalled()
   })
 
@@ -139,7 +138,6 @@ describe('createMainProcessRepository', () => {
     const repository = await createMainProcessRepository({
       dataset: 'workspaceNavigation',
       persistence,
-      legacySnapshot: () => ({ value: 'default', revision: 0 }),
       fallback: () => 'default',
       decode: (value) => typeof value === 'string' ? value : null,
       encode: (value) => value

@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { join } from 'node:path'
@@ -42,9 +43,17 @@ export class SidecarManager {
   private process: ChildProcessWithoutNullStreams | undefined
   private status: SidecarStatus = 'stopped'
   private port: number | undefined
+  private client: SidecarClient | undefined
 
   getStatus(): SidecarStatus {
     return this.status
+  }
+
+  getClient(): SidecarClient {
+    if (!this.client || this.status !== 'ready') {
+      throw new Error('Sidecar is unavailable')
+    }
+    return this.client
   }
 
   async start(): Promise<void> {
@@ -52,6 +61,7 @@ export class SidecarManager {
 
     this.status = 'starting'
     this.port = await this.reservePort()
+    const authToken = randomBytes(32).toString('base64url')
     const servicePath = app.isPackaged
       ? join(process.resourcesPath, 'python-service')
       : join(app.getAppPath(), 'python-service')
@@ -68,7 +78,8 @@ export class SidecarManager {
       env: {
         ...process.env,
         REALMFLOW_SIDECAR_HOST: '127.0.0.1',
-        REALMFLOW_SIDECAR_PORT: String(this.port)
+        REALMFLOW_SIDECAR_PORT: String(this.port),
+        REALMFLOW_SIDECAR_TOKEN: authToken
       },
       stdio: 'pipe'
     })
@@ -81,6 +92,7 @@ export class SidecarManager {
     })
     this.process.once('exit', () => {
       this.process = undefined
+      this.client = undefined
       this.status = 'stopped'
     })
     this.process.once('error', (error) => {
@@ -88,14 +100,21 @@ export class SidecarManager {
       this.status = 'error'
     })
 
-    const client = new SidecarClient(`http://127.0.0.1:${this.port}`)
-    this.status = (await waitUntilSidecarHealthy(client)) ? 'ready' : 'error'
+    this.client = new SidecarClient(
+      `http://127.0.0.1:${this.port}`,
+      fetch,
+      { authToken }
+    )
+    this.status = (await waitUntilSidecarHealthy(this.client))
+      ? 'ready'
+      : 'error'
   }
 
   stop(): void {
     if (!this.process) return
     this.process.kill('SIGTERM')
     this.process = undefined
+    this.client = undefined
     this.status = 'stopped'
   }
 

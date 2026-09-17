@@ -1,16 +1,13 @@
 import type { IpcMain } from 'electron'
 import { IPC_INVOKE_CHANNELS } from '../../../shared/ipc-contract'
-import type { PersistenceService } from './persistence-service'
-import {
-  requirePersistenceDataset,
-  requireRevision
-} from '../ipc/runtime-validation'
+import type { PersistenceApi } from '../../../shared/persistence'
+import { requirePersistenceDataset } from '../ipc/runtime-validation'
 
 export function registerPersistenceIpc({
   persistence,
   ipcMain
 }: {
-  persistence: Pick<PersistenceService, 'load' | 'save'>
+  persistence: Pick<PersistenceApi, 'load'>
   ipcMain: Pick<IpcMain, 'handle'>
 }): void {
   ipcMain.handle(
@@ -20,26 +17,6 @@ export function registerPersistenceIpc({
         requirePersistenceDataset(
           dataset,
           IPC_INVOKE_CHANNELS.persistenceLoad
-        )
-      )
-  )
-  ipcMain.handle(
-    IPC_INVOKE_CHANNELS.persistenceSave,
-    (
-      _event,
-      dataset: unknown,
-      value: unknown,
-      expectedRevision: unknown
-    ) =>
-      persistence.save(
-        requirePersistenceDataset(
-          dataset,
-          IPC_INVOKE_CHANNELS.persistenceSave
-        ),
-        value,
-        requireRevision(
-          expectedRevision,
-          IPC_INVOKE_CHANNELS.persistenceSave
         )
       )
   )

@@ -13,10 +13,8 @@ import {
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Navigate, useParams } from 'react-router-dom'
 import type { RealmFlowApi } from '../../shared/types'
-import type {
-  OpenedSessionFiles,
-  WorkspaceFile
-} from '../../shared/workspace'
+import type { BusinessApi } from '../../shared/business'
+import type { OpenedSessionFiles } from '../../shared/workspace'
 import { Composer } from '../components/Composer'
 import type { SpaceResourceRepository } from '../application/ports/repositories'
 import type {
@@ -29,6 +27,11 @@ import type {
   WorkspaceRequirement,
   WorkspaceSpace
 } from '../domain/workspace'
+import {
+  formatResourceUpdatedAt,
+  mapBusinessResource,
+  mapLocalFileResource
+} from '../features/resources/space-resource-mappers'
 import { useWorkbench } from '../features/workbench/WorkbenchProvider'
 
 type ResourceDialog = Exclude<SpaceResourceType, 'file'> | null
@@ -38,6 +41,7 @@ type SpaceDetailPageProps = {
   requirementsBySpace: Record<string, WorkspaceRequirement[]>
   resourceRepository: SpaceResourceRepository
   api?: RealmFlowApi
+  business?: BusinessApi
   onCreateSession?: (spacePath: string, prompt: string) => void
 }
 
@@ -56,34 +60,12 @@ const resourceLabels: Record<SpaceResourceType, string> = {
   repository: '代码仓库'
 }
 
-function formatUpdatedAt(value?: number): string {
-  if (!value) return '刚刚'
-  const elapsed = Date.now() - value
-  if (elapsed < 86_400_000) return '今天'
-  const days = Math.max(1, Math.round(elapsed / 86_400_000))
-  return `${days} 天前`
-}
-
-function localFileResource(
-  selection: OpenedSessionFiles,
-  file: WorkspaceFile,
-  sequence: number
-): SpaceResource {
-  return {
-    id: `file-${Date.now()}-${sequence}`,
-    name: file.name,
-    type: 'file',
-    locator: file.path,
-    detail: selection.binding.rootName,
-    updatedAt: Date.now()
-  }
-}
-
 export default function SpaceDetailPage({
   spaces,
   requirementsBySpace,
   resourceRepository,
   api = window.realmflow,
+  business = window.realmflow?.business,
   onCreateSession
 }: SpaceDetailPageProps): JSX.Element {
   const { spaceId } = useParams()
@@ -94,9 +76,9 @@ export default function SpaceDetailPage({
   const [activeTab, setActiveTab] = useState<'overview' | 'resources'>('overview')
   const [prompt, setPrompt] = useState('')
   const [submittedPrompt, setSubmittedPrompt] = useState('')
-  const [initialResourceSnapshot] = useState(resourceRepository.load)
-  const [resourceStore, setResourceStore] = useState<SpaceResourceStore>(
-    initialResourceSnapshot.value
+  const [initialResourceSnapshot] = useState(resourceRepository.getSnapshot)
+  const [resourceStore, setResourceStore] = useState<SpaceResourceStore>(() =>
+    business ? { resourcesBySpace: {} } : initialResourceSnapshot.value
   )
   const [resourceDialog, setResourceDialog] = useState<ResourceDialog>(null)
   const [resourceName, setResourceName] = useState('')
@@ -109,16 +91,37 @@ export default function SpaceDetailPage({
   const [
     resourcePersistenceUnavailable,
     setResourcePersistenceUnavailable
-  ] = useState(resourceRepository.initializationUnavailable ?? false)
+  ] = useState(false)
   const resourceRevisionRef = useRef(initialResourceSnapshot.revision)
-  const skipNextResourceSaveRef = useRef(
-    resourceRepository.skipInitialSave ?? false
-  )
+  const skipNextResourceSaveRef = useRef(true)
   const resourceSaveQueueRef = useRef<Promise<void> | null>(null)
   const sessionFilesRef = useRef(new Map<string, OpenedSessionFiles>())
   const resources = resourceStore.resourcesBySpace[spacePath] ?? []
 
   useEffect(() => {
+    if (!business || !space?.id) return
+    let disposed = false
+    void business
+      .listSpaceResources({ workspaceId: space.id })
+      .then((items) => {
+        if (disposed) return
+        setResourceStore({
+          resourcesBySpace: {
+            [spacePath]: items.map(mapBusinessResource)
+          }
+        })
+        setResourcePersistenceUnavailable(false)
+      })
+      .catch(() => {
+        if (!disposed) setResourcePersistenceUnavailable(true)
+      })
+    return () => {
+      disposed = true
+    }
+  }, [business, space?.id, spacePath])
+
+  useEffect(() => {
+    if (business) return
     if (skipNextResourceSaveRef.current) {
       skipNextResourceSaveRef.current = false
       return
@@ -138,15 +141,6 @@ export default function SpaceDetailPage({
         setResourcePersistenceUnavailable(true)
       }
     }
-    if (resourceRepository.saveSync) {
-      applySaveResult(
-        resourceRepository.saveSync(
-          resourceStore,
-          resourceRevisionRef.current
-        )
-      )
-      return
-    }
     const saveResources = async (): Promise<void> => {
       applySaveResult(
         await resourceRepository.save(
@@ -154,12 +148,6 @@ export default function SpaceDetailPage({
           resourceRevisionRef.current
         )
       )
-    }
-    if (!resourceRepository.serializeSaves) {
-      void saveResources().catch(() =>
-        setResourcePersistenceUnavailable(true)
-      )
-      return
     }
     const previousSave = resourceSaveQueueRef.current
     const queuedSave = previousSave
@@ -179,18 +167,20 @@ export default function SpaceDetailPage({
         setResourcePersistenceUnavailable(true)
       }
     )
-  }, [resourceRepository, resourceStore])
+  }, [business, resourceRepository, resourceStore])
 
   useEffect(
-    () =>
-      resourceRepository.subscribe?.(() => {
-        const snapshot = resourceRepository.load()
+    () => {
+      if (business) return
+      return resourceRepository.subscribe?.(() => {
+        const snapshot = resourceRepository.getSnapshot()
         setResourcePersistenceUnavailable(false)
         resourceRevisionRef.current = snapshot.revision
         skipNextResourceSaveRef.current = true
         setResourceStore(snapshot.value)
-      }),
-    [resourceRepository]
+      })
+    },
+    [business, resourceRepository]
   )
 
   const stageCounts = useMemo(() => {
@@ -227,11 +217,38 @@ export default function SpaceDetailPage({
     }))
   }
 
+  const saveBusinessResource = (resource: SpaceResource): void => {
+    if (!business || !space?.id) return
+    const existing = resources.find((item) => item.id === resource.id)
+    const now = Date.now()
+    void business
+      .saveSpaceResource({
+        id: resource.id,
+        workspaceId: space.id,
+        name: resource.name,
+        type: resource.type,
+        locator: resource.locator,
+        detail: resource.detail,
+        sortOrder: existing?.sortOrder ?? resources.length,
+        expectedRevision: existing?.revision ?? 0,
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now
+      })
+      .then((saved) => {
+        updateSpaceResources((current) => [
+          mapBusinessResource(saved),
+          ...current.filter((item) => item.id !== saved.id)
+        ])
+        setResourcePersistenceUnavailable(false)
+      })
+      .catch(() => setResourcePersistenceUnavailable(true))
+  }
+
   const addLocalFiles = async (): Promise<void> => {
     const selection = await api?.workspace.chooseFiles()
     if (!selection) return
     const additions = selection.files.map((file, index) => {
-      const resource = localFileResource(selection, file, index)
+      const resource = mapLocalFileResource(selection, file, index)
       sessionFilesRef.current.set(resource.id, {
         binding: selection.binding,
         files: [file]
@@ -239,6 +256,7 @@ export default function SpaceDetailPage({
       return resource
     })
     updateSpaceResources((current) => [...additions, ...current])
+    additions.forEach(saveBusinessResource)
   }
 
   const openResource = async (resource: SpaceResource): Promise<void> => {
@@ -276,17 +294,16 @@ export default function SpaceDetailPage({
       if (url.protocol !== 'http:' && url.protocol !== 'https:') {
         throw new Error('unsupported protocol')
       }
-      updateSpaceResources((current) => [
-        {
+      const resource = {
           id: `${resourceDialog}-${Date.now()}`,
           name,
           type: resourceDialog,
           locator: url.toString(),
           detail: url.host,
           updatedAt: Date.now()
-        },
-        ...current
-      ])
+        }
+      updateSpaceResources((current) => [resource, ...current])
+      saveBusinessResource(resource)
       closeResourceDialog()
     } catch {
       setResourceError('请输入有效的 HTTP 或 HTTPS 地址')
@@ -427,7 +444,7 @@ export default function SpaceDetailPage({
                             {stageLabels[requirement.stage ?? 'analysis']}
                           </span>
                           <span role="cell">
-                            {formatUpdatedAt(requirement.updatedAt)}
+                            {formatResourceUpdatedAt(requirement.updatedAt)}
                           </span>
                         </a>
                       ))}
@@ -543,15 +560,32 @@ export default function SpaceDetailPage({
                         </div>
                         <span role="cell">{resourceLabels[resource.type]}</span>
                         <span role="cell">{resource.detail}</span>
-                        <span role="cell">{formatUpdatedAt(resource.updatedAt)}</span>
+                        <span role="cell">
+                          {formatResourceUpdatedAt(resource.updatedAt)}
+                        </span>
                         <button
                           type="button"
                           aria-label={`删除 ${resource.name}`}
                           title={`删除 ${resource.name}`}
                           onClick={() =>
-                            updateSpaceResources((current) =>
-                              current.filter((item) => item.id !== resource.id)
-                            )
+                            {
+                              updateSpaceResources((current) =>
+                                current.filter((item) => item.id !== resource.id)
+                              )
+                              if (
+                                business &&
+                                resource.revision !== undefined
+                              ) {
+                                void business
+                                  .deleteSpaceResource({
+                                    id: resource.id,
+                                    expectedRevision: resource.revision
+                                  })
+                                  .catch(() =>
+                                    setResourcePersistenceUnavailable(true)
+                                  )
+                              }
+                            }
                           }
                         >
                           <Trash2 size={14} />

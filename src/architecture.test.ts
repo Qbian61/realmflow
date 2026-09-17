@@ -5,8 +5,24 @@ const sourceRoot = resolve('src')
 const sourceFiles = collectSourceFiles(sourceRoot)
 const sharedRoot = resolve('shared')
 const sharedFiles = collectSourceFiles(sharedRoot)
+const pythonRoot = resolve('python-service')
+const pythonFiles = collectSourceFiles(pythonRoot, /\.py$/)
 
 describe('renderer architecture boundaries', () => {
+  it('rebuilds native dependencies for Electron development and Node tests', () => {
+    const packageJson = JSON.parse(
+      readFileSync(resolve('package.json'), 'utf8')
+    ) as { scripts?: Record<string, string> }
+
+    expect(packageJson.scripts?.dev).toMatch(/^npm run rebuild:native && /)
+    expect(packageJson.scripts?.['rebuild:native']).toContain(
+      'electron-rebuild -f'
+    )
+    expect(packageJson.scripts?.test).toMatch(
+      /^npm run rebuild:test-native && /
+    )
+  })
+
   it('keeps renderer modules focused enough to review independently', () => {
     const oversizedModules = sourceFiles
       .filter((file) => !file.endsWith('.test.ts') && !file.endsWith('.test.tsx'))
@@ -107,6 +123,73 @@ describe('renderer architecture boundaries', () => {
     expect(violations).toEqual([])
   })
 
+  it('prevents renderer production code from connecting to the Sidecar directly', () => {
+    const violations = sourceFiles
+      .filter((file) => !file.endsWith('.test.ts') && !file.endsWith('.test.tsx'))
+      .filter((file) => {
+        const source = readFileSync(file, 'utf8')
+        return (
+          /\bfetch\s*\(/.test(source) ||
+          importsOf(file).some((specifier) =>
+            specifier.includes('electron/src/sidecar')
+          )
+        )
+      })
+      .map((file) => relative(sourceRoot, file))
+
+    expect(violations).toEqual([])
+  })
+
+  it('prevents renderer production code from writing business aggregates through legacy persistence', () => {
+    const allowedCompatibilityAdapter = resolve(
+      sourceRoot,
+      'infrastructure/storage/main-process-repository.ts'
+    )
+    const violations = sourceFiles
+      .filter((file) => !file.endsWith('.test.ts') && !file.endsWith('.test.tsx'))
+      .filter((file) => file !== allowedCompatibilityAdapter)
+      .filter((file) =>
+        /\b(?:window\.realmflow\??\.persistence|persistence)\.save\s*\(/.test(
+          readFileSync(file, 'utf8')
+        )
+      )
+      .map((file) => relative(sourceRoot, file))
+
+    expect(violations).toEqual([])
+  })
+
+  it('keeps SQLite access in Electron Main infrastructure only', () => {
+    const rendererViolations = sourceFiles
+      .filter((file) => !file.endsWith('.test.ts') && !file.endsWith('.test.tsx'))
+      .filter((file) => /better-sqlite3|sqlite3|realmflow\.db/.test(
+        readFileSync(file, 'utf8')
+      ))
+      .map((file) => relative(sourceRoot, file))
+    const pythonViolations = pythonFiles
+      .filter((file) => !file.includes('/tests/'))
+      .filter((file) =>
+        /(^|\n)\s*(import sqlite3|from sqlite3|from sqlalchemy|import sqlalchemy)/.test(
+          readFileSync(file, 'utf8')
+        )
+      )
+      .map((file) => relative(pythonRoot, file))
+
+    expect([...rendererViolations, ...pythonViolations]).toEqual([])
+  })
+
+  it('keeps AI run IPC adapters independent from concrete infrastructure', () => {
+    const ipcRoot = resolve('electron/src/ai-run/ipc')
+    const violations = collectSourceFiles(ipcRoot)
+      .filter((file) => !file.endsWith('.test.ts'))
+      .flatMap((file) =>
+        importsOf(file)
+          .filter((specifier) => specifier.includes('/infrastructure/'))
+          .map((specifier) => `${relative(ipcRoot, file)} -> ${specifier}`)
+      )
+
+    expect(violations).toEqual([])
+  })
+
   it('keeps WorkbenchProvider as composition instead of an effect container', () => {
     const provider = resolve(
       sourceRoot,
@@ -150,11 +233,16 @@ function importsOf(file: string): string[] {
   )
 }
 
-function collectSourceFiles(directory: string): string[] {
+function collectSourceFiles(
+  directory: string,
+  extensionPattern = /\.(ts|tsx)$/
+): string[] {
   return readdirSync(directory)
     .map((entry) => resolve(directory, entry))
     .flatMap((entry) =>
-      statSync(entry).isDirectory() ? collectSourceFiles(entry) : entry
+      statSync(entry).isDirectory()
+        ? collectSourceFiles(entry, extensionPattern)
+        : entry
     )
-    .filter((file) => /\.(ts|tsx)$/.test(file))
+    .filter((file) => extensionPattern.test(file))
 }

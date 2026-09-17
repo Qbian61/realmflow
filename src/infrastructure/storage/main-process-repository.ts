@@ -12,7 +12,6 @@ import type {
 type MainProcessRepositoryOptions<T> = {
   dataset: PersistenceDataset
   persistence: PersistenceApi
-  legacySnapshot: () => RepositorySnapshot<T>
   fallback: () => T
   decode: (value: unknown) => T | null
   encode: (value: T) => unknown
@@ -21,7 +20,6 @@ type MainProcessRepositoryOptions<T> = {
 export async function createMainProcessRepository<T>({
   dataset,
   persistence,
-  legacySnapshot,
   fallback,
   decode,
   encode
@@ -31,7 +29,6 @@ export async function createMainProcessRepository<T>({
     revision: 0
   }
   let pendingRevision = 0
-  let initializationUnavailable = false
   const listeners = new Set<() => void>()
 
   const decodeSnapshot = (
@@ -52,33 +49,17 @@ export async function createMainProcessRepository<T>({
     return true
   }
 
-  const initial = await persistence.load(dataset)
-  initializationUnavailable = initial.status === 'unavailable'
-  if (
-    initial.status === 'loaded' &&
-    initial.snapshot.revision === 0 &&
-    initial.snapshot.value === null
-  ) {
-    const legacy = legacySnapshot()
-    const migrated = await persistence.save(
-      dataset,
-      encode(legacy.value),
-      0
-    )
-    if (migrated.status !== 'unavailable') {
-      snapshot =
-        decodeSnapshot(migrated.snapshot) ?? {
-          value: fallback(),
-          revision: migrated.snapshot.revision
-        }
+  const hydrate = async (): Promise<RepositorySnapshot<T>> => {
+    const result = await persistence.load(dataset)
+    if (result.status === 'unavailable') {
+      throw new Error(`Repository is unavailable: ${dataset}`)
     }
-  } else if (initial.status === 'loaded') {
-    snapshot =
-      decodeSnapshot(initial.snapshot) ?? {
-        value: fallback(),
-        revision: initial.snapshot.revision
-      }
+    const decoded = decodeSnapshot(result.snapshot)
+    if (!decoded) throw new Error(`Repository payload is invalid: ${dataset}`)
+    snapshot = decoded
+    return snapshot
   }
+  await hydrate()
 
   persistence.onChanged((event) => {
     if (
@@ -93,10 +74,8 @@ export async function createMainProcessRepository<T>({
   })
 
   return {
-    load: () => snapshot,
-    skipInitialSave: true,
-    serializeSaves: true,
-    initializationUnavailable,
+    hydrate,
+    getSnapshot: () => snapshot,
     save: async (value, expectedRevision) => {
       const expectedSavedRevision = expectedRevision + 1
       pendingRevision = Math.max(pendingRevision, expectedSavedRevision)

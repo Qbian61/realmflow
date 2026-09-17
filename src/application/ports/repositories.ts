@@ -22,18 +22,12 @@ export type RepositorySaveResult<T> =
     }
 
 export interface Repository<T> {
-  load: () => RepositorySnapshot<T>
+  hydrate: () => Promise<RepositorySnapshot<T>>
+  getSnapshot: () => RepositorySnapshot<T>
   save: (
     value: T,
     expectedRevision: number
   ) => Promise<RepositorySaveResult<T>>
-  saveSync?: (
-    value: T,
-    expectedRevision: number
-  ) => RepositorySaveResult<T>
-  skipInitialSave?: boolean
-  serializeSaves?: boolean
-  initializationUnavailable?: boolean
   subscribe?: (listener: () => void) => () => void
 }
 

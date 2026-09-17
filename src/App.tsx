@@ -3,18 +3,21 @@ import { HashRouter, useNavigate } from 'react-router-dom'
 import type { RendererRepositories } from './application/ports/repositories'
 import { AppRoutes } from './app/AppRoutes'
 import { useWorkspaceController } from './app/hooks/use-workspace-controller'
+import { useAiRunController } from './app/hooks/use-ai-run-controller'
 import { WorkspaceLayout } from './features/navigation/WorkspaceLayout'
 import { WorkbenchProvider } from './features/workbench/WorkbenchProvider'
-import { createLocalRendererRepositories } from './infrastructure/storage/renderer-repositories'
+import { createInMemoryRendererRepositories } from './infrastructure/storage/renderer-repositories'
 
 function AppShell({
-  repositories: providedRepositories
+  repositories: providedRepositories,
+  degraded
 }: {
   repositories?: RendererRepositories
+  degraded: boolean
 }): JSX.Element {
   const navigate = useNavigate()
   const [repositories] = useState(
-    () => providedRepositories ?? createLocalRendererRepositories()
+    () => providedRepositories ?? createInMemoryRendererRepositories()
   )
   const {
     spaces,
@@ -32,11 +35,17 @@ function AppShell({
     persistenceIssues
   } = useWorkspaceController({
     navigationRepository: repositories.workspaceNavigation,
-    sessionRepository: repositories.chatSessions
+    sessionRepository: repositories.chatSessions,
+    business: window.realmflow?.business
   })
+  const aiRuns = useAiRunController(window.realmflow?.aiRuns)
 
-  const createSpaceSession = (spacePath: string, prompt: string): void => {
-    navigate(`/sessions/${createSession(spacePath, prompt)}`)
+  const createSpaceSession = (
+    spacePath: string,
+    prompt: string,
+    modelProfileId?: string
+  ): void => {
+    navigate(`/sessions/${createSession(spacePath, prompt, modelProfileId)}`)
   }
 
   return (
@@ -52,7 +61,7 @@ function AppShell({
       onDeleteRequirement={deleteRequirement}
       onMoveRequirement={moveRequirement}
       status={
-        persistenceIssues.length > 0 ? (
+        degraded || persistenceIssues.length > 0 ? (
           <div
             className="persistence-notice"
             role="status"
@@ -70,20 +79,23 @@ function AppShell({
         resourceRepository={repositories.spaceResources}
         onCreateSession={createSpaceSession}
         onAppendMessage={appendSessionMessage}
+        aiRuns={aiRuns}
       />
     </WorkspaceLayout>
   )
 }
 
 export default function App({
-  repositories
+  repositories,
+  degraded = false
 }: {
   repositories?: RendererRepositories
+  degraded?: boolean
 }): JSX.Element {
   return (
     <HashRouter>
       <WorkbenchProvider>
-        <AppShell repositories={repositories} />
+        <AppShell repositories={repositories} degraded={degraded} />
       </WorkbenchProvider>
     </HashRouter>
   )

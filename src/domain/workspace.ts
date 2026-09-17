@@ -4,17 +4,24 @@ import {
 } from './requirement'
 
 export type WorkspaceSpace = {
+  id?: string
   path: string
+  physicalPath?: string
   label: string
   description: string
+  sortOrder?: number
+  revision?: number
 }
 
 export type WorkspaceRequirement = {
   id: string
+  workspaceId?: string
   title: string
   stage?: RequirementStageId
   status?: 'pending' | 'active' | 'completed'
   updatedAt?: number
+  sortOrder?: number
+  revision?: number
 }
 
 export type WorkspaceNavigation = {

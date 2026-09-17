@@ -1,7 +1,7 @@
 import { ChevronDown, MessageCircle } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 import type { WorkspaceSpace } from '../../domain/workspace'
-import type { ChatSession } from './session-store'
+import type { ChatSession } from '../../domain/chat-session'
 
 type RecentSessionsProps = {
   sessions: ChatSession[]
@@ -17,6 +17,9 @@ export function RecentSessions({
   onToggle
 }: RecentSessionsProps): JSX.Element {
   const spaceLabels = new Map(spaces.map((space) => [space.path, space.label]))
+  const recentSessions = sessions.filter(
+    (session) => session.kind !== 'requirement_node'
+  )
 
   return (
     <section
@@ -31,7 +34,7 @@ export function RecentSessions({
             aria-expanded={open}
             onClick={onToggle}
           >
-            <span>最近 ({sessions.length})</span>
+            <span>最近 ({recentSessions.length})</span>
             <ChevronDown
               className={open ? 'recent-chevron open' : 'recent-chevron'}
               size={14}
@@ -39,9 +42,9 @@ export function RecentSessions({
           </button>
         </h2>
       </div>
-      {open && sessions.length > 0 ? (
+      {open && recentSessions.length > 0 ? (
         <nav className="recent-session-list" aria-label="最近对话列表">
-          {sessions.map((session) => (
+          {recentSessions.map((session) => (
             <NavLink
               to={`/sessions/${session.id}`}
               className={({ isActive }) =>

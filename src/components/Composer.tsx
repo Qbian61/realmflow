@@ -44,12 +44,15 @@ type ComposerProps = {
   insertions: ComposerInsertions
   fileInputId: string
   workspaceOptions?: Array<{ value: string; label: string }>
+  modelOptions?: Array<{ value: string; label: string }>
+  modelProfileId?: string
   defaultWorkspace?: string
   showContext?: boolean
   autoFocus?: boolean
   textareaRef?: RefObject<HTMLTextAreaElement>
   onChange: (value: string) => void
   onWorkspaceChange?: (value: string) => void
+  onModelProfileChange?: (value: string) => void
   onSubmit: () => void
 }
 
@@ -64,12 +67,17 @@ export function Composer({
     { value: 'realmflow', label: 'realmflow' },
     { value: 'xxx', label: 'xxx 空间' }
   ],
+  modelOptions = [
+    { value: '', label: 'RealmFlow Agent' }
+  ],
+  modelProfileId = '',
   defaultWorkspace = 'none',
   showContext = true,
   autoFocus = false,
   textareaRef,
   onChange,
   onWorkspaceChange,
+  onModelProfileChange,
   onSubmit
 }: ComposerProps): JSX.Element {
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false)
@@ -195,9 +203,16 @@ export function Composer({
           </div>
           <div className="composer-actions-right">
             <label className="select-control model-control">
-              <select aria-label={labels.model} defaultValue="realmflow">
-                <option value="realmflow">RealmFlow Agent</option>
-                <option value="local">本地模型</option>
+              <select
+                aria-label={labels.model}
+                value={modelProfileId}
+                onChange={(event) => onModelProfileChange?.(event.target.value)}
+              >
+                {modelOptions.map((option) => (
+                  <option value={option.value} key={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
               <ChevronDown size={14} />
             </label>
