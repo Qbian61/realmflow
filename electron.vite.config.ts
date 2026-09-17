@@ -7,7 +7,7 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: resolve(__dirname, 'electron/src/main.ts'),
-        external: ['node-pty']
+        external: ['better-sqlite3', 'node-pty']
       }
     }
   },
