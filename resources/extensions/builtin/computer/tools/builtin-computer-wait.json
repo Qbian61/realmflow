@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.computer.wait",
+  "version": "1.0.0",
+  "name": "Wait for UI",
+  "description": "Wait for a bounded UI condition.",
+  "tags": [
+    "computer"
+  ],
+  "executor": {
+    "kind": "computer",
+    "actionSet": "wait",
+    "actionSetVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "bundleId": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]{1,199}$"
+      },
+      "contains": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 500
+      },
+      "role": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 100
+      },
+      "timeoutMs": {
+        "type": "integer",
+        "minimum": 100,
+        "maximum": 30000
+      }
+    },
+    "required": [
+      "bundleId"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "computer.observe"
+  ],
+  "effects": [
+    "local_data.read"
+  ],
+  "risk": "low",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "wait for ui"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

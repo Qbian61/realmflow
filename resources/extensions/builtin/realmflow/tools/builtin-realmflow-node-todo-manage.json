@@ -1,0 +1,103 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.realmflow.node.todo.manage",
+  "version": "1.0.2",
+  "name": "Manage node Todo",
+  "description": "Create, complete, or delete a NodeRun Todo.",
+  "tags": [
+    "realmflow"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "realmflow.node.todo.manage",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "operation",
+      "id",
+      "expectedRevision"
+    ],
+    "properties": {
+      "operation": {
+        "type": "string",
+        "enum": [
+          "save",
+          "delete"
+        ]
+      },
+      "id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "nodeRunId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "title": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 500
+      },
+      "required": {
+        "type": "boolean"
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "in_progress",
+          "completed",
+          "blocked",
+          "cancelled"
+        ]
+      },
+      "reason": {
+        "type": "string",
+        "maxLength": 1000
+      },
+      "expectedRevision": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "realmflow.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "manage node todo"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.skill.code_review",
+  "version": "1.0.0",
+  "name": "Code review",
+  "description": "Find defects, regressions, risks, and missing tests.",
+  "instructionsPath": "instructions/code_review.md",
+  "runtime": {
+    "kind": "instruction"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "requiredTools": [
+    {
+      "toolId": "builtin.git.diff",
+      "versionRange": "^1.0.0",
+      "required": true
+    },
+    {
+      "toolId": "builtin.git.log",
+      "versionRange": "^1.0.0",
+      "required": true
+    },
+    {
+      "toolId": "builtin.files.read",
+      "versionRange": "^1.0.0",
+      "required": true
+    },
+    {
+      "toolId": "builtin.knowledge.search",
+      "versionRange": "^1.0.0",
+      "required": true
+    }
+  ],
+  "activation": {
+    "intents": [
+      "code review"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  },
+  "limits": {
+    "maxToolCalls": 64,
+    "timeoutMs": 900000
+  }
+}

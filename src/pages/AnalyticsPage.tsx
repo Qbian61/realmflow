@@ -1,174 +1,280 @@
-import { useEffect, useMemo, useState } from 'react'
-import type { ModelCallMetric, ModelProfile } from '../../domain/model'
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { BusinessApi } from "../../shared/business";
+import type {
+  ModelStatisticsOptions,
+  ModelStatisticsQuery,
+  ModelStatisticsResult,
+} from "../../shared/model-statistics";
+import ModelStatisticsFilters from "../features/analytics/ModelStatisticsFilters";
+import ModelStatisticsGroups from "../features/analytics/ModelStatisticsGroups";
+import {
+  loadModelStatisticsPreferences,
+  saveModelStatisticsPreferences,
+  type ModelStatisticsPreferences,
+} from "../features/analytics/model-statistics-preferences";
+import ModelStatisticsSummary from "../features/analytics/ModelStatisticsSummary";
+import ModelStatisticsTrend from "../features/analytics/ModelStatisticsTrend";
+import ProductAnalyticsPanel from "../features/analytics/ProductAnalyticsPanel";
+import RuntimeGovernancePanel from "../features/analytics/RuntimeGovernancePanel";
+import {
+  InlineAlert,
+  PageBody,
+  PageContainer,
+  Tab,
+  TabList,
+  Tabs,
+} from "../components/ui";
+import {
+  loadProductAnalyticsPreferences,
+  saveProductAnalyticsPreferences,
+} from "../features/analytics/product-analytics-preferences";
+import { WorkspaceHeaderPortal } from "../features/navigation/WorkspaceLayout";
+import { useLocalization } from "../localization/LocalizationProvider";
 
-type ProfileRecord = ModelProfile & { revision: number }
+const DAY_MS = 24 * 60 * 60 * 1_000;
 
-type MetricSummary = {
-  calls: number
-  tokens: number
-  averageFirstTokenLatency: number
-  successRate: number
-  cost: number
-}
+const EMPTY_OPTIONS: ModelStatisticsOptions = {
+  providers: [],
+  models: [],
+  workspaces: [],
+  requirements: [],
+  nodes: [],
+  conversations: [],
+};
 
-function summarize(metrics: ModelCallMetric[]): MetricSummary {
-  const latencies = metrics.flatMap((metric) =>
-    metric.firstTokenLatencyMs === undefined
-      ? []
-      : [metric.firstTokenLatencyMs]
-  )
+const FILTER_OPTION_KEYS = {
+  providerId: "providers",
+  modelProfileId: "models",
+  workspaceId: "workspaces",
+  requirementId: "requirements",
+  nodeId: "nodes",
+  conversationId: "conversations",
+} as const;
+
+function createQuery(
+  preferences: ModelStatisticsPreferences,
+): ModelStatisticsQuery {
+  const { timeRange, ...filters } = preferences;
+  if (timeRange === "all") return filters;
+  const to = Date.now();
   return {
-    calls: metrics.length,
-    tokens: metrics.reduce(
-      (total, metric) =>
-        total + metric.inputTokens + metric.outputTokens,
-      0
-    ),
-    averageFirstTokenLatency:
-      latencies.length === 0
-        ? 0
-        : latencies.reduce((total, latency) => total + latency, 0) /
-          latencies.length,
-    successRate:
-      metrics.length === 0
-        ? 0
-        : (metrics.filter((metric) => metric.status === 'completed').length /
-            metrics.length) *
-          100,
-    cost: metrics.reduce((total, metric) => total + metric.estimatedCost, 0)
+    ...filters,
+    from: to - Number.parseInt(timeRange, 10) * DAY_MS,
+    to,
+  };
+}
+
+function clearMissingSelections(
+  preferences: ModelStatisticsPreferences,
+  options: ModelStatisticsOptions,
+): ModelStatisticsPreferences {
+  let next = preferences;
+  for (const [filterKey, optionKey] of Object.entries(
+    FILTER_OPTION_KEYS,
+  ) as Array<
+    [
+      keyof typeof FILTER_OPTION_KEYS,
+      (typeof FILTER_OPTION_KEYS)[keyof typeof FILTER_OPTION_KEYS],
+    ]
+  >) {
+    const selected = preferences[filterKey];
+    if (
+      selected &&
+      !options[optionKey].some((option) => option.id === selected)
+    ) {
+      if (next === preferences) next = { ...preferences };
+      delete next[filterKey];
+    }
   }
+  return next;
 }
 
-function formatLatency(value: number): string {
-  return `${Math.round(value).toLocaleString()} ms`
-}
+function ModelAnalyticsView({
+  business,
+}: {
+  business?: BusinessApi;
+}): JSX.Element {
+  const { t } = useLocalization();
+  const requestId = useRef(0);
+  const [preferences, setPreferences] = useState(
+    loadModelStatisticsPreferences,
+  );
+  const [result, setResult] = useState<ModelStatisticsResult | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [retryVersion, setRetryVersion] = useState(0);
 
-function formatRate(value: number): string {
-  return `${value.toFixed(value === 0 || value === 100 ? 0 : 1)}%`
-}
+  useEffect(() => {
+    saveModelStatisticsPreferences(preferences);
+  }, [preferences]);
 
-function formatCost(value: number): string {
-  return `$${value.toFixed(4)}`
+  useEffect(() => {
+    const currentRequest = ++requestId.current;
+    if (!business) {
+      setError(t("analytics.unavailable"));
+      setResult(null);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError("");
+    void business
+      .queryModelStatistics(createQuery(preferences))
+      .then((nextResult) => {
+        if (currentRequest !== requestId.current) return;
+        const validPreferences = clearMissingSelections(
+          preferences,
+          nextResult.options,
+        );
+        if (validPreferences !== preferences) {
+          setPreferences(validPreferences);
+          return;
+        }
+        setResult(nextResult);
+      })
+      .catch(() => {
+        if (currentRequest !== requestId.current) return;
+        setResult(null);
+        setError(t("analytics.loadFailed"));
+      })
+      .finally(() => {
+        if (currentRequest === requestId.current) setLoading(false);
+      });
+  }, [business, preferences, retryVersion, t]);
+
+  return (
+    <>
+      <ModelStatisticsFilters
+        value={preferences}
+        options={result?.options ?? EMPTY_OPTIONS}
+        disabled={!business}
+        onChange={setPreferences}
+      />
+
+      {error ? (
+        <InlineAlert
+          className="model-page-error analytics-error"
+          tone="danger"
+          title={error}
+          actionLabel={business ? t("common.retry") : undefined}
+          onAction={
+            business ? () => setRetryVersion((value) => value + 1) : undefined
+          }
+        />
+      ) : null}
+
+      {loading ? <p className="model-empty">{t("analytics.loading")}</p> : null}
+      {result ? (
+        <>
+          <ModelStatisticsSummary summary={result.summary} />
+          <ModelStatisticsTrend points={result.trend} />
+          <ModelStatisticsGroups
+            groupBy={preferences.groupBy}
+            groups={result.groups}
+          />
+        </>
+      ) : null}
+    </>
+  );
 }
 
 export default function AnalyticsPage(): JSX.Element {
-  const business = window.realmflow?.business
-  const [profiles, setProfiles] = useState<ProfileRecord[]>([])
-  const [metrics, setMetrics] = useState<ModelCallMetric[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
+  const { t } = useLocalization();
+  const business = window.realmflow?.business;
+  const [preferences, setPreferences] = useState(
+    loadProductAnalyticsPreferences,
+  );
 
   useEffect(() => {
-    if (!business) {
-      setError('模型统计服务当前不可用')
-      setLoading(false)
-      return
-    }
-    void Promise.all([business.listModels(), business.listModelMetrics()])
-      .then(([pool, records]) => {
-        setProfiles(pool.profiles)
-        setMetrics(records)
-      })
-      .catch((reason: unknown) => {
-        setError(reason instanceof Error ? reason.message : '模型统计加载失败')
-      })
-      .finally(() => setLoading(false))
-  }, [business])
+    saveProductAnalyticsPreferences(preferences);
+  }, [preferences]);
 
-  const summary = useMemo(() => summarize(metrics), [metrics])
-  const profileRows = useMemo(() => {
-    const profileNames = new Map(
-      profiles.map((profile) => [profile.id, profile.displayName])
-    )
-    const grouped = new Map<string, ModelCallMetric[]>()
-    metrics.forEach((metric) => {
-      grouped.set(metric.modelProfileId, [
-        ...(grouped.get(metric.modelProfileId) ?? []),
-        metric
-      ])
-    })
-    return [...grouped.entries()].map(([profileId, records]) => ({
-      id: profileId,
-      name: profileNames.get(profileId) ?? profileId,
-      summary: summarize(records)
-    }))
-  }, [metrics, profiles])
+  const setWorkspaceId = useCallback((workspaceId: string | undefined) => {
+    setPreferences((current) => ({
+      ...current,
+      ...(workspaceId ? { workspaceId } : { workspaceId: undefined }),
+    }));
+  }, []);
 
   return (
-    <main className="model-page analytics-page">
-      <header className="model-page-heading">
-        <div>
-          <span>ANALYTICS / MODELS</span>
-          <h1>统计分析</h1>
-          <p>汇总模型调用质量、速度与估算成本。</p>
+    <div className="model-page analytics-page">
+      <h1 className="sr-only">{t("navigation.analytics")}</h1>
+      <WorkspaceHeaderPortal>
+        <div className="analytics-page-header">
+          <Tabs
+            value={preferences.view}
+            onValueChange={(view) =>
+              setPreferences((current) => ({
+                ...current,
+                view: view as typeof current.view,
+              }))
+            }
+          >
+            <TabList
+              className="analytics-page-tabs"
+              aria-label={t("productAnalytics.views.aria")}
+            >
+              <Tab
+                id="analytics-product-tab"
+                aria-controls="analytics-product-panel"
+                value="product"
+              >
+                {t("productAnalytics.view.product")}
+              </Tab>
+              <Tab
+                id="analytics-models-tab"
+                aria-controls="analytics-models-panel"
+                value="models"
+              >
+                {t("productAnalytics.view.models")}
+              </Tab>
+              <Tab
+                id="analytics-governance-tab"
+                aria-controls="analytics-governance-panel"
+                value="governance"
+              >
+                {t("productAnalytics.view.governance")}
+              </Tab>
+            </TabList>
+          </Tabs>
         </div>
-      </header>
+      </WorkspaceHeaderPortal>
 
-      {error ? <p className="model-page-error" role="alert">{error}</p> : null}
-
-      <section className="analytics-summary" aria-label="模型调用总览">
-        <div>
-          <span>调用数</span>
-          <strong>{summary.calls.toLocaleString()}</strong>
-        </div>
-        <div>
-          <span>Token</span>
-          <strong>{summary.tokens.toLocaleString()}</strong>
-        </div>
-        <div>
-          <span>平均首 Token 延迟</span>
-          <strong>{formatLatency(summary.averageFirstTokenLatency)}</strong>
-        </div>
-        <div>
-          <span>成功率</span>
-          <strong>{formatRate(summary.successRate)}</strong>
-        </div>
-        <div>
-          <span>估算成本</span>
-          <strong>{formatCost(summary.cost)}</strong>
-        </div>
-      </section>
-
-      <section className="model-section analytics-detail" aria-labelledby="model-usage-heading">
-        <header>
-          <div>
-            <h2 id="model-usage-heading">按模型</h2>
-            <p>首 Token 延迟仅统计已返回首个 Token 的调用。</p>
-          </div>
-        </header>
-        {loading ? <p className="model-empty">正在加载...</p> : null}
-        {!loading && profileRows.length === 0 ? (
-          <p className="model-empty">暂无模型调用记录</p>
-        ) : null}
-        {profileRows.length > 0 ? (
-          <div className="analytics-table-wrap">
-            <table className="analytics-table">
-              <thead>
-                <tr>
-                  <th>模型</th>
-                  <th>调用数</th>
-                  <th>Token</th>
-                  <th>首 Token 延迟</th>
-                  <th>成功率</th>
-                  <th>估算成本</th>
-                </tr>
-              </thead>
-              <tbody>
-                {profileRows.map((row) => (
-                  <tr key={row.id}>
-                    <th scope="row">{row.name}</th>
-                    <td>{row.summary.calls.toLocaleString()}</td>
-                    <td>{row.summary.tokens.toLocaleString()}</td>
-                    <td>{formatLatency(row.summary.averageFirstTokenLatency)}</td>
-                    <td>{formatRate(row.summary.successRate)}</td>
-                    <td>{formatCost(row.summary.cost)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
-      </section>
-    </main>
-  )
+      <PageBody mode="wide" className="analytics-page-content">
+        <PageContainer>
+          {preferences.view === "product" ? (
+            <div
+              id="analytics-product-panel"
+              role="tabpanel"
+              aria-labelledby="analytics-product-tab"
+            >
+              <ProductAnalyticsPanel
+                business={business}
+                workspaceId={preferences.workspaceId}
+                onWorkspaceIdChange={setWorkspaceId}
+              />
+            </div>
+          ) : preferences.view === "models" ? (
+            <div
+              id="analytics-models-panel"
+              role="tabpanel"
+              aria-labelledby="analytics-models-tab"
+            >
+              <ModelAnalyticsView business={business} />
+            </div>
+          ) : (
+            <div
+              id="analytics-governance-panel"
+              role="tabpanel"
+              aria-labelledby="analytics-governance-tab"
+            >
+              <RuntimeGovernancePanel
+                api={window.realmflow?.runtimeGovernance}
+              />
+            </div>
+          )}
+        </PageContainer>
+      </PageBody>
+    </div>
+  );
 }

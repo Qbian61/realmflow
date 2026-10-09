@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "packageId": "realmflow.builtin.pdf",
+  "version": "1.0.1",
+  "name": "PDF",
+  "description": "Revision-safe local PDF reading, OCR, and page operations.",
+  "publisher": {
+    "name": "RealmFlow",
+    "keyId": "realmflow-builtin-v1"
+  },
+  "compatibility": {
+    "realmflow": ">=0.1.0 <1.0.0",
+    "platforms": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
+  },
+  "tools": [
+    {
+      "path": "tools/builtin-pdf-inspect.json"
+    },
+    {
+      "path": "tools/builtin-pdf-thumbnail.json"
+    },
+    {
+      "path": "tools/builtin-pdf-ocr.json"
+    },
+    {
+      "path": "tools/builtin-pdf-merge.json"
+    },
+    {
+      "path": "tools/builtin-pdf-split.json"
+    },
+    {
+      "path": "tools/builtin-pdf-rotate.json"
+    },
+    {
+      "path": "tools/builtin-pdf-watermark.json"
+    },
+    {
+      "path": "tools/builtin-pdf-form_fill.json"
+    },
+    {
+      "path": "tools/builtin-pdf-annotation_add.json"
+    },
+    {
+      "path": "tools/builtin-pdf-save.json"
+    }
+  ],
+  "skills": [],
+  "assets": []
+}

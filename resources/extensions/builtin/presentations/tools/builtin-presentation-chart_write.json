@@ -1,0 +1,118 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.presentation.chart_write",
+  "version": "1.0.0",
+  "name": "Write presentation chart",
+  "description": "Replace basic chart categories and series.",
+  "tags": [
+    "presentation"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "presentation.chart_write",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sessionId": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+      },
+      "expectedRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "shapeId": {
+        "type": "string",
+        "pattern": "^shape-[0-9]+-[0-9]+$"
+      },
+      "title": {
+        "type": "string",
+        "maxLength": 255
+      },
+      "categories": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 1000,
+        "items": {
+          "type": [
+            "string",
+            "number"
+          ]
+        }
+      },
+      "series": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "values"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            },
+            "values": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1000,
+              "items": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      }
+    },
+    "required": [
+      "sessionId",
+      "expectedRevision",
+      "shapeId",
+      "title",
+      "categories",
+      "series"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "filesystem.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "write presentation chart"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

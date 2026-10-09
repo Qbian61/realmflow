@@ -1,4 +1,6 @@
+import { normalizeNodeApprovalNote } from '../../../../domain/node-approval'
 import type {
+  NodeApprovalRepository,
   NodeRunRepository,
   RequirementRepository,
   RequirementWorkflowRepository,
@@ -6,14 +8,20 @@ import type {
 } from '../ports/business-repositories'
 import type { AdvanceWorkflowUseCase } from './advance-workflow'
 import type { ManageNodeExecutionUseCase } from './manage-node-execution'
-import type { NodeCompletionGateEvaluator } from './node-completion-gate-evaluator'
+import { NodeCompletionGateError } from './node-completion-gate-evaluator'
 
 export type ResolveNodeGateInput = {
   requirementId: string
   nodeRunId: string
   expectedNodeRunRevision: number
   gate:
-    | { kind: 'approval'; result: 'approved' | 'rejected' }
+    | {
+        kind: 'approval'
+        decisionId: string
+        expectedApprovalRevision: number
+        result: 'approved' | 'rejected'
+        note?: string
+      }
     | { kind: 'custom'; gateId: string; passed: boolean }
 }
 
@@ -21,9 +29,12 @@ type Dependencies = {
   requirements: Pick<RequirementRepository, 'get'>
   workflows: Pick<RequirementWorkflowRepository, 'get'>
   nodeRuns: Pick<NodeRunRepository, 'get' | 'save'>
+  approvals: Pick<NodeApprovalRepository, 'getByNodeRun' | 'decide'>
   unitOfWork: UnitOfWork
-  evaluator: Pick<NodeCompletionGateEvaluator, 'evaluate'>
-  manager: Pick<ManageNodeExecutionUseCase, 'completeNode'>
+  manager: Pick<
+    ManageNodeExecutionUseCase,
+    'completeNodeInTransaction' | 'finalizeNodeCompletion'
+  >
   worker: Pick<AdvanceWorkflowUseCase, 'drain'>
 }
 
@@ -47,9 +58,6 @@ export class ResolveNodeGateUseCase {
         (candidate) => candidate.id === nodeRun.nodeId
       )
       if (!node) throw new Error(`Workflow node not found: ${nodeRun.nodeId}`)
-      if (!['ready', 'running', 'waiting_user'].includes(nodeRun.status)) {
-        throw new Error(`Node run cannot resolve gates from ${nodeRun.status}`)
-      }
       if (input.gate.kind === 'approval') {
         const approvalRequired =
           node.type === 'approval' ||
@@ -57,14 +65,54 @@ export class ResolveNodeGateUseCase {
         if (!approvalRequired) {
           throw new Error('Workflow node does not require approval')
         }
+        const note = normalizeNodeApprovalNote(input.gate.note)
+        const currentApproval =
+          await this.dependencies.approvals.getByNodeRun(input.nodeRunId)
+        if (currentApproval?.decisionId === input.gate.decisionId) {
+          if (
+            currentApproval.result !== input.gate.result ||
+            currentApproval.note !== note
+          ) {
+            throw new Error(
+              'Approval decision id conflicts with existing content'
+            )
+          }
+          return {
+            requirement,
+            workflow,
+            node,
+            nodeRun,
+            rejected: currentApproval.result === 'rejected',
+            idempotent: true
+          }
+        }
       } else if (node.completionGate?.customGateId !== input.gate.gateId) {
         throw new Error(
           `Workflow node does not configure custom gate: ${input.gate.gateId}`
         )
       }
+      if (!['ready', 'running', 'waiting_user'].includes(nodeRun.status)) {
+        throw new Error(`Node run cannot resolve gates from ${nodeRun.status}`)
+      }
       const checkpoint = { ...(nodeRun.checkpoint ?? {}) }
       if (input.gate.kind === 'approval') {
+        const approval = await this.dependencies.approvals.decide({
+          nodeRunId: input.nodeRunId,
+          decisionId: input.gate.decisionId,
+          expectedRevision: input.gate.expectedApprovalRevision,
+          result: input.gate.result,
+          actorType: 'local_user',
+          actorId: 'local-user',
+          ...(input.gate.note
+            ? { note: normalizeNodeApprovalNote(input.gate.note) }
+            : {}),
+          decidedAt: this.now()
+        })
+        if (approval.status === 'conflict') {
+          throw new Error('Node approval revision conflict')
+        }
         checkpoint.approvalResult = input.gate.result
+        checkpoint.approvalDecisionId = input.gate.decisionId
       } else {
         checkpoint.customGateResults = {
           ...readCustomGateResults(checkpoint.customGateResults),
@@ -82,48 +130,63 @@ export class ResolveNodeGateUseCase {
       if (result.status === 'conflict') {
         throw new Error('Node run revision conflict')
       }
-      return { requirement, workflow, node, nodeRun: result.entity }
-    })
-
-    const rejected =
-      (input.gate.kind === 'approval' && input.gate.result === 'rejected') ||
-      (input.gate.kind === 'custom' && !input.gate.passed)
-    if (rejected) return recorded.workflow
-
-    const gates = await this.dependencies.evaluator.evaluate({
-      requirementId: input.requirementId,
-      node: recorded.node,
-      nodeRun: recorded.nodeRun,
-      executionFinished: true
-    })
-    if (
-      !gates.executionFinished ||
-      !gates.requiredArtifactsValid ||
-      !gates.approvalPassed ||
-      !gates.customGatePassed
-    ) {
-      return recorded.workflow
-    }
-    try {
-      const completed = await this.dependencies.manager.completeNode({
-        requirementId: input.requirementId,
-        nodeRunId: input.nodeRunId,
-        expectedNodeRunRevision: recorded.nodeRun.revision,
-        expectedWorkflowRevision: recorded.workflow.revision,
-        expectedRequirementRevision: recorded.requirement.revision,
-        ...gates
-      })
-      await this.dependencies.worker.drain()
-      return completed.workflow
-    } catch (error) {
-      if (
-        error instanceof Error &&
-        error.message === 'Node completion gates are not satisfied'
-      ) {
-        return recorded.workflow
+      const rejected =
+        (input.gate.kind === 'approval' &&
+          input.gate.result === 'rejected') ||
+        (input.gate.kind === 'custom' && !input.gate.passed)
+      if (rejected) {
+        return {
+          requirement,
+          workflow,
+          node,
+          nodeRun: result.entity,
+          rejected,
+          idempotent: false
+        }
       }
-      throw error
+      try {
+        const completion =
+          await this.dependencies.manager.completeNodeInTransaction({
+            requirementId: input.requirementId,
+            nodeRunId: input.nodeRunId,
+            expectedNodeRunRevision: result.entity.revision,
+            expectedWorkflowRevision: workflow.revision,
+            expectedRequirementRevision: requirement.revision,
+            executionFinished: true
+          })
+        return {
+          requirement,
+          workflow,
+          node,
+          nodeRun: result.entity,
+          rejected: false,
+          idempotent: false,
+          completion
+        }
+      } catch (error) {
+        if (!(error instanceof NodeCompletionGateError)) throw error
+        return {
+          requirement,
+          workflow,
+          node,
+          nodeRun: result.entity,
+          rejected: false,
+          idempotent: false,
+          gates: error.snapshot
+        }
+      }
+    })
+
+    if (recorded.idempotent || recorded.rejected) return recorded.workflow
+    if (recorded.completion) {
+      await this.dependencies.manager.finalizeNodeCompletion(
+        input.requirementId,
+        recorded.completion.requirementCompleted
+      )
+      await this.dependencies.worker.drain()
+      return recorded.completion.workflow
     }
+    return recorded.workflow
   }
 }
 

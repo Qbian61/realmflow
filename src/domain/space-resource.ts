@@ -1,3 +1,8 @@
+import type {
+  KnowledgeSourceErrorCode,
+  KnowledgeSourceStatus
+} from '../../domain/knowledge-source'
+import type { KnowledgeRefreshPreset } from '../../domain/knowledge-refresh'
 import { isRecord } from './workspace'
 
 export type SpaceResourceType = 'file' | 'document' | 'repository'
@@ -8,10 +13,28 @@ export type SpaceResource = {
   type: SpaceResourceType
   locator: string
   detail: string
+  status?: KnowledgeSourceStatus
+  errorCode?: KnowledgeSourceErrorCode
+  errorMessage?: string
   sortOrder?: number
   revision?: number
   createdAt?: number
   updatedAt: number
+  refresh?: {
+    enabled: boolean
+    preset: KnowledgeRefreshPreset
+    revision: number
+    nextDueAt: number
+    lastCheckedAt: number | null
+    lastChangedAt: number | null
+  }
+  index?: {
+    health: 'missing' | 'building' | 'ready' | 'failed'
+    profileId: string
+    generationId?: string
+    sourceVersion?: string
+    indexedAt?: number
+  }
 }
 
 export type SpaceResourceStore = {

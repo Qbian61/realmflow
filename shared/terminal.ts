@@ -7,6 +7,7 @@ export type TerminalSession = {
   id: string
   title: string
   cwd: string
+  shell: string
 }
 
 export type TerminalEvent =
@@ -24,6 +25,9 @@ export type TerminalEvent =
 export interface TerminalApi {
   create: (
     workspaceId: string,
+    dimensions: TerminalDimensions
+  ) => Promise<TerminalSession>
+  createHome: (
     dimensions: TerminalDimensions
   ) => Promise<TerminalSession>
   write: (sessionId: string, data: string) => Promise<void>

@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.files.copy",
+  "version": "1.3.1",
+  "name": "Copy files",
+  "description": "Copy an authorized file or directory.",
+  "tags": [
+    "files"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "files.copy",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "sourcePath",
+      "targetPath",
+      "expectedChecksum",
+      "expectedAbsent"
+    ],
+    "properties": {
+      "sourcePath": {
+        "type": "string",
+        "minLength": 1
+      },
+      "targetPath": {
+        "type": "string",
+        "minLength": 1
+      },
+      "expectedChecksum": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "expectedAbsent": {
+        "type": "boolean",
+        "const": true
+      },
+      "scopeRoot": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "filesystem.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "copy files"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

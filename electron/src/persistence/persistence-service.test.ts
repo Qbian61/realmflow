@@ -69,12 +69,12 @@ describe('PersistenceService', () => {
     const onChanged = vi.fn()
     const { service } = await createService(onChanged)
 
-    await service.save('spaceResources', { resourcesBySpace: {} }, 0)
-    await service.save('spaceResources', { resourcesBySpace: {} }, 0)
+    await service.save('chatSessions', [], 0)
+    await service.save('chatSessions', [], 0)
 
     expect(onChanged).toHaveBeenCalledTimes(1)
     expect(onChanged).toHaveBeenCalledWith({
-      dataset: 'spaceResources',
+      dataset: 'chatSessions',
       revision: 1
     })
   })

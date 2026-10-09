@@ -1,0 +1,95 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.document.update_style",
+  "version": "1.1.0",
+  "name": "Update document style",
+  "description": "Update a paragraph style using its stable block ID.",
+  "tags": [
+    "document"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "document.update_style",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sessionId": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+      },
+      "expectedRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "blockId": {
+        "type": "string",
+        "pattern": "^paragraph-[1-9][0-9]*$"
+      },
+      "style": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "styleName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "bold": {
+            "type": "boolean"
+          },
+          "italic": {
+            "type": "boolean"
+          },
+          "fontSizePt": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 512
+          }
+        }
+      }
+    },
+    "required": [
+      "sessionId",
+      "expectedRevision",
+      "blockId",
+      "style"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "filesystem.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "update document style"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

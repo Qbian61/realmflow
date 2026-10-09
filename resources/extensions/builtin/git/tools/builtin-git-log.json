@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.git.log",
+  "version": "1.0.1",
+  "name": "Git log",
+  "description": "Read bounded commit history.",
+  "tags": [
+    "git"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "git.log",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "scopeRoot": {
+        "type": "string",
+        "minLength": 1
+      },
+      "maxCount": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 500
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "repository.read"
+  ],
+  "effects": [
+    "local_data.read"
+  ],
+  "risk": "low",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "git log"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

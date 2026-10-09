@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.pdf.annotation_add",
+  "version": "1.0.1",
+  "name": "Add PDF annotation",
+  "description": "Add a visible text annotation to a PDF page.",
+  "tags": [
+    "pdf"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "pdf.annotation_add",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sessionId": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+      },
+      "expectedRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "pageNumber": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100000
+      },
+      "text": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000
+      },
+      "x": {
+        "type": "number",
+        "minimum": 0
+      },
+      "y": {
+        "type": "number",
+        "minimum": 0
+      }
+    },
+    "required": [
+      "sessionId",
+      "expectedRevision",
+      "pageNumber",
+      "text",
+      "x",
+      "y"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "filesystem.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "add pdf annotation"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

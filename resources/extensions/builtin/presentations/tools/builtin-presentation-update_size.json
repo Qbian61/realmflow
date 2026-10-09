@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.presentation.update_size",
+  "version": "1.0.0",
+  "name": "Update presentation size",
+  "description": "Update presentation page dimensions.",
+  "tags": [
+    "presentation"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "presentation.update_size",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sessionId": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+      },
+      "expectedRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "widthPt": {
+        "type": "number",
+        "minimum": 72,
+        "maximum": 2880
+      },
+      "heightPt": {
+        "type": "number",
+        "minimum": 72,
+        "maximum": 2880
+      }
+    },
+    "required": [
+      "sessionId",
+      "expectedRevision",
+      "widthPt",
+      "heightPt"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "filesystem.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "update presentation size"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

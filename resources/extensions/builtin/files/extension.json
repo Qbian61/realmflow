@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "packageId": "realmflow.builtin.files",
+  "version": "1.3.1",
+  "name": "Files",
+  "description": "Authorized local file operations.",
+  "publisher": {
+    "name": "RealmFlow",
+    "keyId": "realmflow-builtin-v1"
+  },
+  "compatibility": {
+    "realmflow": ">=0.1.0 <1.0.0",
+    "platforms": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
+  },
+  "tools": [
+    {
+      "path": "tools/builtin-files-list.json"
+    },
+    {
+      "path": "tools/builtin-files-read.json"
+    },
+    {
+      "path": "tools/builtin-documents-read.json"
+    },
+    {
+      "path": "tools/builtin-files-search.json"
+    },
+    {
+      "path": "tools/builtin-files-stat.json"
+    },
+    {
+      "path": "tools/builtin-files-create_directory.json"
+    },
+    {
+      "path": "tools/builtin-files-write.json"
+    },
+    {
+      "path": "tools/builtin-files-apply_patch.json"
+    },
+    {
+      "path": "tools/builtin-files-copy.json"
+    },
+    {
+      "path": "tools/builtin-files-move.json"
+    },
+    {
+      "path": "tools/builtin-files-trash.json"
+    },
+    {
+      "path": "tools/builtin-files-delete_permanently.json"
+    }
+  ],
+  "skills": [],
+  "assets": []
+}

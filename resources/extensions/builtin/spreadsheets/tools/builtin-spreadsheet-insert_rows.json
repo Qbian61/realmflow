@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.spreadsheet.insert_rows",
+  "version": "1.0.0",
+  "name": "Insert spreadsheet rows",
+  "description": "Insert structural rows without overwriting existing cells.",
+  "tags": [
+    "spreadsheet"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "spreadsheet.insert_rows",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sessionId": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+      },
+      "expectedRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "sheet": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 255
+      },
+      "range": {
+        "type": "string",
+        "pattern": "^[A-Za-z]{1,3}[1-9][0-9]*:[A-Za-z]{1,3}[1-9][0-9]*$"
+      },
+      "startRow": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "count": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 10000
+      }
+    },
+    "required": [
+      "sessionId",
+      "expectedRevision",
+      "sheet",
+      "startRow",
+      "count"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "filesystem.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "insert spreadsheet rows"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

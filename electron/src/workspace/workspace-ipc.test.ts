@@ -13,6 +13,10 @@ describe('registerWorkspaceIpc', () => {
     await mkdir(workspaceDirectory)
     const selectedFile = join(workspaceDirectory, 'notes.md')
     await writeFile(selectedFile, 'notes')
+    await writeFile(
+      join(workspaceDirectory, 'invoice.ofd'),
+      Buffer.from([0x50, 0x4b, 0x03, 0x04])
+    )
     const bindings = new Map<string, string>()
     const service = new WorkspaceService({
       getBinding: async (requirementId) => bindings.get(requirementId),
@@ -53,11 +57,13 @@ describe('registerWorkspaceIpc', () => {
 
     expect([...handlers.keys()]).toEqual([
       'workspace:choose-files',
+      'workspace:open-session-files',
       'workspace:choose-folder',
       'workspace:choose-directory',
       'workspace:get-binding',
       'workspace:list-directory',
       'workspace:read-file',
+      'workspace:read-preview-bytes',
       'workspace:write-file',
       'workspace:read-manifest',
       'workspace:write-manifest',
@@ -77,12 +83,18 @@ describe('registerWorkspaceIpc', () => {
     })
 
     const chooseDirectory = handlers.get('workspace:choose-directory')
-    await expect(chooseDirectory?.({}, 'requirement-1')).resolves.toMatchObject({
-      requirementId: 'requirement-1',
-      rootName: 'project'
-    })
+    await expect(chooseDirectory?.({}, 'requirement-1')).resolves.toMatchObject(
+      {
+        requirementId: 'requirement-1',
+        rootName: 'project'
+      }
+    )
 
     const showItem = handlers.get('workspace:show-item')
+    const readPreviewBytes = handlers.get('workspace:read-preview-bytes')
+    await expect(
+      readPreviewBytes?.({}, 'requirement-1', 'invoice.ofd')
+    ).resolves.toEqual(new Uint8Array([0x50, 0x4b, 0x03, 0x04]))
     await showItem?.({}, 'requirement-1', '')
     expect(shownItems).toEqual([await realpath(workspaceDirectory)])
 
@@ -109,9 +121,9 @@ describe('registerWorkspaceIpc', () => {
       }
     })
 
-    expect(() =>
-      handlers.get('workspace:get-binding')?.({}, 42)
-    ).toThrow('Invalid IPC payload for workspace:get-binding')
+    expect(() => handlers.get('workspace:get-binding')?.({}, 42)).toThrow(
+      'Invalid IPC payload for workspace:get-binding'
+    )
     expect(() =>
       handlers.get('workspace:write-file')?.(
         {},
@@ -124,5 +136,26 @@ describe('registerWorkspaceIpc', () => {
     ).toThrow('Invalid IPC payload for workspace:write-file')
     expect(workspace.getBinding).not.toHaveBeenCalled()
     expect(workspace.writeFile).not.toHaveBeenCalled()
+  })
+
+  it('rejects unexpected payload before opening a workspace picker', async () => {
+    const handlers = new Map<string, (...args: unknown[]) => unknown>()
+    const showOpenDialog = vi.fn()
+
+    registerWorkspaceIpc({
+      workspace: {} as never,
+      ipcMain: {
+        handle: (channel, handler) => handlers.set(channel, handler)
+      },
+      dialog: { showOpenDialog },
+      shell: {
+        showItemInFolder: vi.fn()
+      }
+    })
+
+    await expect(
+      handlers.get('workspace:choose-files')?.({}, { unexpected: true })
+    ).rejects.toThrow('Invalid IPC payload for workspace:choose-files: payload')
+    expect(showOpenDialog).not.toHaveBeenCalled()
   })
 })

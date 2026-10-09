@@ -1,5 +1,8 @@
 import { vi } from 'vitest'
-import type { AiRunEvent } from '../../../../domain/ai-run'
+import {
+  createAiRun,
+  type AiRunEvent
+} from '../../../../domain/ai-run'
 import {
   CancelAiRunUseCase,
   GenerateStageArtifactUseCase
@@ -35,6 +38,7 @@ function createHarness(events: AiRunEvent[]) {
       requirementId: 'requirement-1',
       requirementTitle: 'Checkout',
       stageId: 'analysis',
+      workspaceId: 'workspace-1',
       workspaceName: 'shop',
       existingArtifacts: []
     }),
@@ -42,17 +46,22 @@ function createHarness(events: AiRunEvent[]) {
       requirementId: input.requirementId,
       requirementTitle: 'Checkout',
       nodeId: input.nodeId,
+      workspaceId: 'workspace-1',
       workspaceName: 'shop',
       prompt: input.executor.prompt,
+      requestedReasoning: 'inherit' as const,
+      contextSnapshotId: 'context-snapshot-1',
       artifactPath: input.executor.artifact.relativePath,
       existingArtifacts: []
     }))
   }
-  const artifacts = { commit: vi.fn().mockResolvedValue(undefined) }
+  const artifactCommitter = {
+    execute: vi.fn().mockResolvedValue(undefined)
+  }
   const publisher = { publish: vi.fn() }
   const models = {
     resolveExecution: vi.fn().mockResolvedValue({
-      providerType: 'openai_compatible' as const,
+      providerType: 'openai_completions' as const,
       baseUrl: 'https://models.example.com/v1',
       modelId: 'reasoning-model',
       apiKey: 'secret'
@@ -62,14 +71,15 @@ function createHarness(events: AiRunEvent[]) {
   return {
     runs,
     gateway,
-    artifacts,
+    contexts,
+    artifacts: { commit: artifactCommitter.execute },
     publisher,
     models,
     generate: new GenerateStageArtifactUseCase({
       runs,
       gateway,
       contexts,
-      artifacts,
+      artifactCommitter,
       publisher,
       models,
       now: () => 100
@@ -110,8 +120,11 @@ describe('GenerateStageArtifactUseCase', () => {
       requirementId: 'requirement-1',
       requirementTitle: 'Checkout',
       nodeId: 'custom-security',
+      workspaceId: 'workspace-1',
       workspaceName: 'shop',
       prompt: executor.prompt,
+      requestedReasoning: 'inherit',
+      contextSnapshotId: 'context-snapshot-1',
       artifactPath: executor.artifact.relativePath,
       existingArtifacts: []
     }, undefined)
@@ -119,7 +132,8 @@ describe('GenerateStageArtifactUseCase', () => {
       expect.objectContaining({
         requirementId: 'requirement-1',
         nodeId: 'custom-security',
-        legacyStageId: undefined,
+        nodeRunId: 'node-run-1',
+        expectedArtifact: executor.artifact,
         artifact: {
           path: 'artifacts/security-review.md',
           content: '# Security Review'
@@ -131,11 +145,19 @@ describe('GenerateStageArtifactUseCase', () => {
   it('commits a validated artifact only after run.completed', async () => {
     const harness = createHarness([
       event(1, 'run.started'),
-      event(2, 'content.delta', { delta: '# Scope' }),
-      event(3, 'artifact.ready', {
+      event(2, 'tool.call.requested', {
+        toolCall: {
+          index: 0,
+          id: 'call-1',
+          name: 'lookup',
+          arguments: '{}'
+        }
+      }),
+      event(3, 'answer.delta', { delta: '# Scope' }),
+      event(4, 'artifact.ready', {
         artifact: { path: 'artifacts/analysis.md', content: '# Scope' }
       }),
-      event(4, 'run.completed')
+      event(5, 'run.completed')
     ])
 
     const handle = await harness.generate.execute({
@@ -148,17 +170,54 @@ describe('GenerateStageArtifactUseCase', () => {
       runId: 'run-1',
       requirementId: 'requirement-1',
       stageId: 'analysis',
+      expectedArtifact: {
+        relativePath: 'artifacts/analysis.md',
+        kind: 'markdown'
+      },
       artifact: { path: 'artifacts/analysis.md', content: '# Scope' },
-      completionEvent: event(4, 'run.completed')
+      completionEvent: event(5, 'run.completed')
     })
     await expect(harness.runs.get('run-1')).resolves.toMatchObject({
       status: 'completed',
-      lastSequence: 4
+      lastSequence: 5
     })
   })
 
+  it('maps a formal commit rejection to run.failed without publishing completion', async () => {
+    const harness = createHarness([
+      event(1, 'run.started'),
+      event(2, 'artifact.ready', {
+        artifact: { path: 'artifacts/analysis.md', content: '# Scope' }
+      }),
+      event(3, 'run.completed')
+    ])
+    harness.artifacts.commit.mockRejectedValueOnce(
+      new Error('Formal artifact commit conflicted')
+    )
+
+    const handle = await harness.generate.execute({
+      requirementId: 'requirement-1',
+      stageId: 'analysis'
+    })
+    await handle.completion
+
+    await expect(harness.runs.get('run-1')).resolves.toMatchObject({
+      status: 'failed',
+      error: 'Formal artifact commit conflicted'
+    })
+    expect(harness.publisher.publish).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'run.completed' })
+    )
+    expect(harness.publisher.publish).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        type: 'run.failed',
+        sequence: 3
+      })
+    )
+  })
+
   it('resolves the selected model and records completed usage metrics', async () => {
-    const completed = event(4, 'run.completed', {
+    const completed = event(3, 'run.completed', {
       usage: {
         inputTokens: 120,
         outputTokens: 45,
@@ -193,7 +252,9 @@ describe('GenerateStageArtifactUseCase', () => {
       })
     )
     expect(harness.models.recordCall).toHaveBeenCalledWith({
+      source: 'workflow_stage',
       modelProfileId: 'profile-1',
+      workspaceId: 'workspace-1',
       requirementId: 'requirement-1',
       aiRunId: 'run-1',
       startedAt: 100,
@@ -206,6 +267,120 @@ describe('GenerateStageArtifactUseCase', () => {
       retryCount: 1,
       status: 'completed'
     })
+  })
+
+  it('links a terminal node model metric to its context snapshot', async () => {
+    const harness = createHarness([
+      event(1, 'run.started'),
+      event(2, 'artifact.ready', {
+        artifact: { path: 'artifacts/analysis.md', content: '# Scope' }
+      }),
+      event(3, 'run.completed')
+    ])
+
+    const handle = await harness.generate.executeNode({
+      requirementId: 'requirement-1',
+      nodeId: 'node-1',
+      nodeRunId: 'node-run-1',
+      modelProfileId: 'profile-1',
+      executor: {
+        kind: 'ai_generate',
+        prompt: 'Analyze.',
+        artifact: {
+          relativePath: 'artifacts/analysis.md',
+          kind: 'markdown'
+        }
+      }
+    })
+    await handle.completion
+
+    expect(harness.models.recordCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'workflow_node',
+        workspaceId: 'workspace-1',
+        nodeId: 'node-1',
+        contextSnapshotId: 'context-snapshot-1',
+        requestedReasoning: 'inherit'
+      })
+    )
+    expect(harness.models.recordCall).toHaveBeenCalledWith(
+      expect.not.objectContaining({ effectiveReasoning: expect.anything() })
+    )
+  })
+
+  it('records the requested and effective reasoning for a workflow node', async () => {
+    const harness = createHarness([
+      event(1, 'run.started'),
+      event(2, 'artifact.ready', {
+        artifact: { path: 'artifacts/analysis.md', content: '# Scope' }
+      }),
+      event(3, 'run.completed')
+    ])
+    harness.contexts.loadNode.mockResolvedValueOnce({
+      requirementId: 'requirement-1',
+      requirementTitle: 'Checkout',
+      nodeId: 'node-1',
+      workspaceId: 'workspace-1',
+      workspaceName: 'shop',
+      prompt: 'Analyze.',
+      reasoning: 'medium',
+      requestedReasoning: 'medium',
+      effectiveReasoning: 'medium',
+      contextSnapshotId: 'context-snapshot-1',
+      artifactPath: 'artifacts/analysis.md',
+      existingArtifacts: []
+    })
+
+    const handle = await harness.generate.executeNode({
+      requirementId: 'requirement-1',
+      nodeId: 'node-1',
+      nodeRunId: 'node-run-1',
+      modelProfileId: 'profile-1',
+      executor: {
+        kind: 'ai_generate',
+        prompt: 'Analyze.',
+        reasoning: 'medium',
+        artifact: {
+          relativePath: 'artifacts/analysis.md',
+          kind: 'markdown'
+        }
+      }
+    })
+    await handle.completion
+
+    expect(harness.models.recordCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'workflow_node',
+        requestedReasoning: 'medium',
+        effectiveReasoning: 'medium'
+      })
+    )
+  })
+
+  it('records a failed metric when the Main event stream fails', async () => {
+    const harness = createHarness([])
+    harness.gateway.streamEvents.mockImplementation(async function* () {
+      yield event(1, 'run.started')
+      throw new Error('stream disconnected with secret response')
+    })
+
+    const handle = await harness.generate.execute({
+      requirementId: 'requirement-1',
+      stageId: 'analysis',
+      modelProfileId: 'profile-1'
+    })
+    await handle.completion
+
+    expect(harness.models.recordCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'workflow_stage',
+        workspaceId: 'workspace-1',
+        requirementId: 'requirement-1',
+        aiRunId: 'run-1',
+        status: 'failed',
+        errorCode: 'stream_error'
+      })
+    )
   })
 
   it.each([
@@ -235,8 +410,8 @@ describe('GenerateStageArtifactUseCase', () => {
   it('deduplicates sequences and maps an invalid event to run.failed', async () => {
     const harness = createHarness([
       event(1, 'run.started'),
-      event(2, 'content.delta', { delta: 'one' }),
-      event(2, 'content.delta', { delta: 'duplicate' }),
+      event(2, 'answer.delta', { delta: 'one' }),
+      event(2, 'answer.delta', { delta: 'duplicate' }),
       event(3, 'run.completed')
     ])
 
@@ -251,8 +426,32 @@ describe('GenerateStageArtifactUseCase', () => {
       expect.objectContaining({
         runId: 'run-1',
         type: 'run.failed',
-        data: { message: 'Run completed without a valid artifact' }
+        data: {
+          message: 'Run completed without a valid artifact',
+          errorCode: 'stream_error'
+        }
       })
+    )
+  })
+
+  it('fails the run when the gateway yields a sequence gap', async () => {
+    const harness = createHarness([
+      event(1, 'run.started'),
+      event(3, 'run.cancelled')
+    ])
+
+    const handle = await harness.generate.execute({
+      requirementId: 'requirement-1',
+      stageId: 'analysis'
+    })
+    await handle.completion
+
+    await expect(harness.runs.get('run-1')).resolves.toMatchObject({
+      status: 'failed',
+      error: 'AI run event sequence gap'
+    })
+    expect(harness.publisher.publish).not.toHaveBeenCalledWith(
+      expect.objectContaining({ sequence: 3 })
     )
   })
 
@@ -276,6 +475,24 @@ describe('GenerateStageArtifactUseCase', () => {
     )
   })
 
+  it('cancels a created Sidecar run when initial Main persistence fails', async () => {
+    const harness = createHarness([])
+    vi.spyOn(harness.runs, 'save').mockRejectedValueOnce(
+      new Error('SQLite write failed')
+    )
+
+    await expect(
+      harness.generate.execute({
+        requirementId: 'requirement-1',
+        stageId: 'analysis'
+      })
+    ).rejects.toThrow('SQLite write failed')
+
+    expect(harness.gateway.cancelRun).toHaveBeenCalledWith('run-1')
+    expect(harness.gateway.streamEvents).not.toHaveBeenCalled()
+    expect(harness.publisher.publish).not.toHaveBeenCalled()
+  })
+
   it('ignores late non-terminal events while cancellation is pending', async () => {
     let release!: () => void
     const wait = new Promise<void>((resolve) => {
@@ -285,7 +502,7 @@ describe('GenerateStageArtifactUseCase', () => {
     harness.gateway.streamEvents.mockImplementation(async function* () {
       yield event(1, 'run.started')
       await wait
-      yield event(2, 'content.delta', { delta: 'late' })
+      yield event(2, 'answer.delta', { delta: 'late' })
       yield event(3, 'run.cancelled')
     })
     const cancel = new CancelAiRunUseCase({
@@ -304,7 +521,7 @@ describe('GenerateStageArtifactUseCase', () => {
     await handle.completion
 
     expect(harness.publisher.publish).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'content.delta' })
+      expect.objectContaining({ type: 'answer.delta' })
     )
     await expect(harness.runs.get('run-1')).resolves.toMatchObject({
       status: 'cancelled'
@@ -327,7 +544,9 @@ describe('GenerateStageArtifactUseCase', () => {
       publisher: harness.publisher
     })
 
-    await cancel.execute(handle.runId)
+    await expect(cancel.execute(handle.runId)).rejects.toThrow(
+      'Sidecar cancellation failed'
+    )
 
     await expect(harness.runs.get(handle.runId)).resolves.toMatchObject({
       status: 'failed',
@@ -341,4 +560,27 @@ describe('GenerateStageArtifactUseCase', () => {
       })
     )
   })
+
+  it.each(['failed', 'interrupted'] as const)(
+    'forces provider cancellation when the local run is already %s',
+    async (status) => {
+      const harness = createHarness([])
+      await harness.runs.save({
+        ...createAiRun('run-terminal', 'requirement-1', 'analysis'),
+        status
+      })
+      const cancel = new CancelAiRunUseCase({
+        runs: harness.runs,
+        gateway: harness.gateway,
+        publisher: harness.publisher
+      })
+
+      await cancel.execute('run-terminal', { forceProvider: true })
+
+      expect(harness.gateway.cancelRun).toHaveBeenCalledWith('run-terminal')
+      await expect(harness.runs.get('run-terminal')).resolves.toMatchObject({
+        status
+      })
+    }
+  )
 })

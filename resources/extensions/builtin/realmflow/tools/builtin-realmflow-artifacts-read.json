@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.realmflow.artifacts.read",
+  "version": "1.0.2",
+  "name": "Read artifact",
+  "description": "Read formal artifact content or references.",
+  "tags": [
+    "realmflow"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "realmflow.artifacts.read",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "artifactId"
+    ],
+    "properties": {
+      "requirementId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "artifactId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "realmflow.read"
+  ],
+  "effects": [
+    "local_data.read"
+  ],
+  "risk": "low",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "read artifact"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

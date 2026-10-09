@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.computer.key",
+  "version": "1.0.0",
+  "name": "Press key",
+  "description": "Send a controlled key chord.",
+  "tags": [
+    "computer"
+  ],
+  "executor": {
+    "kind": "computer",
+    "actionSet": "key",
+    "actionSetVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "bundleId": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]{1,199}$"
+      },
+      "key": {
+        "type": "string",
+        "enum": [
+          "return",
+          "tab",
+          "space",
+          "delete",
+          "escape",
+          "left",
+          "right",
+          "down",
+          "up"
+        ]
+      },
+      "modifiers": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "command",
+            "control",
+            "option",
+            "shift"
+          ]
+        },
+        "uniqueItems": true,
+        "maxItems": 4
+      }
+    },
+    "required": [
+      "bundleId",
+      "key"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "computer.control"
+  ],
+  "effects": [
+    "user_interface.change"
+  ],
+  "risk": "high",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "press key"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

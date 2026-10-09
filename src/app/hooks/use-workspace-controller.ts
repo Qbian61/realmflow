@@ -1,30 +1,49 @@
-import { useEffect, useReducer, useRef, useState } from 'react'
-import type {
-  ChatSessionRepository,
-  WorkspaceNavigationRepository
-} from '../../application/ports/repositories'
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
+import type { ChatSessionRepository, WorkspaceNavigationRepository } from '../../application/ports/repositories'
 import {
   createWorkspaceState,
   workspaceReducer
 } from '../../application/workspace/workspace-reducer'
 import { titleFromPrompt } from '../../domain/chat-session'
-import type {
-  BusinessApi,
-  ConversationDto,
-  RequirementDto,
-  SpaceDto
-} from '../../../shared/business'
-
+import type { BusinessApi } from '../../../shared/business'
+import type { ReasoningPreference } from '../../../domain/reasoning-router'
+import type { ConversationAttachmentSubmission } from '../../../shared/conversation-attachments'
+import {
+  readRecentConversationFilters,
+  toRecentConversationQuery,
+  updateRecentConversationFilters,
+  writeRecentConversationFilters,
+  type RecentConversationFilters
+} from '../../features/sessions/recent-conversation-filters'
+import {
+  mapBusinessNavigation,
+  mapConversation
+} from '../mappers/business-mappers'
+import { executeCreateSpace } from './workspace-command-errors'
+import { createConversationManagementActions } from './workspace-conversation-management'
+import { highestSequence, moveToIndex } from './workspace-list-utils'
 export type WorkspacePersistenceIssue = 'navigation' | 'sessions'
-
+export type WorkspaceOperationNotice =
+  | 'work-root-required'
+  | 'space-create-failed' | 'space-rename-failed'
+  | 'space-relocate-failed' | 'space-delete-failed'
+  | 'space-move-failed'
+  | 'requirement-create-failed' | 'requirement-rename-failed'
+  | 'requirement-delete-failed' | 'requirement-move-failed'
+  | 'conversation-rename-failed'
+  | 'conversation-delete-failed'
 export function useWorkspaceController({
   navigationRepository,
   sessionRepository,
-  business
+  business,
+  applicationLocale = 'zh-CN',
+  onOperationNotice = () => undefined
 }: {
   navigationRepository: WorkspaceNavigationRepository
   sessionRepository: ChatSessionRepository
   business?: BusinessApi
+  applicationLocale?: 'zh-CN' | 'en' | 'ja'
+  onOperationNotice?: (notice: WorkspaceOperationNotice) => void
 }) {
   const [initialNavigation] = useState(() =>
     business
@@ -32,9 +51,7 @@ export function useWorkspaceController({
       : navigationRepository.getSnapshot()
   )
   const [initialSessions] = useState(() =>
-    business
-      ? { value: [], revision: 0 }
-      : sessionRepository.getSnapshot()
+    business ? { value: [], revision: 0 } : sessionRepository.getSnapshot()
   )
   const [state, dispatch] = useReducer(
     workspaceReducer,
@@ -43,6 +60,17 @@ export function useWorkspaceController({
   const [persistenceIssues, setPersistenceIssues] = useState<
     WorkspacePersistenceIssue[]
   >([])
+  const [sessionsLoading, setSessionsLoading] = useState(Boolean(business))
+  const [recentSessions, setRecentSessions] = useState(() =>
+    initialSessions.value.filter((session) => session.kind !== 'requirement_node')
+  )
+  const [recentFolderPaths, setRecentFolderPaths] = useState<string[]>([])
+  const [recentFilters, setRecentFilters] = useState(
+    readRecentConversationFilters
+  )
+  const [recentSessionsLoading, setRecentSessionsLoading] = useState(
+    Boolean(business)
+  )
   const navigationRevisionRef = useRef(initialNavigation.revision)
   const sessionRevisionRef = useRef(initialSessions.revision)
   const skipNextNavigationSaveRef = useRef(true)
@@ -64,15 +92,45 @@ export function useWorkspaceController({
     )
   )
   const sessionSequenceRef = useRef(Date.now())
+  const pendingConversationReadyRef = useRef(
+    new Map<string, (sessionId: string) => void>()
+  )
+  const recentRequestSequenceRef = useRef(0)
+  const recentFiltersRef = useRef(recentFilters)
+
+  const refreshRecentConversations = useCallback(
+    async (filters: RecentConversationFilters): Promise<void> => {
+      if (!business) return
+      const requestSequence = ++recentRequestSequenceRef.current
+      setRecentSessionsLoading(true)
+      try {
+        const query = toRecentConversationQuery(filters)
+        const result = await business.listRecentConversations(query)
+        if (requestSequence !== recentRequestSequenceRef.current) return
+        const conversations = result.conversations.map(mapConversation)
+        setRecentSessions(conversations)
+        setRecentFolderPaths(result.folderPaths)
+        for (const session of [...conversations].reverse())
+          dispatch({ type: 'session-synced', session })
+        updatePersistenceIssue('sessions', false)
+      } catch {
+        if (requestSequence === recentRequestSequenceRef.current)
+          updatePersistenceIssue('sessions', true)
+      } finally {
+        if (requestSequence === recentRequestSequenceRef.current) {
+          setRecentSessionsLoading(false)
+          setSessionsLoading(false)
+        }
+      }
+    },
+    [business]
+  )
 
   useEffect(() => {
     if (!business) return
     let disposed = false
-    const hydrate = async (): Promise<void> => {
-      const [spaces, conversations] = await Promise.all([
-        business.listSpaces(),
-        business.listRecentConversations()
-      ])
+    const hydrateNavigation = async (): Promise<void> => {
+      const spaces = await business.listSpaces()
       const requirements = await Promise.all(
         spaces.map(async (space) => [
           space.id,
@@ -84,20 +142,36 @@ export function useWorkspaceController({
         type: 'navigation-replaced',
         navigation: mapBusinessNavigation(spaces, requirements)
       })
-      dispatch({
-        type: 'sessions-replaced',
-        sessions: conversations
-          .filter((session) => session.kind !== 'requirement_node')
-          .map(mapConversation)
-      })
-      setPersistenceIssues([])
+      updatePersistenceIssue('navigation', false)
     }
-    void hydrate().catch(() => {
-      if (!disposed) setPersistenceIssues(['navigation', 'sessions'])
+    void hydrateNavigation().catch(() => {
+      if (!disposed) updatePersistenceIssue('navigation', true)
     })
     return () => {
       disposed = true
     }
+  }, [business])
+
+  useEffect(() => {
+    if (!business) return
+    void refreshRecentConversations(recentFilters)
+    return () => {
+      recentRequestSequenceRef.current += 1
+    }
+  }, [business, recentFilters, refreshRecentConversations])
+
+  useEffect(() => {
+    if (!business?.onConversationEvent) return
+    return business.onConversationEvent(({ conversation }) => {
+      dispatch({
+        type: 'session-synced',
+        session: mapConversation(conversation)
+      })
+      pendingConversationReadyRef.current.get(conversation.id)?.(
+        conversation.id
+      )
+      pendingConversationReadyRef.current.delete(conversation.id)
+    })
   }, [business])
 
   useEffect(() => {
@@ -259,30 +333,47 @@ export function useWorkspaceController({
       navigation: mapBusinessNavigation(spaces, requirements)
     })
   }
-
-  const refreshBusinessSessions = async (): Promise<void> => {
-    if (!business) return
-    const conversations = await business.listRecentConversations()
-    dispatch({
-      type: 'sessions-replaced',
-      sessions: conversations
-        .filter((session) => session.kind !== 'requirement_node')
-        .map(mapConversation)
-    })
-  }
-
+  const conversationManagement = createConversationManagementActions({
+    business,
+    sessions: state.sessions,
+    dispatch,
+    filters: recentFiltersRef.current,
+    refresh: refreshRecentConversations,
+    markAvailable: () => updatePersistenceIssue('sessions', false),
+    notify: onOperationNotice
+  })
   return {
     ...state,
     persistenceIssues,
+    sessionsLoading,
+    recentSessions: business
+      ? recentSessions
+      : state.sessions.filter((session) => session.kind !== 'requirement_node'),
+    recentFolderPaths,
+    recentFilters,
+    recentSessionsLoading,
+    updateRecentFilters(patch: Partial<RecentConversationFilters>) {
+      setRecentFilters((current) => {
+        const next = updateRecentConversationFilters(current, patch)
+        recentFiltersRef.current = next
+        writeRecentConversationFilters(next)
+        return next
+      })
+    },
     createSpace(label: string) {
       if (business) {
-        void business
-          .createSpace({
-            id: crypto.randomUUID(),
-            name: label
+        void executeCreateSpace(
+          business,
+          { id: crypto.randomUUID(), name: label },
+          refreshBusinessNavigation
+        )
+          .then((outcome) => {
+            if (outcome === 'work-root-required') {
+              onOperationNotice(outcome)
+            }
+            updatePersistenceIssue('navigation', false)
           })
-          .then(refreshBusinessNavigation)
-          .catch(() => updatePersistenceIssue('navigation', true))
+          .catch(() => onOperationNotice('space-create-failed'))
         return
       }
       spaceSequenceRef.current += 1
@@ -306,10 +397,22 @@ export function useWorkspaceController({
             label
           })
           .then(refreshBusinessNavigation)
-          .catch(() => updatePersistenceIssue('navigation', true))
+          .catch(() => onOperationNotice('space-rename-failed'))
         return
       }
       dispatch({ type: 'space-renamed', spacePath, label })
+    },
+    relocateSpace(spacePath: string) {
+      if (!business) return
+      const space = state.spaces.find((item) => item.path === spacePath)
+      if (!space?.id || space.revision === undefined) return
+      void business
+        .chooseSpaceRelocation({
+          id: space.id,
+          expectedRevision: space.revision
+        })
+        .then((result) => (result ? refreshBusinessNavigation() : undefined))
+        .catch(() => onOperationNotice('space-relocate-failed'))
     },
     deleteSpace(spacePath: string) {
       if (business) {
@@ -321,14 +424,14 @@ export function useWorkspaceController({
             expectedRevision: space.revision
           })
           .then(refreshBusinessNavigation)
-          .catch(() => updatePersistenceIssue('navigation', true))
+          .catch(() => onOperationNotice('space-delete-failed'))
         return
       }
       dispatch({ type: 'space-deleted', spacePath })
     },
-    moveSpace(sourcePath: string, targetPath: string) {
+    moveSpace(sourcePath: string, targetIndex: number) {
       if (business) {
-        const reordered = moveBefore(state.spaces, sourcePath, targetPath)
+        const reordered = moveToIndex(state.spaces, sourcePath, targetIndex)
         void Promise.all(
           reordered.map((space, sortOrder) => {
             if (!space.id || space.revision === undefined) return Promise.resolve()
@@ -340,30 +443,36 @@ export function useWorkspaceController({
           })
         )
           .then(refreshBusinessNavigation)
-          .catch(() => updatePersistenceIssue('navigation', true))
+          .catch(() => onOperationNotice('space-move-failed'))
         return
       }
-      dispatch({ type: 'space-moved', sourcePath, targetPath })
+      dispatch({ type: 'space-moved', sourcePath, targetIndex })
     },
-    createRequirement(spacePath: string, title: string) {
+    createRequirement(
+      spacePath: string,
+      title: string,
+      templateVersionId?: string
+    ) {
       if (business) {
         const space = state.spaces.find((item) => item.path === spacePath)
-        if (!space?.id) return
-        void business
-          .listWorkflowTemplates()
-          .then((templates) => {
-            const template = templates[0]
-            if (!template) throw new Error('No published workflow template')
-            return business.createRequirement({
-              id: crypto.randomUUID(),
-              workspaceId: space.id!,
-              title,
-              templateVersionId: template.id
-            })
+        if (!space?.id || !templateVersionId) {
+          onOperationNotice('requirement-create-failed')
+          return Promise.reject(
+            new Error('A published workflow template version is required')
+          )
+        }
+        return business
+          .createRequirement({
+            id: crypto.randomUUID(),
+            workspaceId: space.id,
+            title,
+            templateVersionId
           })
           .then(refreshBusinessNavigation)
-          .catch(() => updatePersistenceIssue('navigation', true))
-        return
+          .catch((error: unknown) => {
+            onOperationNotice('requirement-create-failed')
+            throw error
+          })
       }
       requirementSequenceRef.current += 1
       dispatch({
@@ -373,6 +482,35 @@ export function useWorkspaceController({
           id: `requirement-${requirementSequenceRef.current}`,
           title
         }
+      })
+    },
+    renameRequirement(
+      spacePath: string,
+      requirementId: string,
+      title: string
+    ) {
+      const normalizedTitle = title.trim()
+      if (!normalizedTitle) return
+      if (business) {
+        const requirement = state.requirementsBySpace[spacePath]?.find(
+          (item) => item.id === requirementId
+        )
+        if (!requirement || requirement.revision === undefined) return
+        void business
+          .updateRequirement({
+            id: requirement.id,
+            expectedRevision: requirement.revision,
+            title: normalizedTitle
+          })
+          .then(refreshBusinessNavigation)
+          .catch(() => onOperationNotice('requirement-rename-failed'))
+        return
+      }
+      dispatch({
+        type: 'requirement-renamed',
+        spacePath,
+        requirementId,
+        title: normalizedTitle
       })
     },
     deleteRequirement(spacePath: string, requirementId: string) {
@@ -387,7 +525,7 @@ export function useWorkspaceController({
             expectedRevision: requirement.revision
           })
           .then(refreshBusinessNavigation)
-          .catch(() => updatePersistenceIssue('navigation', true))
+          .catch(() => onOperationNotice('requirement-delete-failed'))
         return
       }
       dispatch({ type: 'requirement-deleted', spacePath, requirementId })
@@ -395,13 +533,13 @@ export function useWorkspaceController({
     moveRequirement(
       spacePath: string,
       sourceId: string,
-      targetId: string
+      targetIndex: number
     ) {
       if (business) {
-        const reordered = moveBefore(
+        const reordered = moveToIndex(
           state.requirementsBySpace[spacePath] ?? [],
           sourceId,
-          targetId,
+          targetIndex,
           (requirement) => requirement.id
         )
         void Promise.all(
@@ -415,95 +553,135 @@ export function useWorkspaceController({
           })
         )
           .then(refreshBusinessNavigation)
-          .catch(() => updatePersistenceIssue('navigation', true))
+          .catch(() => onOperationNotice('requirement-move-failed'))
         return
       }
       dispatch({
         type: 'requirement-moved',
         spacePath,
         sourceId,
-        targetId
+        targetIndex
       })
     },
-    createSession(
+    async createSession(
       spacePath: string,
       prompt: string,
-      modelProfileId?: string
-    ): string {
+      modelProfileId?: string,
+      reasoningMode: ReasoningPreference = 'auto',
+      attachments?: ConversationAttachmentSubmission
+    ): Promise<string> {
       sessionSequenceRef.current += 1
       const now = Date.now()
       const sessionId = business
         ? crypto.randomUUID()
         : `conversation-${sessionSequenceRef.current}`
       const space = state.spaces.find((item) => item.path === spacePath)
-      const folderPath = spacePath.startsWith('folder:')
+      const folderBindingId = spacePath.startsWith('folder:')
         ? spacePath.slice('folder:'.length)
         : undefined
-      dispatch({
-        type: 'session-created',
-        session: {
-          id: sessionId,
-          title: titleFromPrompt(prompt),
-            spacePath: space?.path ?? '',
-            ...(folderPath ? { folderPath } : {}),
-          messages: [
-            {
-              id: `${sessionId}-message-1`,
-              content: prompt,
-              createdAt: now,
-              role: 'user'
-            }
-          ],
-          createdAt: now,
-          updatedAt: now
-        }
-      })
+      const knowledgeScope = space?.id
+        ? ({ kind: 'workspace', workspaceId: space.id } as const)
+        : spacePath === 'all-workspaces'
+          ? ({ kind: 'all_workspaces' } as const)
+          : ({ kind: 'none' } as const)
       if (business) {
-        void business
-          .createConversation({
+        const firstCommittedSnapshot = new Promise<string>((resolve) => {
+          pendingConversationReadyRef.current.set(sessionId, resolve)
+        })
+        try {
+          const completed = business
+            .createConversation({
+              id: sessionId,
+              kind: space?.id ? 'space' : 'general',
+              knowledgeScope,
+              ...(space?.id ? { workspaceId: space.id } : {}),
+              ...(folderBindingId ? { folderBindingId } : {}),
+              ...(modelProfileId ? { modelProfileId } : {}),
+              ...(attachments ? { attachments } : {}),
+              applicationLocale,
+              reasoningMode,
+              title: titleFromPrompt(prompt),
+              prompt
+            })
+            .then(async (conversation) => {
+              dispatch({
+                type: 'session-synced',
+                session: mapConversation(conversation)
+              })
+              updatePersistenceIssue('sessions', false)
+              await refreshRecentConversations(recentFiltersRef.current)
+              return sessionId
+            })
+          return await Promise.race([firstCommittedSnapshot, completed])
+        } catch (error) {
+          throw error
+        } finally {
+          pendingConversationReadyRef.current.delete(sessionId)
+        }
+      } else {
+        dispatch({
+          type: 'session-created',
+          session: {
             id: sessionId,
-            kind: space?.id ? 'space' : 'general',
-            ...(space?.id ? { workspaceId: space.id } : {}),
-            ...(folderPath ? { folderPath } : {}),
-            ...(modelProfileId ? { modelProfileId } : {}),
+            knowledgeScope,
             title: titleFromPrompt(prompt),
-            prompt
-          })
-          .then(refreshBusinessSessions)
-          .catch(() => updatePersistenceIssue('sessions', true))
+            spacePath: space?.path ?? '',
+            ...(folderBindingId ? { folderPath: folderBindingId } : {}),
+            messages: [
+              {
+                id: `${sessionId}-message-1`,
+                content: prompt,
+                createdAt: now,
+                role: 'user'
+              }
+            ],
+            createdAt: now,
+            updatedAt: now
+          }
+        })
       }
       return sessionId
     },
-    appendSessionMessage(
+    async appendSessionMessage(
       sessionId: string,
       content: string,
-      modelProfileId?: string
-    ) {
+      modelProfileId?: string,
+      reasoningMode: ReasoningPreference = 'auto',
+      attachments?: ConversationAttachmentSubmission
+    ): Promise<void> {
       const session = state.sessions.find((item) => item.id === sessionId)
       if (!session) return
-      dispatch({
-        type: 'session-message-appended',
-        sessionId,
-        message: {
-          id: `${sessionId}-message-${session.messages.length + 1}`,
-          content,
-          createdAt: Date.now(),
-          role: 'user'
-        }
-      })
       if (business) {
-        void business
-          .appendConversationMessage({
+        const conversation = await business.appendConversationMessage({
             sessionId,
             messageId: crypto.randomUUID(),
             content,
             expectedRevision: session.revision ?? 0,
-            ...(modelProfileId ? { modelProfileId } : {})
-          })
-          .then(refreshBusinessSessions)
-          .catch(() => updatePersistenceIssue('sessions', true))
+            ...(modelProfileId ? { modelProfileId } : {}),
+            ...(attachments ? { attachments } : {}),
+            applicationLocale,
+            reasoningMode
+        })
+        dispatch({
+          type: 'session-synced',
+          session: mapConversation(conversation)
+        })
+        updatePersistenceIssue('sessions', false)
+        await refreshRecentConversations(recentFiltersRef.current)
+      } else {
+        dispatch({
+          type: 'session-message-appended',
+          sessionId,
+          message: {
+            id: `${sessionId}-message-${session.messages.length + 1}`,
+            content,
+            createdAt: Date.now(),
+            role: 'user'
+          }
+        })
       }
-    }
+    },
+    ...conversationManagement
   }
 
   function updatePersistenceIssue(
@@ -518,87 +696,4 @@ export function useWorkspaceController({
         : current.filter((item) => item !== issue)
     })
   }
-}
-
-function highestSequence(values: string[], pattern: RegExp): number {
-  return values.reduce((highest, value) => {
-    const sequence = Number(value.match(pattern)?.[1] ?? 0)
-    return Math.max(highest, sequence)
-  }, 0)
-}
-
-function mapBusinessNavigation(
-  spaces: SpaceDto[],
-  requirements: Array<readonly [string, RequirementDto[]]>
-) {
-  return {
-    spaces: spaces.map((space) => ({
-      id: space.id,
-      path: `/spaces/${space.id}`,
-      physicalPath: space.path,
-      label: space.label,
-      description: space.description,
-      sortOrder: space.sortOrder,
-      revision: space.revision
-    })),
-    requirementsBySpace: Object.fromEntries(
-      requirements.map(([workspaceId, items]) => [
-        `/spaces/${workspaceId}`,
-        items.map((requirement) => ({
-          id: requirement.id,
-          workspaceId: requirement.workspaceId,
-          title: requirement.title,
-          status: requirement.status,
-          updatedAt: requirement.updatedAt,
-          sortOrder: requirement.sortOrder,
-          revision: requirement.revision
-        }))
-      ])
-    )
-  }
-}
-
-function mapConversation(conversation: ConversationDto) {
-  return {
-    id: conversation.id,
-    kind: conversation.kind,
-    ...(conversation.workspaceId
-      ? { workspaceId: conversation.workspaceId }
-      : {}),
-    ...(conversation.requirementId
-      ? { requirementId: conversation.requirementId }
-      : {}),
-    ...(conversation.nodeRunId ? { nodeRunId: conversation.nodeRunId } : {}),
-    ...(conversation.folderPath ? { folderPath: conversation.folderPath } : {}),
-    title: conversation.title,
-    spacePath: conversation.workspaceId
-      ? `/spaces/${conversation.workspaceId}`
-      : '',
-    messages: conversation.messages.map((message) => ({
-      ...message,
-      role: message.role
-    })),
-    sortOrder: conversation.sortOrder,
-    revision: conversation.revision,
-    createdAt: conversation.createdAt,
-    updatedAt: conversation.updatedAt
-  }
-}
-
-function moveBefore<T>(
-  items: T[],
-  sourceKey: string,
-  targetKey: string,
-  getKey: (item: T) => string = (item) =>
-    (item as { path: string }).path
-): T[] {
-  const sourceIndex = items.findIndex((item) => getKey(item) === sourceKey)
-  const targetIndex = items.findIndex((item) => getKey(item) === targetKey)
-  if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) {
-    return items
-  }
-  const next = [...items]
-  const [source] = next.splice(sourceIndex, 1)
-  next.splice(next.findIndex((item) => getKey(item) === targetKey), 0, source)
-  return next
 }

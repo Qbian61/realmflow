@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.fixed_layout.ocr",
+  "version": "1.1.0",
+  "name": "Recognize OFD page",
+  "description": "Render and recognize one scanned OFD page with the bundled local OCR runtime.",
+  "tags": [
+    "fixed_layout"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "fixed_layout.ocr",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "path",
+      "pageNumber"
+    ],
+    "properties": {
+      "path": {
+        "type": "string",
+        "minLength": 1
+      },
+      "scopeRoot": {
+        "type": "string",
+        "minLength": 1
+      },
+      "pageNumber": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 2000
+      },
+      "language": {
+        "type": "string",
+        "enum": [
+          "eng",
+          "chi_sim"
+        ]
+      },
+      "maxDimension": {
+        "type": "integer",
+        "minimum": 64,
+        "maximum": 2400
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "filesystem.read"
+  ],
+  "effects": [
+    "local_data.read"
+  ],
+  "risk": "low",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "recognize ofd page"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

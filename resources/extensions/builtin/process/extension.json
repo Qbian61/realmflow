@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "packageId": "realmflow.builtin.process",
+  "version": "1.0.3",
+  "name": "Processes",
+  "description": "Local tool discovery and managed processes.",
+  "publisher": {
+    "name": "RealmFlow",
+    "keyId": "realmflow-builtin-v1"
+  },
+  "compatibility": {
+    "realmflow": ">=0.1.0 <1.0.0",
+    "platforms": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
+  },
+  "tools": [
+    {
+      "path": "tools/builtin-process-discover.json"
+    },
+    {
+      "path": "tools/builtin-process-run.json"
+    },
+    {
+      "path": "tools/builtin-process-start.json"
+    },
+    {
+      "path": "tools/builtin-process-list.json"
+    },
+    {
+      "path": "tools/builtin-process-stop.json"
+    }
+  ],
+  "skills": [],
+  "assets": []
+}

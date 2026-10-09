@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "packageId": "realmflow.builtin.spreadsheets",
+  "version": "1.0.0",
+  "name": "Spreadsheets",
+  "description": "Revision-safe local spreadsheet inspection and editing.",
+  "publisher": {
+    "name": "RealmFlow",
+    "keyId": "realmflow-builtin-v1"
+  },
+  "compatibility": {
+    "realmflow": ">=0.1.0 <1.0.0",
+    "platforms": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
+  },
+  "tools": [
+    {
+      "path": "tools/builtin-spreadsheet-inspect.json"
+    },
+    {
+      "path": "tools/builtin-spreadsheet-read_range.json"
+    },
+    {
+      "path": "tools/builtin-spreadsheet-insert_rows.json"
+    },
+    {
+      "path": "tools/builtin-spreadsheet-delete_rows.json"
+    },
+    {
+      "path": "tools/builtin-spreadsheet-write_range.json"
+    },
+    {
+      "path": "tools/builtin-spreadsheet-set_style.json"
+    },
+    {
+      "path": "tools/builtin-spreadsheet-set_formula.json"
+    },
+    {
+      "path": "tools/builtin-spreadsheet-sort.json"
+    },
+    {
+      "path": "tools/builtin-spreadsheet-filter.json"
+    },
+    {
+      "path": "tools/builtin-spreadsheet-chart.json"
+    },
+    {
+      "path": "tools/builtin-spreadsheet-save.json"
+    }
+  ],
+  "skills": [],
+  "assets": []
+}

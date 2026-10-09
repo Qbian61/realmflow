@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.image.crop",
+  "version": "1.0.0",
+  "name": "Crop image",
+  "description": "Crop an explicit image rectangle.",
+  "tags": [
+    "image"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "image.crop",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sessionId": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+      },
+      "expectedRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "left": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 20000
+      },
+      "top": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 20000
+      },
+      "width": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 20000
+      },
+      "height": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 20000
+      }
+    },
+    "required": [
+      "sessionId",
+      "expectedRevision",
+      "left",
+      "top",
+      "width",
+      "height"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "filesystem.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "crop image"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

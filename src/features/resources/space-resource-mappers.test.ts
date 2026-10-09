@@ -28,7 +28,7 @@ describe('space resource mappers', () => {
     })
   })
 
-  it('preserves revision metadata from Main-owned resources', () => {
+  it('preserves refresh and index metadata from Main-owned resources', () => {
     expect(
       mapBusinessResource({
         id: 'resource-1',
@@ -38,16 +38,44 @@ describe('space resource mappers', () => {
         locator: 'https://example.com/docs',
         detail: 'example.com',
         sortOrder: 3,
+        status: 'indexed',
         revision: 4,
         createdAt: 1,
-        updatedAt: 2
+        updatedAt: 2,
+        refresh: {
+          enabled: true,
+          preset: '30m',
+          revision: 2,
+          nextDueAt: 300,
+          lastCheckedAt: 100,
+          lastChangedAt: 90
+        },
+        index: {
+          health: 'ready',
+          profileId: 'gte-multilingual-base-v1',
+          generationId: 'generation-1',
+          sourceVersion: 'sha256:source',
+          indexedAt: 80
+        }
       })
     ).toMatchObject({
       id: 'resource-1',
       sortOrder: 3,
       revision: 4,
       createdAt: 1,
-      updatedAt: 2
+      updatedAt: 2,
+      refresh: {
+        enabled: true,
+        preset: '30m',
+        revision: 2,
+        lastCheckedAt: 100,
+        lastChangedAt: 90
+      },
+      index: {
+        health: 'ready',
+        generationId: 'generation-1',
+        indexedAt: 80
+      }
     })
   })
 

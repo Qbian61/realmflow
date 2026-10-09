@@ -1,548 +1,522 @@
-import {
-  Braces,
-  ChevronDown,
-  ChevronRight,
-  ClipboardCheck,
-  FileSearch,
-  FlaskConical,
-  LoaderCircle,
-  RefreshCw,
-  Rocket,
-  Plus,
-  Trash2,
-  Pause,
-  Play,
-  Sparkles,
-  Square
-} from 'lucide-react'
-import { useEffect, useState } from 'react'
-import { Navigate, useParams } from 'react-router-dom'
-import type { AiRunController } from '../app/hooks/use-ai-run-controller'
+import { Plus, Sparkles, Square } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useState } from "react";
+import { Navigate, useParams, useSearchParams } from "react-router-dom";
+import { Spinner } from "../components/ui";
+import type { AiRunController } from "../app/hooks/use-ai-run-controller";
 import type {
   RequirementNode,
-  RequirementWorkflow
-} from '../../domain/workflow'
-import type { WorkspaceRequirement, WorkspaceSpace } from '../domain/workspace'
+  RequirementWorkflow,
+} from "../../domain/workflow";
+import { getAllowedNodeTodoTransitions } from "../../domain/node-todo";
+import type { WorkspaceRequirement, WorkspaceSpace } from "../domain/workspace";
 import type {
   NodeQuestionDto,
   NodeTodoDto,
   ResolveWorkflowNodeGateCommand,
-  WorkflowNodeExecutionDto
-} from '../../shared/business'
-import { useWorkbench } from '../features/workbench/WorkbenchProvider'
-import { NodeGateActions } from '../features/workflow/NodeGateActions'
+  WorkflowNodeControlAction,
+  WorkflowNodeExecutionDto,
+} from "../../shared/business";
+import { useWorkbench } from "../features/workbench/WorkbenchProvider";
+import { NodeGateActions } from "../features/workflow/NodeGateActions";
+import { NodeQuestionsPanel } from "../features/workflow/NodeQuestionsPanel";
+import { RequirementWorkflowNodeEditor } from "../features/workflow/RequirementWorkflowNodeEditor";
+import {
+  RequirementExecutionResources,
+  RequirementExecutionSummary,
+} from "../features/workflow/RequirementExecutionSnapshot";
+import { WorkflowNodeControls } from "../features/workflow/WorkflowNodeControls";
 import {
   legacyStageFromNodeId,
-  nodeStatusLabel,
   runStatusLabel,
-  selectedWorkflowNodeId
-} from '../features/workflow/workflow-view'
-import { useModelProfiles } from '../app/hooks/use-model-profiles'
-import { useNodeRunSynchronization } from '../app/hooks/use-node-run-synchronization'
-
+  selectedWorkflowNodeId,
+} from "../features/workflow/workflow-view";
+import { useModelProfiles } from "../app/hooks/use-model-profiles";
+import { ModelSelector } from "../features/conversation/ModelSelector";
+import { useNodeRunSynchronization } from "../app/hooks/use-node-run-synchronization";
+import { useRequirementWorkflowRefresh } from "../app/hooks/use-requirement-workflow-refresh";
+import { useRequirementExecutionWorkbench } from "../app/hooks/use-requirement-execution-workbench";
+import { RequirementDetailHeader } from "../features/navigation/RequirementDetailHeader";
+import { RequirementDetailExecutionWorkbench } from "../features/workflow/RequirementDetailExecutionWorkbench";
+import { useToast } from "../features/toast/ToastProvider";
+import { useLocalization } from "../localization/LocalizationProvider";
+import {
+  createTodoDraftId,
+  lifecycleStages,
+  nodeTodoStatusLabel,
+  readErrorMessage,
+} from "./requirement-detail-config";
 type RequirementDetailPageProps = {
-  spaces: WorkspaceSpace[]
-  requirementsBySpace: Record<string, WorkspaceRequirement[]>
-  aiRuns: AiRunController
-}
-
-const lifecycleStages = [
-  { id: 'analysis', label: '需求分析', status: '当前阶段', icon: FileSearch },
-  { id: 'design', label: '技术方案', status: '待开始', icon: ClipboardCheck },
-  { id: 'implementation', label: '开发实现', status: '待开始', icon: Braces },
-  { id: 'testing', label: '测试验证', status: '待开始', icon: FlaskConical },
-  { id: 'release', label: '发布上线', status: '待开始', icon: Rocket },
-  {
-    id: 'retrospective',
-    label: '迭代复盘',
-    status: '待开始',
-    icon: RefreshCw
-  }
-] as const
-
+  spaces: WorkspaceSpace[];
+  requirementsBySpace: Record<string, WorkspaceRequirement[]>;
+  aiRuns: AiRunController;
+  loading?: boolean;
+};
 export default function RequirementDetailPage({
   spaces,
   requirementsBySpace,
-  aiRuns
+  aiRuns,
+  loading = false,
 }: RequirementDetailPageProps): JSX.Element {
-  const { spaceId, requirementId } = useParams()
-  const spacePath = `/spaces/${spaceId ?? ''}`
-  const space = spaces.find((item) => item.path === spacePath)
+  const { t } = useLocalization();
+  const toast = useToast();
+  const { spaceId, requirementId } = useParams();
+  const [searchParams] = useSearchParams();
+  const requestedNodeId = searchParams.get("node")?.trim();
+  const spacePath = `/spaces/${spaceId ?? ""}`;
+  const space = spaces.find((item) => item.path === spacePath);
   const requirement = requirementsBySpace[spacePath]?.find(
-    (item) => item.id === requirementId
-  )
-  const [activeStage, setActiveStage] = useState<string>('analysis')
-  const [workflow, setWorkflow] = useState<RequirementWorkflow>()
-  const [nodeExecution, setNodeExecution] = useState<WorkflowNodeExecutionDto>()
-  const [nodeTodos, setNodeTodos] = useState<NodeTodoDto[]>([])
-  const [nodeQuestions, setNodeQuestions] = useState<NodeQuestionDto[]>([])
-  const [questionAnswers, setQuestionAnswers] = useState<
-    Record<string, string>
-  >({})
-  const [addingNode, setAddingNode] = useState(false)
-  const [nodeName, setNodeName] = useState('')
-  const [gatePending, setGatePending] = useState(false)
-  const workbench = useWorkbench()
-  const models = useModelProfiles()
+    (item) => item.id === requirementId,
+  );
+  const [activeStage, setActiveStage] = useState<string>("analysis");
+  const [workflow, setWorkflow] = useState<RequirementWorkflow>();
+  const [nodeExecution, setNodeExecution] =
+    useState<WorkflowNodeExecutionDto>();
+  const [nodeTodos, setNodeTodos] = useState<NodeTodoDto[]>([]);
+  const [todoDraftId, setTodoDraftId] = useState(createTodoDraftId);
+  const [todoTitle, setTodoTitle] = useState("");
+  const [todoRequired, setTodoRequired] = useState(true);
+  const [todoPendingId, setTodoPendingId] = useState<string>();
+  const [todoError, setTodoError] = useState("");
+  const [nodeQuestions, setNodeQuestions] = useState<NodeQuestionDto[]>([]);
+  const [gatePending, setGatePending] = useState(false);
+  const [gateError, setGateError] = useState("");
+  const [controlPending, setControlPending] = useState(false);
+  const [controlError, setControlError] = useState("");
+  const workbench = useWorkbench();
+  const models = useModelProfiles();
+  const executionWorkbench =
+    useRequirementExecutionWorkbench(requirementId);
+  const executionView = executionWorkbench.view;
+  const executionViewError = executionWorkbench.error
+    ? t("requirementDetail.executionLoadFailed", {
+        error: readErrorMessage(executionWorkbench.error),
+      })
+    : "";
 
   useEffect(() => {
-    if (!requirementId || !window.realmflow?.business) return
-    let disposed = false
+    if (!requestedNodeId) return;
+    void executionWorkbench.select(requestedNodeId);
+  }, [executionWorkbench.select, requestedNodeId, requirementId]);
+
+  const loadExecutionView = useCallback(
+    async (nodeId?: string): Promise<void> => {
+      if (nodeId) {
+        await executionWorkbench.select(nodeId);
+        return;
+      }
+      await executionWorkbench.reload();
+    },
+    [executionWorkbench.reload, executionWorkbench.select],
+  );
+
+  useLayoutEffect(() => {
+    setWorkflow(undefined);
+    setNodeExecution(undefined);
+    setNodeTodos([]);
+    setNodeQuestions([]);
+  }, [requirementId]);
+
+  useEffect(() => {
+    const view = executionWorkbench.view;
+    if (!view) return;
+    setWorkflow(view.workflow);
+    setActiveStage(view.selectedNode.id);
+    setNodeExecution(
+      view.execution && view.selectedNode.nodeRun
+        ? {
+            execution: view.execution,
+            nodeRun: view.selectedNode.nodeRun,
+            ...(view.selectedNode.approval
+              ? { approval: view.selectedNode.approval }
+              : {}),
+          }
+        : undefined,
+    );
+    setNodeTodos(view.selectedNode.todos);
+    setNodeQuestions(view.selectedNode.questions);
+  }, [executionWorkbench.view]);
+
+  useEffect(() => {
+    if (!requirementId || !window.realmflow?.business) return;
+    if (
+      typeof window.realmflow.business.getRequirementExecutionView ===
+      "function"
+    ) {
+      return;
+    }
+    let disposed = false;
     void window.realmflow.business
       .getRequirementWorkflow({ requirementId })
       .then((nextWorkflow) => {
-        if (disposed || !nextWorkflow) return
-        setWorkflow(nextWorkflow)
+        if (disposed || !nextWorkflow) return;
+        setWorkflow(nextWorkflow);
         setActiveStage((current) =>
           nextWorkflow.nodes.some((node) => node.id === current)
             ? current
-            : (nextWorkflow.nodes[0]?.id ?? current)
-        )
-      })
+            : (nextWorkflow.nodes[0]?.id ?? current),
+        );
+      });
     return () => {
-      disposed = true
-    }
-  }, [requirementId])
+      disposed = true;
+    };
+  }, [loadExecutionView, requirementId]);
 
   useEffect(() => {
+    if (
+      typeof window.realmflow?.business?.getRequirementExecutionView ===
+      "function"
+    ) {
+      return;
+    }
     if (
       !requirementId ||
       !selectedWorkflowNodeId(workflow, activeStage) ||
       !window.realmflow?.business
     ) {
-      setNodeExecution(undefined)
-      return
+      setNodeExecution(undefined);
+      return;
     }
-    let disposed = false
+    let disposed = false;
     void window.realmflow.business
       .getWorkflowNodeExecution({
         requirementId,
-        nodeId: selectedWorkflowNodeId(workflow, activeStage) as string
+        nodeId: selectedWorkflowNodeId(workflow, activeStage) as string,
       })
       .then((execution) => {
-        if (!disposed) setNodeExecution(execution)
-      })
+        if (!disposed) setNodeExecution(execution);
+      });
     return () => {
-      disposed = true
-    }
-  }, [activeStage, requirementId, workflow])
+      disposed = true;
+    };
+  }, [activeStage, requirementId, workflow]);
 
   useEffect(() => {
-    const business = window.realmflow?.business
-    const nodeRunId = nodeExecution?.nodeRun.id
+    const business = window.realmflow?.business;
+    const nodeRunId = nodeExecution?.nodeRun.id;
+    if (typeof business?.getRequirementExecutionView === "function") return;
     if (
       !business ||
       !nodeRunId ||
-      typeof business.listNodeTodos !== 'function' ||
-      typeof business.listNodeQuestions !== 'function'
+      typeof business.listNodeTodos !== "function" ||
+      typeof business.listNodeQuestions !== "function"
     ) {
-      setNodeTodos([])
-      setNodeQuestions([])
-      return
+      setNodeTodos([]);
+      setNodeQuestions([]);
+      return;
     }
-    let disposed = false
+    let disposed = false;
     void Promise.all([
       business.listNodeTodos({ nodeRunId }),
-      business.listNodeQuestions({ nodeRunId })
+      business.listNodeQuestions({ nodeRunId }),
     ]).then(([todos, questions]) => {
-      if (disposed) return
-      setNodeTodos(todos)
-      setNodeQuestions(questions)
-      setQuestionAnswers(
-        Object.fromEntries(
-          questions
-            .filter((question) => question.answer)
-            .map((question) => [question.id, question.answer as string])
-        )
-      )
-    })
+      if (disposed) return;
+      setNodeTodos(todos);
+      setNodeQuestions(questions);
+    });
     return () => {
-      disposed = true
-    }
-  }, [nodeExecution?.nodeRun.id])
-
+      disposed = true;
+    };
+  }, [nodeExecution?.nodeRun.id]);
   useNodeRunSynchronization({
     requirementId,
     nodeExecution,
+    activeNodeIds: executionView?.activeNodeIds,
+    selectedNodeId: executionView?.selectedNode.id,
     aiRuns,
     setWorkflow,
-    setNodeExecution
-  })
+    setNodeExecution,
+    refreshExecutionView: loadExecutionView,
+  });
+  const { refreshSelectedNodeState, refreshAfterTemplateMigration } =
+    useRequirementWorkflowRefresh({
+      requirementId,
+      activeNodeId: selectedWorkflowNodeId(workflow, activeStage) ?? activeStage,
+      loadExecutionView,
+      setActiveNodeId: setActiveStage,
+      setWorkflow,
+      setNodeExecution,
+    });
 
+  if ((!space || !requirement) && loading) {
+    return <p role="status">{t("requirementDetail.loading")}</p>;
+  }
   if (!space || !requirement) {
-    return <Navigate to="/chat/new" replace />
+    return <Navigate to="/chat/new" replace />;
   }
   const displayNodes: RequirementNode[] =
     workflow?.nodes ??
     lifecycleStages.map((stage, order) => ({
       id: stage.id,
-      type: 'ai_generate',
-      name: stage.label,
-      description: '',
+      type: "ai_generate",
+      name: t(stage.labelKey),
+      description: "",
       order,
-      status: order === 0 ? 'ready' : 'pending',
-      allowSkip: false
-    }))
+      status: order === 0 ? "ready" : "pending",
+      allowSkip: false,
+    }));
   const selectedNode =
-    displayNodes.find((node) => node.id === activeStage) ?? displayNodes[0]
+    displayNodes.find((node) => node.id === activeStage) ?? displayNodes[0];
   const selectedLegacyStage = selectedNode
     ? legacyStageFromNodeId(selectedNode.id)
-    : undefined
+    : undefined;
   const activeRun = selectedNode
     ? aiRuns.findRun(requirement.id, selectedNode.id)
-    : undefined
+    : undefined;
   const running =
-    activeRun?.status === 'created' ||
-    activeRun?.status === 'running' ||
-    activeRun?.status === 'cancelling'
+    activeRun?.status === "created" ||
+    activeRun?.status === "running" ||
+    activeRun?.status === "cancelling";
   const resolveGate = async (
-    gate: ResolveWorkflowNodeGateCommand['gate']
+    gate: ResolveWorkflowNodeGateCommand["gate"],
   ): Promise<void> => {
-    const business = window.realmflow?.business
-    if (!business || !nodeExecution || !selectedNode) return
-    setGatePending(true)
+    const business = window.realmflow?.business;
+    if (!business || !nodeExecution || !selectedNode) return;
+    setGatePending(true);
+    setGateError("");
     try {
       const nextWorkflow = await business.resolveWorkflowNodeGate({
         requirementId: requirement.id,
         nodeRunId: nodeExecution.nodeRun.id,
         expectedNodeRunRevision: nodeExecution.nodeRun.revision,
-        gate
-      })
-      setWorkflow(nextWorkflow)
+        gate,
+      });
+      setWorkflow(nextWorkflow);
+      if (typeof business.getRequirementExecutionView === "function") {
+        await loadExecutionView(selectedNode.id);
+        return;
+      }
       const nextExecution = await business.getWorkflowNodeExecution({
         requirementId: requirement.id,
-        nodeId: selectedNode.id
-      })
-      setNodeExecution(nextExecution)
+        nodeId: selectedNode.id,
+      });
+      setNodeExecution(nextExecution);
+    } catch (error) {
+      toast.error("requirementDetail.gateUpdateFailed", {
+        values: { error: t("common.unknownError") },
+        dedupeKey: "requirement-gate-update-failed",
+      });
     } finally {
-      setGatePending(false)
+      setGatePending(false);
     }
+  };
+  const controlNode = async (
+    action: WorkflowNodeControlAction,
+    reason?: string,
+  ): Promise<void> => {
+    const business = window.realmflow?.business;
+    if (!business || !workflow || !nodeExecution || !selectedNode) return;
+    const command = {
+      requirementId: requirement.id,
+      nodeRunId: nodeExecution.nodeRun.id,
+      expectedWorkflowRevision: workflow.revision,
+      expectedExecutionRevision: nodeExecution.execution.revision,
+      expectedNodeRunRevision: nodeExecution.nodeRun.revision,
+      ...(models.selectedId ? { modelProfileId: models.selectedId } : {}),
+    };
+    setControlPending(true);
+    setControlError("");
+    try {
+      const result =
+        action === "start"
+          ? await business.startWorkflowNode(command)
+          : action === "pause"
+            ? await business.pauseWorkflowNode(command)
+            : action === "resume"
+              ? await business.resumeWorkflowNode(command)
+              : action === "cancel"
+                ? await business.cancelWorkflowNode(command)
+                : action === "retry"
+                  ? await business.retryWorkflowNode(command)
+                  : await business.skipWorkflowNode({
+                      ...command,
+                      expectedRequirementRevision: requirement.revision ?? 0,
+                      ...(reason ? { reason } : {}),
+                    });
+      if (result.outcome === "rejected") {
+        toast.error("app.persistenceUnavailable", {
+          dedupeKey: `workflow-node-${action}-failed`,
+        });
+        return;
+      }
+      if (typeof business.getRequirementExecutionView === "function") {
+        await loadExecutionView(selectedNode.id);
+        return;
+      }
+      setWorkflow(result.workflow);
+      setNodeExecution({
+        execution: result.execution,
+        nodeRun: result.nodeRun,
+        ...(nodeExecution.approval ? { approval: nodeExecution.approval } : {}),
+      });
+    } catch (error) {
+      toast.error("app.persistenceUnavailable", {
+        dedupeKey: `workflow-node-${action}-failed`,
+      });
+    } finally {
+      setControlPending(false);
+    }
+  };
+  if (executionView && selectedNode) {
+    return (
+      <div className="requirement-detail-page">
+        <h1 className="sr-only">{requirement.title}</h1>
+        <RequirementDetailHeader title={requirement.title} />
+        <div className="requirement-detail-content">
+          <RequirementDetailExecutionWorkbench
+            requirement={requirement}
+            view={executionView}
+            selectedNode={selectedNode}
+            models={models}
+            controlPending={controlPending}
+            gatePending={gatePending}
+            executionError={executionViewError}
+            t={t}
+            onSelectNode={loadExecutionView}
+            onReload={loadExecutionView}
+            onControl={controlNode}
+            onResolveGate={resolveGate}
+            onOpenArtifact={(relativePath, label) =>
+              workbench.openRequirementArtifact(
+                requirement.id,
+                relativePath,
+                label,
+              )
+            }
+          />
+        </div>
+      </div>
+    );
   }
-
   return (
-    <main className="requirement-detail-page">
+    <div className="requirement-detail-page">
+      <h1 className="sr-only">{requirement.title}</h1>
+      <RequirementDetailHeader title={requirement.title} />
+
       <div className="requirement-detail-content">
-        <header className="requirement-detail-header">
-          <div className="requirement-breadcrumb" aria-label="需求路径">
-            <span>{space.label}</span>
-            <ChevronRight size={14} />
-            <span>需求详情</span>
-          </div>
-          <div className="requirement-title-row">
-            <div>
-              <span className="requirement-status">进行中</span>
-              <h1>{requirement.title}</h1>
-            </div>
-            <div className="requirement-title-actions">
-              <span className="requirement-stage">{selectedNode?.name}</span>
-            </div>
-          </div>
-        </header>
-
-        <section
-          className="requirement-overview"
-          aria-labelledby="requirement-overview-title"
-        >
-          <div>
-            <span>所属空间</span>
-            <strong>{space.label}</strong>
-          </div>
-          <div>
-            <span>当前阶段</span>
-            <strong>{selectedNode?.name}</strong>
-          </div>
-          <div>
-            <span>交付状态</span>
-            <strong>规划中</strong>
-          </div>
-        </section>
-
-        <section
-          className="requirement-brief"
-          aria-labelledby="requirement-overview-title"
-        >
-          <h2 id="requirement-overview-title">需求概述</h2>
-          <p>待补充本需求的目标、范围与验收标准。</p>
-        </section>
+        <RequirementExecutionSummary
+          view={executionView}
+          error={executionViewError}
+          onRetry={() => void loadExecutionView(activeStage)}
+        />
 
         <section
           className="development-flow"
           aria-labelledby="development-flow-title"
         >
-          <div className="development-flow-heading">
-            <div>
-              <span>DELIVERY PIPELINE</span>
-              <h2 id="development-flow-title">软件全流程开发</h2>
-            </div>
-            <div className="requirement-flow-actions">
-              <strong>
-                {Math.max(
-                  1,
-                  displayNodes.findIndex(
-                    (node) => node.id === selectedNode?.id
-                  ) + 1
-                )}{' '}
-                / {displayNodes.length}
-              </strong>
-              {workflow ? (
-                <button
-                  type="button"
-                  aria-label="插入流程节点"
-                  title="插入流程节点"
-                  onClick={() => setAddingNode(true)}
-                >
-                  <Plus size={15} />
-                </button>
-              ) : null}
-            </div>
-          </div>
-          {addingNode && workflow ? (
-            <form
-              className="workflow-node-editor"
-              onSubmit={(event) => {
-                event.preventDefault()
-                const name = nodeName.trim()
-                if (!name) return
-                const nodeId = `${requirement.id}:custom:${crypto.randomUUID()}`
-                void window.realmflow?.business
-                  .insertWorkflowNode({
-                    requirementId: requirement.id,
-                    expectedRevision: workflow.revision,
-                    node: {
-                      id: nodeId,
-                      type: 'ai_generate',
-                      name,
-                      description: '',
-                      order: displayNodes.length,
-                      status: 'pending',
-                      allowSkip: true,
-                      executor: {
-                        kind: 'ai_generate',
-                        prompt: `请生成“${name}”节点的交付产物。`,
-                        artifact: {
-                          relativePath: `artifacts/${nodeId.split(':').at(-1)}.md`,
-                          kind: 'markdown'
-                        }
-                      }
-                    },
-                    ...(selectedNode ? { afterNodeId: selectedNode.id } : {})
-                  })
-                  .then((next) => {
-                    setWorkflow(next)
-                    setNodeName('')
-                    setAddingNode(false)
-                  })
-              }}
-            >
-              <input
-                autoFocus
-                aria-label="节点名称"
-                placeholder="节点名称"
-                value={nodeName}
-                onChange={(event) => setNodeName(event.target.value)}
-              />
-              <button type="submit" disabled={!nodeName.trim()}>
-                添加
-              </button>
-              <button type="button" onClick={() => setAddingNode(false)}>
-                取消
-              </button>
-            </form>
-          ) : null}
-          <ol className="development-flow-track">
-            {displayNodes.map((node, index) => {
-              const Icon = iconForNode(node)
-              const legacyStage = legacyStageFromNodeId(node.id)
-              return (
-                <li
-                  className={[
-                    ['ready', 'running'].includes(node.status) ? 'current' : '',
-                    activeStage === node.id ? 'selected' : ''
-                  ]
-                    .filter(Boolean)
-                    .join(' ')}
-                  key={node.id}
-                >
-                  <button
-                    type="button"
-                    aria-label={`打开${node.name}阶段`}
-                    aria-pressed={activeStage === node.id}
-                    onClick={() => {
-                      setActiveStage(node.id)
-                      if (legacyStage) {
-                        workbench.openRequirementArtifact(
-                          requirement.id,
-                          legacyStage,
-                          requirement.title
-                        )
-                      }
-                    }}
-                  >
-                    <div className="development-flow-node">
-                      <Icon size={18} strokeWidth={1.8} />
-                    </div>
-                    <div className="development-flow-copy">
-                      <strong>{node.name}</strong>
-                      <span>{nodeStatusLabel(node.status)}</span>
-                    </div>
-                  </button>
-                  {workflow &&
-                  !['running', 'completed', 'skipped'].includes(node.status) ? (
-                    <button
-                      type="button"
-                      className="workflow-node-delete"
-                      aria-label={`删除${node.name}节点`}
-                      title={`删除${node.name}节点`}
-                      onClick={() =>
-                        void window.realmflow?.business
-                          .removeWorkflowNode({
-                            requirementId: requirement.id,
-                            expectedRevision: workflow.revision,
-                            nodeId: node.id
-                          })
-                          .then(setWorkflow)
-                      }
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  ) : null}
-                </li>
-              )
-            })}
-          </ol>
+          <RequirementWorkflowNodeEditor
+            requirementId={requirement.id}
+            workflow={workflow}
+            nodes={displayNodes}
+            selectedNode={selectedNode}
+            activeNodeId={activeStage}
+            executionView={executionView}
+            onReloadExecutionView={loadExecutionView}
+            onWorkflowChange={setWorkflow}
+            onTemplateMigrationApplied={(nextWorkflow) =>
+              void refreshAfterTemplateMigration(nextWorkflow)
+            }
+            onSelectNode={(node) => {
+              setActiveStage(node.id);
+              if (
+                typeof window.realmflow?.business
+                  ?.getRequirementExecutionView === "function"
+              ) {
+                void loadExecutionView(node.id);
+              }
+              const legacyStage = legacyStageFromNodeId(node.id);
+              if (legacyStage) {
+                workbench.openRequirementArtifact(
+                  requirement.id,
+                  legacyStage,
+                  requirement.title,
+                );
+              }
+            }}
+          />
           <div className="stage-run-panel" aria-live="polite">
             <div className="stage-run-heading">
               <div>
-                <span>阶段产物</span>
+                <span>{t("requirementDetail.stageArtifact")}</span>
                 <strong>{selectedNode?.name}</strong>
               </div>
-              {selectedNode?.type === 'ai_generate' ? (
-                <label className="select-control model-control">
-                  <select
-                    aria-label="阶段生成模型"
-                    value={models.selectedId}
-                    onChange={(event) => models.select(event.target.value)}
-                  >
-                    {models.options.map((option) => (
-                      <option value={option.value} key={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown size={14} />
-                </label>
+              {selectedNode?.type === "ai_generate" ? (
+                <ModelSelector
+                  ariaLabel={t("requirementDetail.generationModel")}
+                  autoLabel={t("model.autoSelect")}
+                  configureLabel={t("model.configure")}
+                  emptyLabel={t("model.noMatches")}
+                  searchPlaceholder={t("model.search")}
+                  groups={models.groups}
+                  value={models.selectedId}
+                  effectiveValue={models.effectiveId}
+                  onOpen={() => void models.refresh()}
+                  onChange={models.select}
+                  onConfigure={() => {
+                    window.location.hash = "/settings?section=models";
+                  }}
+                />
               ) : null}
               <NodeGateActions
                 node={selectedNode}
+                approval={nodeExecution?.approval}
                 disabled={!nodeExecution || gatePending}
                 onResolve={resolveGate}
               />
-              {workflow && selectedNode?.status === 'paused' ? (
-                <button
-                  type="button"
-                  className="stage-run-start"
-                  aria-label="继续节点"
-                  disabled={!nodeExecution}
-                  onClick={() =>
-                    nodeExecution
-                      ? void window.realmflow?.business
-                          .resumeWorkflowNode({
-                            requirementId: requirement.id,
-                            nodeRunId: nodeExecution.nodeRun.id,
-                            expectedWorkflowRevision: workflow.revision,
-                            expectedNodeRunRevision:
-                              nodeExecution.nodeRun.revision,
-                            ...(models.selectedId
-                              ? { modelProfileId: models.selectedId }
-                              : {})
-                          })
-                          .then(setWorkflow)
-                      : undefined
+              {workflow && selectedNode && nodeExecution ? (
+                <WorkflowNodeControls
+                  node={selectedNode}
+                  pending={controlPending}
+                  onAction={(action, reason) =>
+                    void controlNode(action, reason)
                   }
-                >
-                  <Play size={14} />
-                  继续
-                </button>
+                />
               ) : running && activeRun ? (
                 <button
                   type="button"
                   className="stage-run-cancel"
-                  aria-label="取消生成"
-                  disabled={activeRun.status === 'cancelling'}
+                  aria-label={t("requirementDetail.cancelGeneration")}
+                  disabled={activeRun.status === "cancelling"}
                   onClick={() => void aiRuns.cancel(activeRun.runId)}
                 >
                   <Square size={13} />
-                  {activeRun.status === 'cancelling' ? '正在取消' : '取消'}
+                  {activeRun.status === "cancelling"
+                    ? t("requirementDetail.cancelling")
+                    : t("requirementDetail.cancel")}
                 </button>
-              ) : selectedNode?.type === 'ai_generate' &&
-                (selectedNode.executor || selectedLegacyStage) ? (
+              ) : selectedNode?.type === "ai_generate" &&
+                selectedLegacyStage ? (
                 <button
                   type="button"
                   className="stage-run-start"
-                  aria-label={`生成${selectedNode?.name}产物`}
+                  aria-label={t("requirementDetail.generateAria", {
+                    name: selectedNode?.name ?? "",
+                  })}
                   onClick={() => {
-                    if (nodeExecution && selectedNode.executor) {
-                      void aiRuns.start({
-                        requirementId: requirement.id,
-                        nodeId: selectedNode.id,
-                        nodeRunId: nodeExecution.nodeRun.id,
-                        ...(models.selectedId
-                          ? { modelProfileId: models.selectedId }
-                          : {})
-                      })
-                      return
-                    }
-                    if (selectedLegacyStage) {
-                      void aiRuns.start({
-                        requirementId: requirement.id,
-                        stageId: selectedLegacyStage,
-                        ...(models.selectedId
-                          ? { modelProfileId: models.selectedId }
-                          : {})
-                      })
-                    }
+                    void aiRuns.start({
+                      requirementId: requirement.id,
+                      stageId: selectedLegacyStage,
+                      ...(models.selectedId
+                        ? { modelProfileId: models.selectedId }
+                        : {}),
+                    });
                   }}
                 >
                   <Sparkles size={15} />
-                  生成产物
-                </button>
-              ) : null}
-              {workflow &&
-              selectedNode &&
-              selectedNode.type === 'ai_generate' &&
-              ['ready', 'running'].includes(selectedNode.status) ? (
-                <button
-                  type="button"
-                  className="stage-run-cancel"
-                  aria-label="暂停节点"
-                  disabled={!nodeExecution}
-                  onClick={() =>
-                    nodeExecution
-                      ? void window.realmflow?.business
-                          .pauseWorkflowNode({
-                            requirementId: requirement.id,
-                            nodeRunId: nodeExecution.nodeRun.id,
-                            expectedWorkflowRevision: workflow.revision,
-                            expectedNodeRunRevision:
-                              nodeExecution.nodeRun.revision
-                          })
-                          .then(setWorkflow)
-                      : undefined
-                  }
-                >
-                  <Pause size={13} />
-                  暂停
+                  {t("requirementDetail.generate")}
                 </button>
               ) : null}
             </div>
+            {gateError || controlError ? (
+              <p role="alert">{gateError || controlError}</p>
+            ) : null}
             {activeRun ? (
               <div className={`stage-run-state ${activeRun.status}`}>
                 <div className="stage-run-progress">
                   <div>
                     {running ? (
-                      <LoaderCircle className="spinning" size={14} />
+                      <Spinner size={14} />
                     ) : null}
-                    <span>{runStatusLabel(activeRun.status)}</span>
+                    <span>{runStatusLabel(activeRun.status, t)}</span>
                   </div>
                   <strong>{activeRun.progress}%</strong>
                 </div>
@@ -552,122 +526,171 @@ export default function RequirementDetailPage({
               </div>
             ) : (
               <p className="stage-run-empty">
-                生成内容将在此处实时显示，完成校验后写入产物工作区。
+                {t("requirementDetail.generationEmpty")}
               </p>
             )}
-            {nodeTodos.length > 0 || nodeQuestions.length > 0 ? (
+            {executionView ? (
+              <RequirementExecutionResources
+                view={executionView}
+                modelProfileId={models.selectedId || undefined}
+                onReload={loadExecutionView}
+              />
+            ) : null}
+            {nodeExecution || nodeQuestions.length > 0 ? (
               <div className="node-work-items">
-                {nodeTodos.length > 0 ? (
+                {nodeExecution ? (
                   <section aria-labelledby="node-todos-title">
-                    <h3 id="node-todos-title">节点待办</h3>
+                    <h3 id="node-todos-title">
+                      {t("requirementDetail.todos")}
+                    </h3>
+                    <form
+                      className="node-todo-create"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        const title = todoTitle.trim();
+                        const nodeRunId = nodeExecution.nodeRun.id;
+                        const business = window.realmflow?.business;
+                        if (!title || !business) return;
+                        setTodoPendingId(todoDraftId);
+                        setTodoError("");
+                        void business
+                          .saveNodeTodo({
+                            id: todoDraftId,
+                            nodeRunId,
+                            title,
+                            required: todoRequired,
+                            status: "pending",
+                            expectedRevision: 0,
+                          })
+                          .then((saved) => {
+                            setNodeTodos((current) => [...current, saved]);
+                            setTodoTitle("");
+                            setTodoRequired(true);
+                            setTodoDraftId(createTodoDraftId());
+                          })
+                          .catch((error: unknown) => {
+                            setTodoError(
+                              t("requirementDetail.createTodoFailed", {
+                                error: t("common.unknownError"),
+                              }),
+                            );
+                          })
+                          .finally(() => setTodoPendingId(undefined));
+                      }}
+                    >
+                      <input name="requirement-detail-new-todo" autoComplete="off"
+                        aria-label={t("requirementDetail.newTodo")}
+                        maxLength={500}
+                        placeholder={t("requirementDetail.todoPlaceholder")}
+                        value={todoTitle}
+                        onChange={(event) => setTodoTitle(event.target.value)}
+                      />
+                      <label>
+                        <input name="requirement-detail-page-todo-required" autoComplete="off"
+                          type="checkbox"
+                          checked={todoRequired}
+                          onChange={(event) =>
+                            setTodoRequired(event.target.checked)
+                          }
+                        />
+                        {t("requirementDetail.required")}
+                      </label>
+                      <button
+                        type="submit"
+                        disabled={
+                          !todoTitle.trim() ||
+                          Boolean(todoPendingId) ||
+                          nodeExecution.nodeRun.status === "completed" ||
+                          nodeExecution.nodeRun.status === "skipped"
+                        }
+                      >
+                        <Plus size={14} />
+                        {t("requirementDetail.addTodo")}
+                      </button>
+                    </form>
+                    {todoError ? <p role="alert">{todoError}</p> : null}
                     <div className="node-todo-list">
                       {nodeTodos.map((todo) => (
-                        <label key={todo.id}>
-                          <input
-                            type="checkbox"
-                            aria-label={todo.title}
-                            checked={todo.status === 'completed'}
-                            disabled={
-                              todo.status === 'completed' ||
-                              todo.status === 'cancelled'
-                            }
-                            onChange={() => {
-                              const { revision, ...todoRecord } = todo
-                              void window.realmflow?.business
-                                .saveNodeTodo({
-                                  ...todoRecord,
-                                  status: 'completed',
-                                  expectedRevision: revision
-                                })
-                                .then((saved) =>
-                                  setNodeTodos((current) =>
-                                    current.map((item) =>
-                                      item.id === saved.id ? saved : item
-                                    )
-                                  )
-                                )
-                            }}
-                          />
+                        <div key={todo.id} className="node-todo">
                           <span>{todo.title}</span>
-                          {todo.required ? <em>必需</em> : null}
-                        </label>
-                      ))}
-                    </div>
-                  </section>
-                ) : null}
-                {nodeQuestions.length > 0 ? (
-                  <section aria-labelledby="node-questions-title">
-                    <h3 id="node-questions-title">待确认问题</h3>
-                    <div className="node-question-list">
-                      {nodeQuestions.map((question) => (
-                        <div className="node-question" key={question.id}>
-                          <label htmlFor={`node-question-${question.id}`}>
-                            {question.prompt}
-                            {question.required ? <em>必需</em> : null}
-                          </label>
-                          {question.status === 'open' ? (
-                            <div>
-                              <input
-                                id={`node-question-${question.id}`}
-                                aria-label={`回答：${question.prompt}`}
-                                value={questionAnswers[question.id] ?? ''}
-                                onChange={(event) =>
-                                  setQuestionAnswers((current) => ({
-                                    ...current,
-                                    [question.id]: event.target.value
-                                  }))
-                                }
-                              />
-                              <button
-                                type="button"
-                                disabled={
-                                  !(questionAnswers[question.id] ?? '').trim()
-                                }
-                                onClick={() =>
-                                  void window.realmflow?.business
-                                    .answerNodeQuestion({
-                                      id: question.id,
-                                      nodeRunId: question.nodeRunId,
-                                      answer:
-                                        questionAnswers[question.id]?.trim() ??
-                                        '',
-                                      expectedRevision: question.revision
-                                    })
-                                    .then((saved) =>
-                                      setNodeQuestions((current) =>
-                                        current.map((item) =>
-                                          item.id === saved.id ? saved : item
-                                        )
-                                      )
-                                    )
-                                }
-                              >
-                                提交回答
-                              </button>
-                            </div>
+                          {todo.required ? (
+                            <em>{t("requirementDetail.required")}</em>
+                          ) : null}
+                          {getAllowedNodeTodoTransitions(todo.status).length >
+                          0 ? (
+                            <select name={`requirement-todo-${todo.id}-status`} autoComplete="off"
+                              aria-label={t(
+                                "requirementDetail.updateTodoAria",
+                                { title: todo.title },
+                              )}
+                              disabled={todoPendingId === todo.id}
+                              value={todo.status}
+                              onChange={(event) => {
+                                const status = event.target
+                                  .value as NodeTodoDto["status"];
+                                const business = window.realmflow?.business;
+                                if (!business) return;
+                                setTodoPendingId(todo.id);
+                                setTodoError("");
+                                void business
+                                  .saveNodeTodo({
+                                    id: todo.id,
+                                    nodeRunId: todo.nodeRunId,
+                                    title: todo.title,
+                                    required: todo.required,
+                                    status,
+                                    expectedRevision: todo.revision,
+                                  })
+                                  .then((saved) =>
+                                    setNodeTodos((current) =>
+                                      current.map((item) =>
+                                        item.id === saved.id ? saved : item,
+                                      ),
+                                    ),
+                                  )
+                                  .catch((error: unknown) => {
+                                    setTodoError(
+                                      t("requirementDetail.updateTodoFailed", {
+                                        error: t("common.unknownError"),
+                                      }),
+                                    );
+                                  })
+                                  .finally(() => setTodoPendingId(undefined));
+                              }}
+                            >
+                              <option value={todo.status}>
+                                {nodeTodoStatusLabel(t, todo.status)}
+                              </option>
+                              {getAllowedNodeTodoTransitions(todo.status).map(
+                                (status) => (
+                                  <option key={status} value={status}>
+                                    {nodeTodoStatusLabel(t, status)}
+                                  </option>
+                                ),
+                              )}
+                            </select>
                           ) : (
-                            <p>{question.answer}</p>
+                            <span className={`node-todo-status ${todo.status}`}>
+                              {nodeTodoStatusLabel(t, todo.status)}
+                            </span>
                           )}
                         </div>
                       ))}
                     </div>
                   </section>
                 ) : null}
+                <NodeQuestionsPanel
+                  requirementId={requirement.id}
+                  execution={nodeExecution}
+                  questions={nodeQuestions}
+                  onQuestionsChange={setNodeQuestions}
+                  onRefresh={refreshSelectedNodeState}
+                />
               </div>
             ) : null}
           </div>
         </section>
       </div>
-    </main>
-  )
-}
-
-function iconForNode(node: RequirementNode) {
-  const icons = {
-    ai_generate: Sparkles,
-    human_input: FileSearch,
-    tool: Braces,
-    approval: ClipboardCheck
-  }
-  return icons[node.type]
+    </div>
+  );
 }

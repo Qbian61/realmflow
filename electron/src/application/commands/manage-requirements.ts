@@ -10,9 +10,12 @@ import type {
   WorkRootRepository,
   WorkflowExecutionRepository,
   NodeRunRepository,
+  NodeTodoRepository,
   WorkflowTemplateRepository,
   WorkspaceRepository
 } from '../ports/business-repositories'
+import { coordinateManagedCreation } from '../transactions/managed-creation-coordinator'
+import { initializeConfiguredNodeTodos } from '../workflow/manage-node-todos'
 
 export class CreateRequirementUseCase {
   constructor(
@@ -22,6 +25,7 @@ export class CreateRequirementUseCase {
     private readonly workflows: RequirementWorkflowRepository,
     private readonly executions: WorkflowExecutionRepository,
     private readonly nodeRuns: NodeRunRepository,
+    private readonly nodeTodos: NodeTodoRepository,
     private readonly unitOfWork: UnitOfWork,
     private readonly directories: ManagedWorkspaceDirectoryGateway,
     private readonly now: () => number = Date.now
@@ -34,6 +38,24 @@ export class CreateRequirementUseCase {
     templateVersionId: string
     syncCompletedArtifactsToKnowledge?: boolean
   }): Promise<Revisioned<RequirementRecord>> {
+    const title = input.title.trim()
+    if (!title) throw new Error('Requirement title is required')
+    const syncCompletedArtifactsToKnowledge =
+      input.syncCompletedArtifactsToKnowledge ?? false
+    const existing = await this.requirements.get(input.id)
+    if (existing) {
+      if (
+        existing.workspaceId === input.workspaceId &&
+        existing.title === title &&
+        existing.workflowTemplateVersionId === input.templateVersionId &&
+        (existing.syncCompletedArtifactsToKnowledge ?? false) ===
+          syncCompletedArtifactsToKnowledge
+      ) {
+        return existing
+      }
+      throw new Error('Requirement id already exists with different data')
+    }
+
     const workspace = await this.workspaces.get(input.workspaceId)
     if (!workspace?.rootPath) throw new Error('Workspace directory is unavailable')
     const template = await this.templates.getVersion(input.templateVersionId)
@@ -45,23 +67,26 @@ export class CreateRequirementUseCase {
       spacePath: workspace.rootPath,
       spaceId: workspace.id,
       requirementId: input.id,
-      name: input.title
+      name: title
     })
-    try {
-      return await this.unitOfWork.execute(async () => {
+    return coordinateManagedCreation(
+      this.unitOfWork,
+      pending,
+      async () => {
         const timestamp = this.now()
         const requirementResult = await this.requirements.save(
           {
             id: input.id,
             workspaceId: input.workspaceId,
-            title: input.title,
+            title,
             stage: 'analysis',
             status: 'pending',
             workspaceRootPath: pending.path,
             workflowTemplateVersionId: template.id,
             directoryName: pending.directoryName,
-            syncCompletedArtifactsToKnowledge:
-              input.syncCompletedArtifactsToKnowledge ?? false,
+            ...(syncCompletedArtifactsToKnowledge
+              ? { syncCompletedArtifactsToKnowledge: true }
+              : {}),
             sortOrder: (
               await this.requirements.listByWorkspace(input.workspaceId)
             ).length,
@@ -75,7 +100,10 @@ export class CreateRequirementUseCase {
         }
 
         const workflow = instantiateRequirementWorkflow(template, input.id)
-        const workflowResult = await this.workflows.save(workflow, 0)
+        const workflowResult = await this.workflows.save(workflow, 0, {
+          reason: 'workflow_created',
+          triggerSource: 'user'
+        })
         if (workflowResult.status === 'conflict') {
           throw new Error('Requirement workflow already exists')
         }
@@ -114,15 +142,71 @@ export class CreateRequirementUseCase {
           if (nodeRunResult.status === 'conflict') {
             throw new Error(`Requirement node run already exists: ${node.id}`)
           }
+          await initializeConfiguredNodeTodos(this.nodeTodos, {
+            nodeRunId: nodeRunResult.entity.id,
+            configuredTodos: node.configuration?.todos,
+            timestamp
+          })
         }
 
-        await pending.commit()
         return requirementResult.entity
-      })
-    } catch (error) {
-      await pending.rollback()
-      throw error
+      }
+    )
+  }
+}
+
+export class UpdateRequirementUseCase {
+  constructor(
+    private readonly requirements: RequirementRepository,
+    private readonly now: () => number = Date.now
+  ) {}
+
+  async execute(input: {
+    id: string
+    expectedRevision: number
+    title?: string
+    status?: RequirementRecord['status']
+    sortOrder?: number
+    syncCompletedArtifactsToKnowledge?: boolean
+  }): Promise<Revisioned<RequirementRecord>> {
+    const current = await this.requirements.get(input.id)
+    if (!current) throw new Error(`Requirement not found: ${input.id}`)
+
+    const title = input.title?.trim()
+    if (input.title !== undefined && !title) {
+      throw new Error('Requirement title is required')
     }
+    const unchanged =
+      (input.title === undefined || title === current.title) &&
+      (input.status === undefined || input.status === current.status) &&
+      (input.sortOrder === undefined || input.sortOrder === current.sortOrder) &&
+      (input.syncCompletedArtifactsToKnowledge === undefined ||
+        input.syncCompletedArtifactsToKnowledge ===
+          (current.syncCompletedArtifactsToKnowledge ?? false))
+    if (unchanged) return current
+
+    const result = await this.requirements.save(
+      {
+        ...current,
+        ...(title === undefined ? {} : { title }),
+        ...(input.status === undefined ? {} : { status: input.status }),
+        ...(input.sortOrder === undefined
+          ? {}
+          : { sortOrder: input.sortOrder }),
+        ...(input.syncCompletedArtifactsToKnowledge === undefined
+          ? {}
+          : {
+              syncCompletedArtifactsToKnowledge:
+                input.syncCompletedArtifactsToKnowledge
+            }),
+        updatedAt: this.now()
+      },
+      input.expectedRevision
+    )
+    if (result.status === 'conflict') {
+      throw new Error('Requirement revision conflict')
+    }
+    return result.entity
   }
 }
 
@@ -178,7 +262,8 @@ export class DeleteRequirementUseCase {
         return this.requirements.delete(requirement.id, requirement.revision, {
           originalPath: move.originalPath,
           trashPath: move.movedPath,
-          deletedAt: this.now()
+          deletedAt: this.now(),
+          triggerSource: 'user'
         })
       })
       if (!deleted) throw new Error('Requirement revision conflict')
@@ -212,6 +297,9 @@ export class RestoreRequirementUseCase {
   async execute(input: { id: string }): Promise<boolean> {
     const deletion = await this.requirements.getDeletion(input.id)
     if (!deletion) return false
+    if (deletion.state === 'purging') {
+      throw new Error('Requirement is being permanently deleted')
+    }
     const move = await this.directories.restoreManagedDirectory({
       originalPath: deletion.originalPath,
       trashPath: deletion.trashPath

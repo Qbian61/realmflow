@@ -31,7 +31,7 @@ export class InMemoryRunRepository implements RunRepository {
   }
 
   async appendEvent(event: AiRunEvent): Promise<boolean> {
-    if (event.type === 'content.delta' || event.type === 'heartbeat') return false
+    if (event.type === 'answer.delta' || event.type === 'heartbeat') return false
     const events = this.events.get(event.runId) ?? new Map<number, AiRunEvent>()
     if (events.has(event.sequence)) return false
     events.set(event.sequence, structuredClone(event))

@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.web.fetch",
+  "version": "1.0.0",
+  "name": "Fetch web page",
+  "description": "Fetch a public HTTP or HTTPS resource and return sanitized readable text.",
+  "tags": [
+    "web"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "web.fetch",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "url"
+    ],
+    "properties": {
+      "url": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096
+      },
+      "mode": {
+        "type": "string",
+        "enum": [
+          "readable",
+          "raw_text"
+        ]
+      },
+      "timeoutMs": {
+        "type": "integer",
+        "minimum": 1000,
+        "maximum": 30000
+      },
+      "maxBytes": {
+        "type": "integer",
+        "minimum": 1024,
+        "maximum": 1048576
+      },
+      "maxRedirects": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 10
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "network.connect"
+  ],
+  "effects": [
+    "external.read"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "fetch web page"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

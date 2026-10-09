@@ -1,0 +1,290 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://realmflow.local/schemas/knowledge-search-benchmark-result-v1.json",
+  "title": "RealmFlow Knowledge Search Benchmark Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "benchmark",
+    "status",
+    "generatedAt",
+    "seed",
+    "goldenSetSha256",
+    "environment",
+    "configuration",
+    "scenarios",
+    "decisions"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "benchmark": {
+      "const": "realmflow-knowledge-search"
+    },
+    "status": {
+      "enum": [
+        "completed",
+        "partial",
+        "skipped",
+        "failed"
+      ]
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "seed": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "goldenSetSha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "environment": {
+      "$ref": "#/$defs/environment"
+    },
+    "configuration": {
+      "$ref": "#/$defs/configuration"
+    },
+    "scenarios": {
+      "type": "array",
+      "minItems": 10,
+      "maxItems": 10,
+      "items": {
+        "$ref": "#/$defs/scenario"
+      }
+    },
+    "decisions": {
+      "$ref": "#/$defs/decisions"
+    }
+  },
+  "$defs": {
+    "nullableString": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "platform",
+        "arch",
+        "nodeVersion",
+        "pythonVersion",
+        "qdrantVersion",
+        "embeddingRuntime"
+      ],
+      "properties": {
+        "platform": {
+          "type": "string",
+          "minLength": 1
+        },
+        "arch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "nodeVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pythonVersion": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "qdrantVersion": {
+          "$ref": "#/$defs/nullableString"
+        },
+        "embeddingRuntime": {
+          "$ref": "#/$defs/nullableString"
+        }
+      }
+    },
+    "configuration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sizes",
+        "topK",
+        "denseDimensions",
+        "denseDistance",
+        "sparseModel",
+        "fusion",
+        "rrfK",
+        "embeddingModel",
+        "embeddingRevision"
+      ],
+      "properties": {
+        "sizes": {
+          "const": [
+            1000,
+            10000,
+            100000
+          ]
+        },
+        "topK": {
+          "const": 8
+        },
+        "denseDimensions": {
+          "const": 768
+        },
+        "denseDistance": {
+          "const": "Cosine"
+        },
+        "sparseModel": {
+          "const": "qdrant/bm25"
+        },
+        "fusion": {
+          "const": "rrf"
+        },
+        "rrfK": {
+          "const": 60
+        },
+        "embeddingModel": {
+          "const": "Alibaba-NLP/gte-multilingual-base"
+        },
+        "embeddingRevision": {
+          "const": "9bbca17d9273fd0d03d5725c7a4b0f6b45142062"
+        }
+      }
+    },
+    "scenario": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "status",
+            "metrics"
+          ],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/scenarioId"
+            },
+            "status": {
+              "const": "completed"
+            },
+            "metrics": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": true
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "status",
+            "reasonCode",
+            "reason"
+          ],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/scenarioId"
+            },
+            "status": {
+              "enum": [
+                "skipped",
+                "failed"
+              ]
+            },
+            "reasonCode": {
+              "type": "string",
+              "minLength": 1
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      ]
+    },
+    "scenarioId": {
+      "enum": [
+        "scale-1k",
+        "scale-10k",
+        "scale-100k",
+        "ranking-quality",
+        "chunking-comparison",
+        "onnx-int8",
+        "qdrant-scalar-quantization",
+        "hnsw-matrix",
+        "refresh-noop",
+        "generation-filter"
+      ]
+    },
+    "decisions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "embeddingPrecision",
+        "embeddingPrecisionReason",
+        "scalarQuantization",
+        "scalarQuantizationReason",
+        "hnsw"
+      ],
+      "properties": {
+        "embeddingPrecision": {
+          "enum": [
+            "float32",
+            "int8"
+          ]
+        },
+        "embeddingPrecisionReason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scalarQuantization": {
+          "enum": [
+            "disabled",
+            "enabled"
+          ]
+        },
+        "scalarQuantizationReason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "hnsw": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "m",
+            "efConstruct",
+            "efSearch",
+            "reason"
+          ],
+          "properties": {
+            "m": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "efConstruct": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "efSearch": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    }
+  }
+}

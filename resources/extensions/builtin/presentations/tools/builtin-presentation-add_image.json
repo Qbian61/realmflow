@@ -1,0 +1,118 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.presentation.add_image",
+  "version": "1.0.0",
+  "name": "Add presentation image",
+  "description": "Add an authorized local image to a slide.",
+  "tags": [
+    "presentation"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "presentation.add_image",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sessionId": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+      },
+      "expectedRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "slideId": {
+        "type": "string",
+        "pattern": "^slide-[0-9]+$"
+      },
+      "shapeId": {
+        "type": "string",
+        "pattern": "^shape-[0-9]+-[0-9]+$"
+      },
+      "imagePath": {
+        "type": "string",
+        "minLength": 1
+      },
+      "bounds": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "leftPt",
+          "topPt",
+          "widthPt",
+          "heightPt"
+        ],
+        "properties": {
+          "leftPt": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 2880
+          },
+          "topPt": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 2880
+          },
+          "widthPt": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 2880
+          },
+          "heightPt": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 2880
+          }
+        }
+      },
+      "scopeRoot": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "required": [
+      "sessionId",
+      "expectedRevision",
+      "slideId",
+      "bounds",
+      "imagePath"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "filesystem.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "add presentation image"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

@@ -1,6 +1,7 @@
 import {
   createWorkbenchState,
   workbenchReducer,
+  type TerminalTab,
   type WorkbenchTab
 } from './workbench-reducer'
 
@@ -11,16 +12,56 @@ const workspaceTab: WorkbenchTab = {
   workspaceId: 'one'
 }
 
-const terminalTab: WorkbenchTab = {
+const terminalTab: TerminalTab = {
   id: 'terminal:one',
   type: 'terminal',
   label: 'terminal',
-  session: { id: 'terminal:one', title: 'terminal', cwd: '/tmp' },
+  session: {
+    id: 'terminal:one',
+    title: 'terminal',
+    cwd: '/tmp',
+    shell: 'zsh'
+  },
   output: '',
   exited: false
 }
 
 describe('workbenchReducer', () => {
+  it('opens editable code snippets as reusable workbench tabs', () => {
+    const codeTab: WorkbenchTab = {
+      id: 'code:example',
+      type: 'code',
+      label: 'example.js',
+      snippet: {
+        language: 'javascript',
+        content: 'console.log("ready")',
+        suggestedName: 'example.js'
+      }
+    }
+
+    const opened = workbenchReducer(createWorkbenchState(), {
+      type: 'tab-activated',
+      tab: codeTab
+    })
+    const reopened = workbenchReducer(opened, {
+      type: 'tab-activated',
+      tab: {
+        ...codeTab,
+        snippet: { ...codeTab.snippet, content: 'console.log("updated")' }
+      }
+    })
+
+    expect(opened).toEqual({
+      tabs: [codeTab],
+      activeTabId: codeTab.id
+    })
+    expect(reopened.tabs).toHaveLength(1)
+    expect(reopened.tabs[0]).toMatchObject({
+      type: 'code',
+      snippet: { content: 'console.log("updated")' }
+    })
+  })
+
   it('activates a new tab and replaces an existing tab in place', () => {
     const opened = workbenchReducer(createWorkbenchState(), {
       type: 'tab-activated',

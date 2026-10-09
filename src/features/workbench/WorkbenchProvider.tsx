@@ -2,6 +2,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useMemo,
   useReducer,
   useState,
   type ReactNode
@@ -18,6 +19,7 @@ import {
   useWorkbenchCommands,
   type WorkbenchCommands
 } from './hooks/use-workbench-commands'
+import { useUnsavedChangesRequest } from '../unsaved-changes/UnsavedChangesProvider'
 import { useWorkbenchGeometry } from './hooks/use-workbench-geometry'
 import { useNativeWorkbenchSync } from './hooks/use-native-workbench-sync'
 import { useTerminalSessions } from './hooks/use-terminal-sessions'
@@ -29,6 +31,10 @@ export function useWorkbench(): WorkbenchCommands {
   const context = useContext(WorkbenchContext)
   if (!context) throw new Error('WorkbenchProvider is required')
   return context
+}
+
+export function useOptionalWorkbench(): WorkbenchCommands | null {
+  return useContext(WorkbenchContext)
 }
 
 export function WorkbenchProvider({
@@ -64,6 +70,15 @@ export function WorkbenchProvider({
     setPanelOpen,
     ...terminal
   })
+  const unsavedChanges = useUnsavedChangesRequest()
+  const guardedContextValue = useMemo<WorkbenchCommands>(
+    () => ({
+      ...commands.contextValue,
+      closePanel: () =>
+        unsavedChanges.request(commands.contextValue.closePanel)
+    }),
+    [commands.contextValue, unsavedChanges]
+  )
   const handleNativeAction = useCallback(
     (action: WorkbenchActionId): void => {
       const selected = commands.launcherActions.find(
@@ -84,7 +99,7 @@ export function WorkbenchProvider({
   })
 
   return (
-    <WorkbenchContext.Provider value={commands.contextValue}>
+    <WorkbenchContext.Provider value={guardedContextValue}>
       <WorkbenchLayout
         layoutRef={geometry.layoutRef}
         panelRef={geometry.panelRef}
@@ -99,16 +114,19 @@ export function WorkbenchProvider({
         urlDraft={commands.urlDraft}
         urlError={commands.urlError}
         terminalApi={api?.terminal}
+        codeSnippetApi={api?.codeSnippet}
         launcherActions={commands.launcherActions}
         onPageClick={commands.openLinkedWebContent}
         onTogglePanel={() => {
-          if (panelOpen) commands.contextValue.closePanel()
+          if (panelOpen) guardedContextValue.closePanel()
           else commands.contextValue.openPanel()
         }}
         onResizeStart={geometry.onResizeStart}
         onResizeKeyDown={geometry.onResizeKeyDown}
         onSelectTab={(tabId) => dispatch({ type: 'tab-selected', tabId })}
-        onCloseTab={(tabId) => void commands.closeTab(tabId)}
+        onCloseTab={(tabId) =>
+          unsavedChanges.request(() => void commands.closeTab(tabId))
+        }
         onToggleAddMenu={() => {
           if (nativeSync.addMenuOpen) nativeSync.hideAddMenu()
           else nativeSync.showAddMenu()

@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.image.resize",
+  "version": "1.0.0",
+  "name": "Resize image",
+  "description": "Resize an image to bounded dimensions.",
+  "tags": [
+    "image"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "image.resize",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sessionId": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+      },
+      "expectedRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "width": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 20000
+      },
+      "height": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 20000
+      },
+      "fit": {
+        "type": "string",
+        "enum": [
+          "cover",
+          "contain",
+          "fill",
+          "inside",
+          "outside"
+        ]
+      }
+    },
+    "required": [
+      "sessionId",
+      "expectedRevision",
+      "width",
+      "height"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "filesystem.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "resize image"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

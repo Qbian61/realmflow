@@ -4,6 +4,7 @@ import type {
   WorkflowDispatchRecord
 } from '../ports/business-repositories'
 import { AdvanceWorkflowUseCase } from './advance-workflow'
+import { createRecoveryWorkflowDispatchId } from './workflow-dispatch'
 
 const dispatch: Revisioned<WorkflowDispatchRecord> = {
   id: 'execution-1:trigger-run:design',
@@ -22,6 +23,7 @@ const dispatch: Revisioned<WorkflowDispatchRecord> = {
 function createHarness(options: {
   nodeRunStatus?: 'ready' | 'running'
   executeFails?: boolean
+  toolNode?: boolean
 }) {
   let current = structuredClone(dispatch)
   const execute = options.executeFails
@@ -71,9 +73,13 @@ function createHarness(options: {
           nodes: [
             {
               id: 'design',
-              type: 'ai_generate',
+              type: options.toolNode ? 'tool' : 'ai_generate',
               status: 'ready',
-              executor: { kind: 'ai_generate' }
+              ...(options.toolNode
+                ? {
+                    executor: { kind: 'ai_generate' }
+                  }
+                : { executor: { kind: 'ai_generate' } })
             }
           ]
         })
@@ -94,6 +100,163 @@ function createHarness(options: {
 }
 
 describe('AdvanceWorkflowUseCase', () => {
+  it('starts one matching interrupted recovery dispatch with its saved model', async () => {
+    let current: Revisioned<WorkflowDispatchRecord> = {
+      ...dispatch,
+      id: createRecoveryWorkflowDispatchId(
+        'execution-1',
+        'node-run-design',
+        3
+      )
+    }
+    const execute = vi.fn().mockResolvedValue({
+      runId: 'ai-run-recovered',
+      completion: Promise.resolve()
+    })
+    const useCase = new AdvanceWorkflowUseCase(
+      {
+        dispatches: {
+          listDispatchable: vi.fn(async () => [structuredClone(current)]),
+          claim: vi.fn(async (_id, revision, updatedAt) => {
+            current = {
+              ...current,
+              status: 'processing',
+              attempts: 1,
+              revision: revision + 1,
+              updatedAt
+            }
+            return { status: 'saved' as const, entity: current }
+          }),
+          save: vi.fn(async (entity, revision) => {
+            current = { ...structuredClone(entity), revision: revision + 1 }
+            return { status: 'saved' as const, entity: current }
+          })
+        },
+        executions: {
+          getActiveByRequirement: vi.fn().mockResolvedValue({
+            id: 'execution-1',
+            requirementId: 'requirement-1',
+            status: 'running',
+            currentNodeId: 'parallel-sibling'
+          })
+        },
+        workflows: {
+          get: vi.fn().mockResolvedValue({
+            requirementId: 'requirement-1',
+            nodes: [
+              {
+                id: 'design',
+                type: 'ai_generate',
+                status: 'interrupted',
+                executor: { kind: 'ai_generate' }
+              }
+            ]
+          })
+        },
+        nodeRuns: {
+          get: vi.fn().mockResolvedValue({
+            id: 'node-run-design',
+            executionId: 'execution-1',
+            nodeId: 'design',
+            status: 'interrupted',
+            checkpoint: { modelProfileId: 'profile-1' },
+            revision: 3
+          })
+        },
+        executeNode: { execute }
+      },
+      () => 100
+    )
+
+    await expect(useCase.drain()).resolves.toEqual({
+      completed: 1,
+      failed: 0,
+      skipped: 0
+    })
+    expect(execute).toHaveBeenCalledWith({
+      requirementId: 'requirement-1',
+      nodeId: 'design',
+      nodeRunId: 'node-run-design',
+      modelProfileId: 'profile-1',
+      recovery: true
+    })
+    expect(current).toMatchObject({
+      status: 'completed',
+      attempts: 1,
+      revision: 3
+    })
+  })
+
+  it('skips a stale recovery dispatch without starting another AI run', async () => {
+    let current: Revisioned<WorkflowDispatchRecord> = {
+      ...dispatch,
+      id: createRecoveryWorkflowDispatchId(
+        'execution-1',
+        'node-run-design',
+        2
+      )
+    }
+    const execute = vi.fn()
+    const useCase = new AdvanceWorkflowUseCase({
+      dispatches: {
+        listDispatchable: vi.fn(async () => [structuredClone(current)]),
+        claim: vi.fn(async (_id, revision, updatedAt) => {
+          current = {
+            ...current,
+            status: 'processing',
+            attempts: 1,
+            revision: revision + 1,
+            updatedAt
+          }
+          return { status: 'saved' as const, entity: current }
+        }),
+        save: vi.fn(async (entity, revision) => {
+          current = { ...structuredClone(entity), revision: revision + 1 }
+          return { status: 'saved' as const, entity: current }
+        })
+      },
+      executions: {
+        getActiveByRequirement: vi.fn().mockResolvedValue({
+          id: 'execution-1',
+          requirementId: 'requirement-1',
+          status: 'interrupted',
+          currentNodeId: 'design'
+        })
+      },
+      workflows: {
+        get: vi.fn().mockResolvedValue({
+          requirementId: 'requirement-1',
+          nodes: [
+            {
+              id: 'design',
+              type: 'ai_generate',
+              status: 'interrupted',
+              executor: { kind: 'ai_generate' }
+            }
+          ]
+        })
+      },
+      nodeRuns: {
+        get: vi.fn().mockResolvedValue({
+          id: 'node-run-design',
+          executionId: 'execution-1',
+          nodeId: 'design',
+          status: 'interrupted',
+          revision: 3
+        })
+      },
+      executeNode: { execute }
+    })
+
+    await expect(useCase.drain()).resolves.toEqual({
+      completed: 0,
+      failed: 0,
+      skipped: 1
+    })
+    expect(execute).not.toHaveBeenCalled()
+    expect(current.status).toBe('completed')
+  })
+
   it('claims and completes a dispatch after starting its ready node', async () => {
     const { execute, getDispatch, useCase } = createHarness({})
 
@@ -114,6 +277,24 @@ describe('AdvanceWorkflowUseCase', () => {
       completedAt: 100,
       revision: 3
     })
+  })
+
+  it('claims and completes a dispatch after starting its ready tool node', async () => {
+    const { execute, getDispatch, useCase } = createHarness({
+      toolNode: true
+    })
+
+    await expect(useCase.drain()).resolves.toEqual({
+      completed: 1,
+      failed: 0,
+      skipped: 0
+    })
+    expect(execute).toHaveBeenCalledWith({
+      requirementId: 'requirement-1',
+      nodeId: 'design',
+      nodeRunId: 'node-run-design'
+    })
+    expect(getDispatch().status).toBe('completed')
   })
 
   it('records a retryable failure without rejecting the drain', async () => {

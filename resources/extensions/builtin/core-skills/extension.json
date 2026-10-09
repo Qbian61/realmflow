@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "packageId": "realmflow.builtin.core-skills",
+  "version": "1.0.0",
+  "name": "Core Skills",
+  "description": "RealmFlow built-in software delivery Skills.",
+  "publisher": {
+    "name": "RealmFlow",
+    "keyId": "realmflow-builtin-v1"
+  },
+  "compatibility": {
+    "realmflow": ">=0.1.0 <1.0.0",
+    "platforms": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
+  },
+  "tools": [],
+  "skills": [
+    {
+      "path": "skills/builtin-skill-requirement_analysis.json"
+    },
+    {
+      "path": "skills/builtin-skill-technical_design.json"
+    },
+    {
+      "path": "skills/builtin-skill-feature_implementation.json"
+    },
+    {
+      "path": "skills/builtin-skill-bug_fix.json"
+    },
+    {
+      "path": "skills/builtin-skill-test_acceptance.json"
+    },
+    {
+      "path": "skills/builtin-skill-code_review.json"
+    },
+    {
+      "path": "skills/builtin-skill-repository_onboarding.json"
+    },
+    {
+      "path": "skills/builtin-skill-knowledge_curation.json"
+    },
+    {
+      "path": "skills/builtin-skill-release_preparation.json"
+    },
+    {
+      "path": "skills/builtin-skill-workflow_recovery.json"
+    }
+  ],
+  "assets": [
+    "instructions/requirement_analysis.md",
+    "instructions/technical_design.md",
+    "instructions/feature_implementation.md",
+    "instructions/bug_fix.md",
+    "instructions/test_acceptance.md",
+    "instructions/code_review.md",
+    "instructions/repository_onboarding.md",
+    "instructions/knowledge_curation.md",
+    "instructions/release_preparation.md",
+    "instructions/workflow_recovery.md"
+  ]
+}

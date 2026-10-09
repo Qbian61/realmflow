@@ -57,6 +57,7 @@ export default function WorkspaceTree({
                   className="workspace-tree-entry"
                   type="button"
                   aria-label={`${expanded ? '折叠' : '展开'} ${entry.name}`}
+                  title={`${expanded ? '折叠' : '展开'} ${entry.name}`}
                   onClick={() => onToggleDirectory(entry.path)}
                 >
                   {expanded ? (

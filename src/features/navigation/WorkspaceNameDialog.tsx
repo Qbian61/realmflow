@@ -1,142 +1,188 @@
-import type { FormEvent } from 'react'
-import { TriangleAlert } from 'lucide-react'
+import type { FormEvent } from "react";
+import { TriangleAlert } from "lucide-react";
+import { useLocalization } from "../../localization/LocalizationProvider";
+import {
+  Button,
+  Dialog,
+  DialogBody,
+  DialogFooter,
+  DialogHeader,
+  Field,
+} from "../../components/ui";
 
 export type WorkspaceNameDialogState =
-  | { kind: 'space' }
-  | { kind: 'requirement'; spacePath: string; spaceLabel: string }
-  | { kind: 'rename-space'; spacePath: string; spaceLabel: string }
-  | { kind: 'delete-space'; spacePath: string; spaceLabel: string }
+  | { kind: "space" }
+  | { kind: "requirement"; spacePath: string; spaceLabel: string }
+  | { kind: "rename-space"; spacePath: string; spaceLabel: string }
   | {
-      kind: 'delete-requirement'
-      spacePath: string
-      requirementId: string
-      requirementTitle: string
+      kind: "rename-requirement";
+      spacePath: string;
+      requirementId: string;
+      requirementTitle: string;
     }
+  | { kind: "delete-space"; spacePath: string; spaceLabel: string }
+  | {
+      kind: "delete-requirement";
+      spacePath: string;
+      requirementId: string;
+      requirementTitle: string;
+    };
 
 type WorkspaceNameDialogProps = {
-  dialog: WorkspaceNameDialogState
-  draft: string
-  onDraftChange: (value: string) => void
-  onClose: () => void
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void
-}
+  dialog: WorkspaceNameDialogState;
+  draft: string;
+  onDraftChange: (value: string) => void;
+  onClose: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+};
 
 export function WorkspaceNameDialog({
   dialog,
   draft,
   onDraftChange,
   onClose,
-  onSubmit
+  onSubmit,
 }: WorkspaceNameDialogProps): JSX.Element {
+  const { t } = useLocalization();
   const isDelete =
-    dialog.kind === 'delete-space' || dialog.kind === 'delete-requirement'
+    dialog.kind === "delete-space" || dialog.kind === "delete-requirement";
+  const isRename =
+    dialog.kind === "rename-space" || dialog.kind === "rename-requirement";
   const inputLabel =
-    dialog.kind === 'space'
-      ? '空间名称'
-      : dialog.kind === 'requirement'
-        ? '需求名称'
-        : dialog.kind === 'rename-space'
-          ? '更新后'
-          : dialog.kind === 'delete-space'
-            ? '输入空间名称以确认'
-            : '输入需求名称以确认'
+    dialog.kind === "space"
+      ? t("workspace.name")
+      : dialog.kind === "requirement"
+        ? t("requirement.name")
+        : isRename
+          ? t("dialog.renameInput")
+          : dialog.kind === "delete-space"
+            ? t("workspace.deleteInput")
+            : t("requirement.deleteInput");
+  const title =
+    dialog.kind === "space"
+      ? t("workspace.createDialog")
+      : dialog.kind === "requirement"
+        ? t("requirement.createDialog")
+        : dialog.kind === "rename-space"
+          ? t("workspace.renameDialog")
+          : dialog.kind === "rename-requirement"
+            ? t("requirement.renameDialog")
+            : dialog.kind === "delete-space"
+              ? t("workspace.deleteDialog")
+              : t("requirement.deleteDialog");
 
   return (
-    <div
-      className="name-dialog-backdrop"
-      role="presentation"
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onClose()
+    <Dialog
+      open
+      size="compact"
+      aria-labelledby="name-dialog-title"
+      onOpenChange={(open) => {
+        if (!open) onClose();
       }}
     >
       <form
-        className="name-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="name-dialog-title"
+        className="name-dialog-form"
         onSubmit={onSubmit}
       >
-        <h2 id="name-dialog-title">
-          {dialog.kind === 'space'
-            ? '新建空间'
-            : dialog.kind === 'requirement'
-              ? '新建需求'
-              : dialog.kind === 'rename-space'
-                ? '更新空间名称'
-                : dialog.kind === 'delete-space'
-                  ? '删除空间'
-                  : '删除需求'}
-        </h2>
-        {dialog.kind === 'rename-space' && (
-          <p className="name-dialog-current">
-            {`当前名称：${dialog.spaceLabel}`}
-          </p>
-        )}
-        {dialog.kind === 'delete-space' && (
-          <div className="name-dialog-warning">
-            <TriangleAlert size={18} />
-            <p>{`删除后，空间“${dialog.spaceLabel}”及空间下的所有需求都会被永久删除，且无法恢复。`}</p>
-          </div>
-        )}
-        {dialog.kind === 'delete-requirement' && (
-          <div className="name-dialog-warning">
-            <TriangleAlert size={18} />
-            <p>{`删除后，需求“${dialog.requirementTitle}”将被永久删除，且无法恢复。`}</p>
-          </div>
-        )}
-        <label>
-          <span>{inputLabel}</span>
+        <DialogHeader>
+          <h2 id="name-dialog-title">{title}</h2>
+        </DialogHeader>
+        <DialogBody className="name-dialog-body">
+          {isRename && (
+            <p className="name-dialog-current">
+              {t("workspace.currentName", {
+                name:
+                  dialog.kind === "rename-space"
+                    ? dialog.spaceLabel
+                    : dialog.requirementTitle,
+              })}
+            </p>
+          )}
+          {dialog.kind === "delete-space" && (
+            <div className="name-dialog-warning">
+              <TriangleAlert size={18} />
+              <p>{t("workspace.deleteWarning", { name: dialog.spaceLabel })}</p>
+            </div>
+          )}
+          {dialog.kind === "delete-requirement" && (
+            <div className="name-dialog-warning">
+              <TriangleAlert size={18} />
+              <p>
+                {t("requirement.deleteWarning", {
+                  name: dialog.requirementTitle,
+                })}
+              </p>
+            </div>
+          )}
+          <Field name="workspace-name-dialog-draft" label={inputLabel}>
           <input
-            autoFocus
+            data-autofocus
             value={draft}
-            aria-label={inputLabel}
             maxLength={64}
             placeholder={
-              dialog.kind === 'space'
-                ? '输入空间名称'
-                : dialog.kind === 'requirement'
-                  ? `输入${dialog.spaceLabel}下的需求名称`
-                  : dialog.kind === 'rename-space'
-                    ? '输入新的空间名称'
-                    : dialog.kind === 'delete-space'
-                      ? `请输入“${dialog.spaceLabel}”`
-                      : `请输入“${dialog.requirementTitle}”`
+              dialog.kind === "space"
+                ? t("workspace.namePlaceholder")
+                : dialog.kind === "requirement"
+                  ? t("requirement.namePlaceholder", {
+                      name: dialog.spaceLabel,
+                    })
+                  : dialog.kind === "rename-space"
+                    ? t("workspace.renamePlaceholder")
+                    : dialog.kind === "rename-requirement"
+                      ? t("requirement.renamePlaceholder")
+                      : dialog.kind === "delete-space"
+                        ? t("workspace.deletePlaceholder", {
+                            name: dialog.spaceLabel,
+                          })
+                        : t("requirement.deletePlaceholder", {
+                            name: dialog.requirementTitle,
+                          })
             }
             onChange={(event) => onDraftChange(event.target.value)}
           />
-        </label>
-        <div className="name-dialog-actions">
-          <button type="button" onClick={onClose}>
-            取消
-          </button>
-          <button
-            className={isDelete ? 'primary danger' : 'primary'}
+          </Field>
+        </DialogBody>
+        <DialogFooter>
+          <Button type="button" onClick={onClose}>
+            {t("dialog.cancel")}
+          </Button>
+          <Button
+            variant={isDelete ? "danger" : "primary"}
             type="submit"
             aria-label={
-              dialog.kind === 'space'
-                ? '确认新建空间'
-                : dialog.kind === 'requirement'
-                  ? '确认新建需求'
-                  : dialog.kind === 'rename-space'
-                    ? '确认更新空间名称'
-                    : dialog.kind === 'delete-space'
-                      ? '确认删除空间'
-                      : '确认删除需求'
+              dialog.kind === "space"
+                ? t("workspace.createConfirm")
+                : dialog.kind === "requirement"
+                  ? t("requirement.createConfirm")
+                  : dialog.kind === "rename-space"
+                    ? t("workspace.renameConfirm")
+                    : dialog.kind === "rename-requirement"
+                      ? t("requirement.renameConfirm")
+                      : dialog.kind === "delete-space"
+                        ? t("workspace.deleteConfirm")
+                        : t("requirement.deleteConfirm")
             }
             disabled={
-              dialog.kind === 'delete-space'
+              dialog.kind === "delete-space"
                 ? draft !== dialog.spaceLabel
-                : dialog.kind === 'delete-requirement'
+                : dialog.kind === "delete-requirement"
                   ? draft !== dialog.requirementTitle
-                  : dialog.kind === 'rename-space'
+                  : dialog.kind === "rename-space"
                     ? !draft.trim() || draft.trim() === dialog.spaceLabel
-                    : !draft.trim()
+                    : dialog.kind === "rename-requirement"
+                      ? !draft.trim() ||
+                        draft.trim() === dialog.requirementTitle
+                      : !draft.trim()
             }
           >
-            {isDelete ? '删除' : dialog.kind === 'rename-space' ? '更新' : '创建'}
-          </button>
-        </div>
+            {isDelete
+              ? t("dialog.delete")
+              : isRename
+                ? t("dialog.update")
+                : t("dialog.create")}
+          </Button>
+        </DialogFooter>
       </form>
-    </div>
-  )
+    </Dialog>
+  );
 }

@@ -9,6 +9,7 @@ export type AiRunView = {
   nodeId?: string
   stageId?: RequirementStageId
   status: AiRunStatus
+  lastSequence?: number
   progress: number
   content: string
   error: string
@@ -62,6 +63,7 @@ export function useAiRunController(api?: AiRunApi): AiRunController {
             ? { stageId: input.stageId }
             : {}),
           status: 'created',
+          lastSequence: 0,
           progress: 0,
           content: '',
           error: ''
@@ -136,6 +138,7 @@ function hydrateRun(run: AiRun, events: AiRunEvent[]): AiRunView {
     ...(run.nodeId ? { nodeId: run.nodeId } : {}),
     ...(run.stageId ? { stageId: run.stageId } : {}),
     status: run.status,
+    lastSequence: run.lastSequence,
     progress:
       run.status === 'completed'
         ? 100
@@ -148,38 +151,59 @@ function hydrateRun(run: AiRun, events: AiRunEvent[]): AiRunView {
 }
 
 function applyEvent(run: AiRunView, event: AiRunEvent): AiRunView {
+  if (event.sequence <= (run.lastSequence ?? 0)) return run
+  const next = { ...run, lastSequence: event.sequence }
   switch (event.type) {
     case 'run.started':
-      return { ...run, status: 'running' }
+      return { ...next, status: 'running' }
     case 'run.progress':
       return {
-        ...run,
+        ...next,
         progress:
           typeof event.data.progress === 'number'
             ? event.data.progress
             : run.progress
       }
-    case 'content.delta':
+    case 'answer.delta':
       return {
-        ...run,
+        ...next,
         content: run.content + (event.data.delta ?? '')
       }
     case 'run.completed':
-      return { ...run, status: 'completed', progress: 100 }
+      return { ...next, status: 'completed', progress: 100 }
     case 'run.failed':
       return {
-        ...run,
+        ...next,
         status: 'failed',
         error: event.data.message ?? '阶段产物生成失败'
       }
     case 'run.cancelled':
-      return { ...run, status: 'cancelled' }
+      return { ...next, status: 'cancelled' }
     case 'artifact.ready':
+    case 'execution.summary.delta':
+    case 'reference.added':
+    case 'tool.call.requested':
+    case 'tool.call.started':
+    case 'tool.call.progress':
+    case 'tool.call.completed':
+    case 'tool.call.failed':
+    case 'tool.call.permission_required':
+    case 'run.retrying':
+    case 'run.waiting_input':
+    case 'run.paused':
+    case 'run.recovery_blocked':
+    case 'run.resumed':
+    case 'context.compacted':
     case 'heartbeat':
-      return run
+      return next
   }
 }
 
 function isTerminal(status: AiRunStatus): boolean {
-  return status === 'completed' || status === 'failed' || status === 'cancelled'
+  return (
+    status === 'completed' ||
+    status === 'failed' ||
+    status === 'cancelled' ||
+    status === 'interrupted'
+  )
 }

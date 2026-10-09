@@ -1,0 +1,11 @@
+---
+description: Apply the repository requirement delivery workflow to features, bug fixes, behavior changes, and refactors.
+globs:
+alwaysApply: true
+---
+
+For implementation work, read and follow
+`.agents/skills/requirement-delivery/SKILL.md`.
+
+Do not use the workflow for read-only explanation or investigation unless the
+user asks to continue into implementation.

@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.document.export_pdf",
+  "version": "1.1.0",
+  "name": "Export document to PDF",
+  "description": "Export a checksum-bound DOCX to a verified PDF at an authorized new path.",
+  "tags": [
+    "document"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "document.export_pdf",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "sourcePath",
+      "sourceChecksum",
+      "outputPath",
+      "expectedAbsent"
+    ],
+    "properties": {
+      "sourcePath": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sourceChecksum": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      },
+      "outputPath": {
+        "type": "string",
+        "minLength": 1
+      },
+      "expectedAbsent": {
+        "type": "boolean",
+        "const": true
+      },
+      "scopeRoot": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "filesystem.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "export document to pdf"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

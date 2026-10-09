@@ -4,470 +4,528 @@ import {
   Eye,
   FolderOpen,
   Link2,
-  LoaderCircle,
   PanelRightClose,
-  RotateCcw,
   Save,
-  X
-} from 'lucide-react'
-import {
-  lazy,
-  Suspense,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState
-} from 'react'
-import ReactMarkdown from 'react-markdown'
-import rehypeSanitize from 'rehype-sanitize'
-import remarkGfm from 'remark-gfm'
+} from "lucide-react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import rehypeSanitize from "rehype-sanitize";
+import remarkGfm from "remark-gfm";
 import type {
   RequirementManifest,
   WorkspaceApi,
   WorkspaceBinding,
   WorkspaceEntry,
-  WorkspaceFile
-} from '../../../shared/workspace'
-import type { RequirementStageId } from '../../domain/requirement'
-import WorkspaceTree from './WorkspaceTree'
-import './artifact-workbench.css'
+  WorkspaceFile,
+} from "../../../shared/workspace";
+import type { RequirementStageId } from "../../domain/requirement";
+import {
+  Button,
+  DocumentTabs,
+  EmptyState,
+  IconButton,
+  InlineAlert,
+  Spinner,
+  Toolbar,
+} from "../../components/ui";
+import { useLocalization } from "../../localization/LocalizationProvider";
+import { useToast } from "../toast/ToastProvider";
+import { useUnsavedChangesGuard } from "../unsaved-changes/UnsavedChangesProvider";
+import { ArtifactBinaryPreview } from "./ArtifactBinaryPreview";
+import { ArtifactFileBrowser } from "./ArtifactFileBrowser";
+import { ArtifactFixedLayoutPreview } from "./ArtifactFixedLayoutPreview";
+import { ArtifactImagePreview } from "./ArtifactImagePreview";
+import { fixedLayoutFileType } from "./fixed-layout-file-type";
+import "./artifact-workbench.css";
 
-const CodeEditor = lazy(() => import('./CodeEditor'))
-const EMPTY_FILES: WorkspaceFile[] = []
-
-const STAGE_LABELS: Record<RequirementStageId, string> = {
-  analysis: '需求分析',
-  design: '技术方案',
-  implementation: '开发实现',
-  testing: '测试验证',
-  release: '发布上线',
-  retrospective: '迭代复盘'
-}
+const CodeEditor = lazy(() => import("./CodeEditor"));
+const EMPTY_FILES: WorkspaceFile[] = [];
 
 type OpenDocument = {
-  file: WorkspaceFile
-  draft: string
-}
+  file: WorkspaceFile;
+  draft: string;
+};
 
-type ViewMode = 'edit' | 'preview'
+type ViewMode = "edit" | "preview";
 
 type ArtifactWorkbenchProps = {
-  requirementId: string
-  activeStage?: RequirementStageId
-  initialFiles?: WorkspaceFile[]
-  workspaceApi?: WorkspaceApi
-  onClose?: () => void
-}
+  requirementId: string;
+  activeStage?: RequirementStageId;
+  initialPath?: string;
+  initialFiles?: WorkspaceFile[];
+  workspaceApi?: WorkspaceApi;
+  onClose?: () => void;
+};
 
 function defaultViewMode(file: WorkspaceFile): ViewMode {
-  return ['markdown', 'html', 'image'].includes(file.kind) ? 'preview' : 'edit'
+  return ["markdown", "html", "image", "fixed-layout", "binary"].includes(file.kind)
+    ? "preview"
+    : "edit";
 }
 
 export default function ArtifactWorkbench({
   requirementId,
   activeStage,
+  initialPath,
   initialFiles = EMPTY_FILES,
   workspaceApi,
-  onClose
+  onClose,
 }: ArtifactWorkbenchProps): JSX.Element {
-  const api = workspaceApi ?? window.realmflow?.workspace
-  const [binding, setBinding] = useState<WorkspaceBinding | null>(null)
-  const [manifest, setManifest] = useState<RequirementManifest | null>(null)
+  const { t } = useLocalization();
+  const toast = useToast();
+  const api = workspaceApi ?? window.realmflow?.workspace;
+  const [binding, setBinding] = useState<WorkspaceBinding | null>(null);
+  const [manifest, setManifest] = useState<RequirementManifest | null>(null);
   const [entriesByDirectory, setEntriesByDirectory] = useState<
     Record<string, WorkspaceEntry[]>
-  >({})
+  >({});
   const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(
-    new Set()
-  )
-  const [documents, setDocuments] = useState<OpenDocument[]>([])
-  const [activePath, setActivePath] = useState<string>()
-  const [viewModes, setViewModes] = useState<Record<string, ViewMode>>({})
-  const [previewUrls, setPreviewUrls] = useState<Record<string, string>>({})
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [status, setStatus] = useState('')
-  const [error, setError] = useState('')
-  const documentsRef = useRef<OpenDocument[]>([])
+    new Set(),
+  );
+  const [documents, setDocuments] = useState<OpenDocument[]>([]);
+  const [activePath, setActivePath] = useState<string>();
+  const [viewModes, setViewModes] = useState<Record<string, ViewMode>>({});
+  const [previewUrls, setPreviewUrls] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState("");
+  const [error, setError] = useState("");
+  const documentsRef = useRef<OpenDocument[]>([]);
 
   const activeDocument = useMemo(
     () => documents.find((document) => document.file.path === activePath),
-    [activePath, documents]
-  )
-  const activeMode = activePath ? viewModes[activePath] ?? 'edit' : 'edit'
+    [activePath, documents],
+  );
+  const activeMode = activePath ? (viewModes[activePath] ?? "edit") : "edit";
   const dirty =
     activeDocument !== undefined &&
-    activeDocument.draft !== activeDocument.file.content
+    activeDocument.draft !== activeDocument.file.content;
+  const hasDirtyDocuments = documents.some(
+    (document) => document.draft !== document.file.content,
+  );
+  const hasOpenDocuments = documents.length > 0;
 
   const loadWorkspace = useCallback(
     async (nextBinding: WorkspaceBinding): Promise<void> => {
-      if (!api) return
+      if (!api) return;
       const [rootEntries, nextManifest] = await Promise.all([
         api.listDirectory(requirementId),
-        api.readManifest(requirementId)
-      ])
-      setBinding(nextBinding)
-      setEntriesByDirectory({ '': rootEntries })
-      setExpandedDirectories(new Set())
-      setManifest(nextManifest)
+        api.readManifest(requirementId),
+      ]);
+      setBinding(nextBinding);
+      setEntriesByDirectory({ "": rootEntries });
+      setExpandedDirectories(new Set());
+      setManifest(nextManifest);
     },
-    [api, requirementId]
-  )
+    [api, requirementId],
+  );
 
   useEffect(() => {
-    let cancelled = false
-    setLoading(true)
-    setError('')
-    setBinding(null)
-    setManifest(null)
-    setEntriesByDirectory({})
-    documentsRef.current = []
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    setBinding(null);
+    setManifest(null);
+    setEntriesByDirectory({});
+    documentsRef.current = [];
     const initialDocuments = initialFiles.map((file) => ({
       file,
-      draft: file.content
-    }))
-    documentsRef.current = initialDocuments
-    setDocuments(initialDocuments)
-    setActivePath(initialDocuments[0]?.file.path)
+      draft: file.content,
+    }));
+    documentsRef.current = initialDocuments;
+    setDocuments(initialDocuments);
+    setActivePath(initialDocuments[0]?.file.path);
     setViewModes(
       Object.fromEntries(
-        initialFiles.map((file) => [file.path, defaultViewMode(file)])
-      )
-    )
+        initialFiles.map((file) => [file.path, defaultViewMode(file)]),
+      ),
+    );
 
     if (!api) {
-      setLoading(false)
-      return
+      setLoading(false);
+      return;
     }
 
     void api
       .getBinding(requirementId)
       .then(async (nextBinding) => {
-        if (cancelled) return
-        if (nextBinding) await loadWorkspace(nextBinding)
+        if (cancelled) return;
+        if (nextBinding) await loadWorkspace(nextBinding);
       })
-      .catch((reason: unknown) => {
+      .catch(() => {
         if (!cancelled) {
-          setError(reason instanceof Error ? reason.message : '无法加载工作目录')
+          setError(t("artifact.error.loadWorkspace"));
         }
       })
       .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
+        if (!cancelled) setLoading(false);
+      });
 
     return () => {
-      cancelled = true
-    }
-  }, [api, initialFiles, loadWorkspace, requirementId])
+      cancelled = true;
+    };
+  }, [api, initialFiles, loadWorkspace, requirementId, t]);
 
   const openFile = useCallback(
     async (path: string): Promise<void> => {
-      if (!api) return
+      if (!api) return;
       const existingDocument = documentsRef.current.find(
-        (document) => document.file.path === path
-      )
+        (document) => document.file.path === path,
+      );
       if (existingDocument) {
-        setActivePath(path)
-        return
+        setActivePath(path);
+        return;
       }
 
-      setError('')
       try {
-        const file = await api.readFile(requirementId, path)
+        const file = await api.readFile(requirementId, path);
         const nextDocuments = [
           ...documentsRef.current,
-          { file, draft: file.content }
-        ]
-        documentsRef.current = nextDocuments
-        setDocuments(nextDocuments)
-        setActivePath(path)
+          { file, draft: file.content },
+        ];
+        documentsRef.current = nextDocuments;
+        setDocuments(nextDocuments);
+        setActivePath(path);
         setViewModes((current) => ({
           ...current,
-          [path]: defaultViewMode(file)
-        }))
-        if (file.kind === 'html' || file.kind === 'image') {
-          const previewUrl = await api.getPreviewUrl(requirementId, path)
-          setPreviewUrls((current) => ({ ...current, [path]: previewUrl }))
+          [path]: defaultViewMode(file),
+        }));
+        if (
+          file.kind === "html" ||
+          file.kind === "image"
+        ) {
+          const previewUrl = await api.getPreviewUrl(requirementId, path);
+          setPreviewUrls((current) => ({ ...current, [path]: previewUrl }));
         }
-      } catch (reason) {
-        setError(reason instanceof Error ? reason.message : '无法打开文件')
+      } catch {
+        toast.error("artifact.error.open");
       }
     },
-    [api, requirementId]
-  )
+    [api, requirementId, toast],
+  );
 
   useEffect(() => {
-    if (!activeStage) return
-    const stageArtifacts = manifest?.stages[activeStage]?.artifacts ?? []
+    if (!activeStage) return;
+    const stageArtifacts = manifest?.stages[activeStage]?.artifacts ?? [];
     const primaryArtifact =
-      stageArtifacts.find((artifact) => artifact.primary) ?? stageArtifacts[0]
-    if (primaryArtifact) void openFile(primaryArtifact.path)
-  }, [activeStage, manifest, openFile])
+      stageArtifacts.find((artifact) => artifact.primary) ?? stageArtifacts[0];
+    if (primaryArtifact) void openFile(primaryArtifact.path);
+  }, [activeStage, manifest, openFile]);
+
+  useEffect(() => {
+    if (initialPath) void openFile(initialPath);
+  }, [initialPath, openFile]);
 
   const chooseDirectory = async (): Promise<void> => {
-    if (!api) return
-    setError('')
+    if (!api) return;
     try {
-      const nextBinding = await api.chooseDirectory(requirementId)
-      if (nextBinding) await loadWorkspace(nextBinding)
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '无法绑定本地目录')
+      const nextBinding = await api.chooseDirectory(requirementId);
+      if (nextBinding) await loadWorkspace(nextBinding);
+    } catch {
+      toast.error("artifact.error.bind");
     }
-  }
+  };
 
   const toggleDirectory = async (path: string): Promise<void> => {
-    if (!api) return
+    if (!api) return;
     if (expandedDirectories.has(path)) {
       setExpandedDirectories((current) => {
-        const next = new Set(current)
-        next.delete(path)
-        return next
-      })
-      return
+        const next = new Set(current);
+        next.delete(path);
+        return next;
+      });
+      return;
     }
 
     if (!entriesByDirectory[path]) {
       try {
-        const entries = await api.listDirectory(requirementId, path)
-        setEntriesByDirectory((current) => ({ ...current, [path]: entries }))
-      } catch (reason) {
-        setError(reason instanceof Error ? reason.message : '无法展开目录')
-        return
+        const entries = await api.listDirectory(requirementId, path);
+        setEntriesByDirectory((current) => ({ ...current, [path]: entries }));
+      } catch {
+        toast.error("artifact.error.expand");
+        return;
       }
     }
-    setExpandedDirectories((current) => new Set(current).add(path))
-  }
+    setExpandedDirectories((current) => new Set(current).add(path));
+  };
 
-  const saveActiveFile = useCallback(async (): Promise<void> => {
-    if (!api || !activeDocument || !dirty || saving) return
-    setSaving(true)
-    setError('')
+  const saveDocument = useCallback(async (path: string): Promise<boolean> => {
+    if (!api) return false;
+    const document = documentsRef.current.find(
+      (candidate) => candidate.file.path === path,
+    );
+    if (!document || document.draft === document.file.content) return true;
+    setSaving(true);
     try {
       const savedFile = await api.writeFile({
         requirementId,
-        path: activeDocument.file.path,
-        content: activeDocument.draft,
-        expectedVersion: activeDocument.file.version
-      })
-      const nextDocuments = documentsRef.current.map((document) =>
-          document.file.path === activeDocument.file.path
-            ? { file: savedFile, draft: savedFile.content }
-            : document
-      )
-      documentsRef.current = nextDocuments
-      setDocuments(nextDocuments)
-      setStatus('已保存')
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '无法保存文件')
+        path: document.file.path,
+        content: document.draft,
+        expectedVersion: document.file.version,
+      });
+      const nextDocuments = documentsRef.current.map((candidate) =>
+        candidate.file.path === document.file.path
+          ? { file: savedFile, draft: savedFile.content }
+          : candidate,
+      );
+      documentsRef.current = nextDocuments;
+      setDocuments(nextDocuments);
+      setStatus(t("artifact.saved"));
+      return true;
+    } catch {
+      toast.error("artifact.error.save");
+      return false;
     } finally {
-      setSaving(false)
+      setSaving(false);
     }
-  }, [activeDocument, api, dirty, requirementId, saving])
+  }, [api, requirementId, t, toast]);
+
+  const saveActiveFile = useCallback(async (): Promise<boolean> => {
+    if (!activeDocument || !dirty || saving) return false;
+    return saveDocument(activeDocument.file.path);
+  }, [activeDocument, dirty, saveDocument, saving]);
+
+  const discardDocument = useCallback((path: string): void => {
+    const nextDocuments = documentsRef.current.map((document) =>
+      document.file.path === path
+        ? { ...document, draft: document.file.content }
+        : document,
+    );
+    documentsRef.current = nextDocuments;
+    setDocuments(nextDocuments);
+  }, []);
+
+  const saveAllDocuments = useCallback(async (): Promise<boolean> => {
+    const paths = documentsRef.current
+      .filter((document) => document.draft !== document.file.content)
+      .map((document) => document.file.path);
+    for (const path of paths) {
+      if (!(await saveDocument(path))) return false;
+    }
+    return true;
+  }, [saveDocument]);
+
+  const discardAllDocuments = useCallback((): void => {
+    const nextDocuments = documentsRef.current.map((document) => ({
+      ...document,
+      draft: document.file.content,
+    }));
+    documentsRef.current = nextDocuments;
+    setDocuments(nextDocuments);
+  }, []);
+
+  const unsavedChanges = useUnsavedChangesGuard({
+    id: `artifact:${requirementId}`,
+    dirty: hasDirtyDocuments,
+    save: saveAllDocuments,
+    discard: discardAllDocuments,
+  });
 
   useEffect(() => {
     const saveOnShortcut = (event: KeyboardEvent): void => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
-        event.preventDefault()
-        void saveActiveFile()
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        void saveActiveFile();
       }
-    }
-    window.addEventListener('keydown', saveOnShortcut)
-    return () => window.removeEventListener('keydown', saveOnShortcut)
-  }, [saveActiveFile])
+    };
+    window.addEventListener("keydown", saveOnShortcut);
+    return () => window.removeEventListener("keydown", saveOnShortcut);
+  }, [saveActiveFile]);
 
   const closeDocument = (path: string): void => {
-    const document = documents.find((item) => item.file.path === path)
-    if (
-      document &&
-      document.draft !== document.file.content &&
-      !window.confirm(`“${document.file.name}”尚未保存，确定关闭吗？`)
-    ) {
-      return
-    }
-    const remainingDocuments = documentsRef.current.filter(
-      (item) => item.file.path !== path
-    )
-    documentsRef.current = remainingDocuments
-    setDocuments(remainingDocuments)
-    if (activePath === path) {
-      setActivePath(remainingDocuments.at(-1)?.file.path)
-    }
-  }
+    const document = documentsRef.current.find(
+      (item) => item.file.path === path,
+    );
+    const close = (): void => {
+      const remainingDocuments = documentsRef.current.filter(
+        (item) => item.file.path !== path,
+      );
+      documentsRef.current = remainingDocuments;
+      setDocuments(remainingDocuments);
+      if (activePath === path) {
+        setActivePath(remainingDocuments.at(-1)?.file.path);
+      }
+    };
+    unsavedChanges.requestScoped(close, {
+      dirty: Boolean(
+        document && document.draft !== document.file.content,
+      ),
+      save: () => saveDocument(path),
+      discard: () => discardDocument(path),
+    });
+  };
 
   const associateWithStage = async (): Promise<void> => {
-    if (!api || !activeDocument || !manifest || !activeStage) return
-    const existingArtifacts = manifest.stages[activeStage]?.artifacts ?? []
+    if (!api || !activeDocument || !manifest || !activeStage) return;
+    const existingArtifacts = manifest.stages[activeStage]?.artifacts ?? [];
     const nextArtifacts = existingArtifacts
       .filter((artifact) => artifact.path !== activeDocument.file.path)
-      .map((artifact) => ({ ...artifact, primary: false }))
-    nextArtifacts.push({ path: activeDocument.file.path, primary: true })
+      .map((artifact) => ({ ...artifact, primary: false }));
+    nextArtifacts.push({ path: activeDocument.file.path, primary: true });
     const nextManifest: RequirementManifest = {
       ...manifest,
       stages: {
         ...manifest.stages,
-        [activeStage]: { artifacts: nextArtifacts }
-      }
-    }
+        [activeStage]: { artifacts: nextArtifacts },
+      },
+    };
 
     try {
       const savedManifest = await api.writeManifest(
         requirementId,
-        nextManifest
-      )
-      setManifest(savedManifest)
-      setStatus(`已关联到${STAGE_LABELS[activeStage]}`)
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '无法关联阶段产物')
+        nextManifest,
+      );
+      setManifest(savedManifest);
+      setStatus(
+        t("artifact.associated", {
+          stage: t(`artifact.stage.${activeStage}`),
+        }),
+      );
+    } catch {
+      toast.error("artifact.error.associate");
     }
-  }
+  };
 
   if (loading) {
     return (
-      <aside className="artifact-workbench artifact-workbench-loading">
-        <LoaderCircle className="spinning" size={20} />
-        <span>正在加载产物工作区</span>
+      <aside
+        className="artifact-workbench artifact-workbench-loading"
+        role="status"
+        aria-busy="true"
+      >
+        <Spinner size={20} />
+        <span>{t("artifact.loading")}</span>
       </aside>
-    )
+    );
   }
 
   return (
-    <aside className="artifact-workbench" aria-label="需求产物工作区">
+    <aside
+      className="artifact-workbench"
+      aria-label={t("artifact.workspaceAria")}
+    >
       <header className="artifact-workbench-header">
         <div>
           <span>ARTIFACTS</span>
-          <strong>产物工作区</strong>
+          <strong>{t("artifact.title")}</strong>
         </div>
         <div className="artifact-workbench-header-actions">
-          {binding ? (
-            <button
-              type="button"
-              aria-label="在 Finder 中显示工作目录"
-              title="在 Finder 中显示"
-              onClick={() => void api?.showItem(requirementId, '')}
+          {binding && (
+            <IconButton
+              size="compact"
+              variant="ghost"
+              aria-label={t("artifact.showInFinderAria")}
+              title={t("artifact.showInFinder")}
+              onClick={() => void api?.showItem(requirementId, "")}
             >
               <FolderOpen size={16} />
-            </button>
-          ) : null}
+            </IconButton>
+          )}
           {onClose ? (
-            <button
-              type="button"
-              aria-label="关闭产物工作区"
-              title="关闭产物工作区"
-              onClick={onClose}
+            <IconButton
+              size="compact"
+              variant="ghost"
+              aria-label={t("artifact.close")}
+              title={t("artifact.close")}
+              onClick={() => unsavedChanges.request(onClose)}
             >
               <PanelRightClose size={16} />
-            </button>
+            </IconButton>
           ) : null}
         </div>
       </header>
 
       {!api ? (
-        <div className="artifact-empty-state">
-          <FolderOpen size={28} strokeWidth={1.5} />
-          <strong>请在 RealmFlow 桌面端中打开</strong>
-          <p>本地文件编辑能力仅在桌面应用中可用。</p>
-        </div>
-      ) : !binding ? (
-        <div className="artifact-empty-state">
-          <FolderOpen size={30} strokeWidth={1.5} />
-          <strong>绑定需求工作目录</strong>
-          <p>绑定后可浏览并编辑各阶段的本地产物。</p>
-          <button type="button" onClick={() => void chooseDirectory()}>
-            绑定本地目录
-          </button>
-        </div>
+        <EmptyState
+          className="artifact-empty-state"
+          icon={<FolderOpen size={28} strokeWidth={1.5} />}
+          title={t("artifact.desktopOnly")}
+          description={t("artifact.desktopOnlyDescription")}
+        />
+      ) : !binding && !hasOpenDocuments ? (
+        <EmptyState
+          className="artifact-empty-state"
+          icon={<FolderOpen size={30} strokeWidth={1.5} />}
+          title={t("artifact.bindTitle")}
+          description={t("artifact.bindDescription")}
+          action={
+            <Button variant="primary" onClick={() => void chooseDirectory()}>
+              {t("artifact.bind")}
+            </Button>
+          }
+        />
       ) : (
-        <div className="artifact-workbench-body">
-          <section className="artifact-file-browser" aria-label="文件列表">
-            <div className="artifact-file-browser-heading">
-              <span title={binding.rootPath}>{binding.rootName}</span>
-              <button
-                type="button"
-                aria-label="更换本地目录"
-                title="更换本地目录"
-                onClick={() => void chooseDirectory()}
-              >
-                <RotateCcw size={14} />
-              </button>
-            </div>
-            <WorkspaceTree
+        <div className={binding ? "artifact-workbench-body" : "artifact-workbench-body documents-only"}>
+          {binding ? (
+            <ArtifactFileBrowser
+              activePath={activePath}
+              binding={binding}
               entriesByDirectory={entriesByDirectory}
               expandedDirectories={expandedDirectories}
-              activePath={activePath}
-              onToggleDirectory={(path) => void toggleDirectory(path)}
+              labels={{
+                changeDirectory: t("artifact.changeDirectory"),
+                fileList: t("artifact.fileList"),
+              }}
+              onChangeDirectory={() => void chooseDirectory()}
               onOpenFile={(path) => void openFile(path)}
+              onToggleDirectory={(path) => void toggleDirectory(path)}
             />
-          </section>
+          ) : null}
 
           <section className="artifact-editor-pane">
-            <div className="artifact-tabs" role="tablist" aria-label="打开的文件">
-              {documents.map((document) => {
-                const documentDirty =
-                  document.draft !== document.file.content
-                return (
-                  <div
-                    className={
-                      document.file.path === activePath
-                        ? 'artifact-tab active'
-                        : 'artifact-tab'
-                    }
-                    key={document.file.path}
-                  >
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={document.file.path === activePath}
-                      title={document.file.path}
-                      onClick={() => setActivePath(document.file.path)}
-                    >
-                      {documentDirty ? <i /> : null}
-                      <span>{document.file.name}</span>
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={`关闭 ${document.file.name}`}
-                      onClick={() => closeDocument(document.file.path)}
-                    >
-                      <X size={13} />
-                    </button>
-                  </div>
-                )
-              })}
-            </div>
+            <DocumentTabs
+              className="artifact-tabs"
+              value={activePath ?? ""}
+              items={documents.map((document) => ({
+                value: document.file.path,
+                label: document.file.name,
+                dirty: document.draft !== document.file.content,
+                closable: true,
+              }))}
+              onValueChange={setActivePath}
+              onClose={closeDocument}
+              getCloseLabel={(item) =>
+                t("artifact.closeFile", { name: item.label })
+              }
+              aria-label={t("artifact.openFiles")}
+            />
 
             {activeDocument ? (
               <>
-                <div className="artifact-editor-toolbar">
+                <Toolbar
+                  className="artifact-editor-toolbar"
+                  aria-label={t("artifact.openFiles")}
+                >
                   <div className="artifact-view-switch">
-                    {['markdown', 'html'].includes(activeDocument.file.kind) ? (
+                    {["markdown", "html"].includes(activeDocument.file.kind) ? (
                       <>
                         <button
-                          className={activeMode === 'edit' ? 'active' : ''}
+                          className={activeMode === "edit" ? "active" : ""}
                           type="button"
-                          aria-label="编辑文件"
+                          aria-label={t("artifact.editFile")}
                           onClick={() =>
                             setViewModes((current) => ({
                               ...current,
-                              [activeDocument.file.path]: 'edit'
+                              [activeDocument.file.path]: "edit",
                             }))
                           }
                         >
                           <Code2 size={15} />
-                          编辑
+                          {t("artifact.edit")}
                         </button>
                         <button
-                          className={activeMode === 'preview' ? 'active' : ''}
+                          className={activeMode === "preview" ? "active" : ""}
                           type="button"
-                          aria-label="预览文件"
+                          aria-label={t("artifact.previewFile")}
                           onClick={() =>
                             setViewModes((current) => ({
                               ...current,
-                              [activeDocument.file.path]: 'preview'
+                              [activeDocument.file.path]: "preview",
                             }))
                           }
                         >
                           <Eye size={15} />
-                          预览
+                          {t("artifact.preview")}
                         </button>
                       </>
                     ) : null}
@@ -476,38 +534,43 @@ export default function ArtifactWorkbench({
                     {activeStage ? (
                       <button
                         type="button"
-                        aria-label={`关联到${STAGE_LABELS[activeStage]}`}
-                        title={`关联到${STAGE_LABELS[activeStage]}`}
+                        aria-label={t("artifact.associateAria", {
+                          stage: t(`artifact.stage.${activeStage}`),
+                        })}
+                        title={t("artifact.associate")}
                         onClick={() => void associateWithStage()}
                       >
                         <Link2 size={15} />
-                        关联阶段
+                        {t("artifact.associate")}
                       </button>
                     ) : null}
-                    {activeDocument.file.kind !== 'image' ? (
+                    {!["image", "fixed-layout", "binary"].includes(
+                      activeDocument.file.kind,
+                    ) ? (
                       <button
                         type="button"
-                        aria-label="保存文件"
-                        title="保存文件"
+                        aria-label={t("artifact.saveFile")}
+                        title={t("artifact.saveFile")}
                         disabled={!dirty || saving}
+                        aria-busy={saving || undefined}
                         onClick={() => void saveActiveFile()}
                       >
                         {saving ? (
-                          <LoaderCircle className="spinning" size={15} />
-                        ) : status === '已保存' && !dirty ? (
+                          <Spinner size={15} />
+                        ) : status === t("artifact.saved") && !dirty ? (
                           <Check size={15} />
                         ) : (
                           <Save size={15} />
                         )}
-                        保存
+                        {t("artifact.save")}
                       </button>
                     ) : null}
                   </div>
-                </div>
+                </Toolbar>
 
                 <div className="artifact-editor-content">
-                  {activeDocument.file.kind === 'markdown' &&
-                  activeMode === 'preview' ? (
+                  {activeDocument.file.kind === "markdown" &&
+                  activeMode === "preview" ? (
                     <article className="artifact-markdown">
                       <ReactMarkdown
                         remarkPlugins={[remarkGfm]}
@@ -516,25 +579,65 @@ export default function ArtifactWorkbench({
                         {activeDocument.draft}
                       </ReactMarkdown>
                     </article>
-                  ) : activeDocument.file.kind === 'html' &&
-                    activeMode === 'preview' ? (
+                  ) : activeDocument.file.kind === "html" &&
+                    activeMode === "preview" ? (
                     <iframe
-                      title={`HTML 预览: ${activeDocument.file.name}`}
+                      title={t("artifact.htmlPreview", {
+                        name: activeDocument.file.name,
+                      })}
                       sandbox=""
                       src={previewUrls[activeDocument.file.path]}
                     />
-                  ) : activeDocument.file.kind === 'image' ? (
-                    <div className="artifact-image-preview">
-                      <img
-                        src={previewUrls[activeDocument.file.path]}
-                        alt={activeDocument.file.name}
-                      />
-                    </div>
+                  ) : activeDocument.file.kind === "image" ? (
+                    <ArtifactImagePreview
+                      src={previewUrls[activeDocument.file.path]}
+                      alt={activeDocument.file.name}
+                      failedLabel={t("artifact.imageFailed")}
+                      retryLabel={t("artifact.retryImage")}
+                    />
+                  ) : activeDocument.file.kind === "fixed-layout" ? (
+                    <ArtifactFixedLayoutPreview
+                      fileType={fixedLayoutFileType(activeDocument.file)}
+                      loadBytes={() => {
+                        if (!api?.readPreviewBytes) {
+                          return Promise.reject(
+                            new Error("Fixed-layout preview is unavailable"),
+                          );
+                        }
+                        return api.readPreviewBytes(
+                          requirementId,
+                          activeDocument.file.path,
+                        );
+                      }}
+                      name={activeDocument.file.name}
+                      loadingLabel={
+                        fixedLayoutFileType(activeDocument.file) === "pdf"
+                          ? t("artifact.pdfLoading")
+                          : t("artifact.fixedLayoutLoading")
+                      }
+                      failedLabel={
+                        fixedLayoutFileType(activeDocument.file) === "pdf"
+                          ? t("artifact.pdfFailed")
+                          : t("artifact.fixedLayoutFailed")
+                      }
+                    />
+                  ) : activeDocument.file.kind === "binary" ? (
+                    <ArtifactBinaryPreview
+                      name={activeDocument.file.name}
+                      unsupportedLabel={t("artifact.binaryPreviewUnsupported")}
+                      showInFinderLabel={t("artifact.showInFinder")}
+                      onShowInFinder={() =>
+                        void api?.showItem(
+                          requirementId,
+                          activeDocument.file.path,
+                        )
+                      }
+                    />
                   ) : (
                     <Suspense
                       fallback={
                         <div className="artifact-editor-loading">
-                          正在加载编辑器
+                          {t("artifact.editorLoading")}
                         </div>
                       }
                     >
@@ -543,15 +646,15 @@ export default function ArtifactWorkbench({
                         path={activeDocument.file.path}
                         value={activeDocument.draft}
                         onChange={(value) => {
-                          setStatus('')
+                          setStatus("");
                           const nextDocuments = documentsRef.current.map(
                             (document) =>
                               document.file.path === activeDocument.file.path
                                 ? { ...document, draft: value }
-                                : document
-                          )
-                          documentsRef.current = nextDocuments
-                          setDocuments(nextDocuments)
+                                : document,
+                          );
+                          documentsRef.current = nextDocuments;
+                          setDocuments(nextDocuments);
                         }}
                       />
                     </Suspense>
@@ -561,8 +664,14 @@ export default function ArtifactWorkbench({
             ) : (
               <div className="artifact-editor-empty">
                 <Code2 size={26} strokeWidth={1.5} />
-                <strong>选择一个文件开始工作</strong>
-                {activeStage ? <p>当前阶段：{STAGE_LABELS[activeStage]}</p> : null}
+                <strong>{t("artifact.selectFile")}</strong>
+                {activeStage ? (
+                  <p>
+                    {t("artifact.currentStage", {
+                      stage: t(`artifact.stage.${activeStage}`),
+                    })}
+                  </p>
+                ) : null}
               </div>
             )}
           </section>
@@ -570,14 +679,16 @@ export default function ArtifactWorkbench({
       )}
 
       {error ? (
-        <div className="artifact-message error" role="alert">
-          {error}
-        </div>
+        <InlineAlert
+          className="artifact-message error"
+          tone="danger"
+          title={error}
+        />
       ) : status ? (
         <div className="artifact-message" role="status">
           {status}
         </div>
       ) : null}
     </aside>
-  )
+  );
 }

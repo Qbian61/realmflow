@@ -1,4 +1,9 @@
 import type { RequirementStageId } from './requirement'
+import type { ModelCallErrorCode } from './model'
+import type {
+  ReferenceItem,
+  ToolCallCategory
+} from './assistant-turn'
 
 export const AI_RUN_STATUSES = [
   'created',
@@ -15,8 +20,22 @@ export type AiRunStatus = (typeof AI_RUN_STATUSES)[number]
 export const AI_RUN_EVENT_TYPES = [
   'run.started',
   'run.progress',
-  'content.delta',
+  'answer.delta',
+  'execution.summary.delta',
+  'reference.added',
+  'tool.call.requested',
+  'tool.call.started',
+  'tool.call.progress',
+  'tool.call.completed',
+  'tool.call.failed',
+  'tool.call.permission_required',
   'artifact.ready',
+  'run.retrying',
+  'run.waiting_input',
+  'run.paused',
+  'run.recovery_blocked',
+  'run.resumed',
+  'context.compacted',
   'run.completed',
   'run.failed',
   'run.cancelled',
@@ -30,9 +49,49 @@ export type GeneratedArtifact = {
   content: string
 }
 
+export type AiRunToolCall = {
+  index: number
+  id: string
+  name: string
+  arguments: string
+}
+
+export type AiRunToolResult =
+  | {
+      callId: string
+      status: 'completed'
+      output: Record<string, unknown>
+      toolExecutionId?: string
+      resultSummary?: string
+      artifactIds?: string[]
+    }
+  | {
+      callId: string
+      status: 'failed'
+      errorCode: string
+      message: string
+      toolExecutionId?: string
+    }
+
 export type AiRunEventData = {
+  agentTurn?: number
+  segmentIndex?: number
   progress?: number
   delta?: string
+  summaryId?: string
+  source?: 'provider' | 'system'
+  reference?: ReferenceItem
+  callId?: string
+  requestId?: string
+  toolExecutionId?: string
+  toolName?: string
+  category?: ToolCallCategory
+  argumentsSummary?: string
+  summary?: string
+  resultSummary?: string
+  artifactIds?: string[]
+  toolCall?: AiRunToolCall
+  toolResult?: AiRunToolResult
   artifact?: GeneratedArtifact
   message?: string
   usage?: {
@@ -44,6 +103,15 @@ export type AiRunEventData = {
   firstTokenLatencyMs?: number
   durationMs?: number
   retryCount?: number
+  retryable?: boolean
+  retryAfterMs?: number
+  errorCode?: ModelCallErrorCode
+  recoveryReason?: string
+  recoveryActions?: Array<'resume' | 'branch' | 'cancel'>
+  objectiveCount?: number
+  constraintCount?: number
+  incompleteItemCount?: number
+  sourceCount?: number
 }
 
 export type AiRunEvent = {
@@ -60,6 +128,10 @@ export type AiRun = {
   requirementId: string
   stageId: RequirementStageId
   nodeId?: string
+  workspaceId?: string
+  modelProfileId?: string
+  contextSnapshotId?: string
+  startedAt?: number
   status: AiRunStatus
   lastSequence: number
   content: string
@@ -93,13 +165,18 @@ export function createAiRun(
   id: string,
   requirementId: string,
   stageId: RequirementStageId,
-  nodeId?: string
+  nodeId?: string,
+  attribution?: Pick<
+    AiRun,
+    'workspaceId' | 'modelProfileId' | 'contextSnapshotId' | 'startedAt'
+  >
 ): AiRun {
   return {
     id,
     requirementId,
     stageId,
     ...(nodeId ? { nodeId } : {}),
+    ...attribution,
     status: 'created',
     lastSequence: 0,
     content: ''

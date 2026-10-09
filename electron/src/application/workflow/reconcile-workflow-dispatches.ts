@@ -4,6 +4,8 @@ import type {
   WorkflowDispatchRepository,
   WorkflowExecutionRepository
 } from '../ports/business-repositories'
+import { createAutomaticWorkflowDispatchId } from './workflow-dispatch'
+import { isWorkflowNodeExecutable } from './execute-workflow-node'
 
 type DrainResult = {
   completed: number
@@ -36,8 +38,7 @@ export class ReconcileWorkflowDispatchesUseCase {
       const automaticReadyNodes = workflow.nodes.filter(
         (node) =>
           node.status === 'ready' &&
-          node.type === 'ai_generate' &&
-          node.executor !== undefined
+          isWorkflowNodeExecutable(node)
       )
       for (const node of automaticReadyNodes) {
         const nodeRun = await this.dependencies.nodeRuns.getLatestByNode(
@@ -46,18 +47,21 @@ export class ReconcileWorkflowDispatchesUseCase {
         )
         if (!nodeRun || nodeRun.status !== 'ready') continue
         const timestamp = this.now()
-        await this.dependencies.dispatches.enqueue({
-          id: `${execution.id}:reconcile:${nodeRun.id}`,
-          executionId: execution.id,
-          requirementId: execution.requirementId,
-          nodeId: node.id,
-          nodeRunId: nodeRun.id,
-          triggerNodeRunId: nodeRun.id,
-          status: 'pending',
-          attempts: 0,
-          createdAt: timestamp,
-          updatedAt: timestamp
-        })
+        await this.dependencies.dispatches.enqueue(
+          {
+            id: createAutomaticWorkflowDispatchId(execution.id, nodeRun.id),
+            executionId: execution.id,
+            requirementId: execution.requirementId,
+            nodeId: node.id,
+            nodeRunId: nodeRun.id,
+            triggerNodeRunId: nodeRun.id,
+            status: 'pending',
+            attempts: 0,
+            createdAt: timestamp,
+            updatedAt: timestamp
+          },
+          'recovery'
+        )
         enqueued += 1
       }
     }

@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.document.update_layout",
+  "version": "1.1.0",
+  "name": "Update document layout",
+  "description": "Update page size, orientation, header, and footer.",
+  "tags": [
+    "document"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "document.update_layout",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sessionId": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+      },
+      "expectedRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "sectionId": {
+        "type": "string",
+        "pattern": "^section-[1-9][0-9]*$"
+      },
+      "widthPt": {
+        "type": "number",
+        "minimum": 72,
+        "maximum": 2880
+      },
+      "heightPt": {
+        "type": "number",
+        "minimum": 72,
+        "maximum": 2880
+      },
+      "header": {
+        "type": "string",
+        "maxLength": 100000
+      },
+      "footer": {
+        "type": "string",
+        "maxLength": 100000
+      }
+    },
+    "required": [
+      "sessionId",
+      "expectedRevision",
+      "sectionId"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "filesystem.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "update document layout"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

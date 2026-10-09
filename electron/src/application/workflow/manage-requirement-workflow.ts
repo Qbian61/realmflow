@@ -1,22 +1,37 @@
 import {
   insertRequirementNode,
   removeRequirementNode,
+  updateRequirementNode,
   type InsertRequirementNodeInput,
-  type RequirementWorkflow
+  type RequirementWorkflow,
+  type UpdateRequirementNodeInput
 } from '../../../../domain/workflow'
 import type {
   NodeRunRecord,
   NodeRunRepository,
+  NodeTodoRepository,
   RequirementWorkflowRepository,
   Revisioned,
   UnitOfWork,
   WorkflowExecutionRepository
 } from '../ports/business-repositories'
+import { initializeConfiguredNodeTodos } from './manage-node-todos'
+import type { StartedNodeProtection } from './started-node-protection'
 
 type Dependencies = {
   workflows: RequirementWorkflowRepository
-  executions: WorkflowExecutionRepository
-  nodeRuns: NodeRunRepository
+  executions: Pick<WorkflowExecutionRepository, 'getActiveByRequirement'>
+  nodeRuns: Pick<
+    NodeRunRepository,
+    | 'get'
+    | 'getLatestByNode'
+    | 'interruptRunning'
+    | 'listInterrupted'
+    | 'save'
+    | 'deleteByNode'
+  >
+  todos: Pick<NodeTodoRepository, 'save'>
+  nodeProtection: Pick<StartedNodeProtection, 'assertUnstarted'>
   unitOfWork: UnitOfWork
 }
 
@@ -42,9 +57,16 @@ export class ManageRequirementWorkflowUseCase {
         this.requireExecution(input.requirementId)
       ])
       const nextWorkflow = insertRequirementNode(workflow, input.mutation)
+      await this.dependencies.nodeProtection.assertUnstarted(
+        input.requirementId,
+        [input.mutation.afterNodeId, input.mutation.beforeNodeId].filter(
+          (nodeId): nodeId is string => Boolean(nodeId)
+        )
+      )
       const workflowResult = await this.dependencies.workflows.save(
         nextWorkflow,
-        input.expectedRevision
+        input.expectedRevision,
+        { reason: 'node_inserted', triggerSource: 'user' }
       )
       if (workflowResult.status === 'conflict') {
         throw new Error('Requirement workflow revision conflict')
@@ -66,6 +88,11 @@ export class ManageRequirementWorkflowUseCase {
       if (nodeRunResult.status === 'conflict') {
         throw new Error('Requirement node run already exists')
       }
+      await initializeConfiguredNodeTodos(this.dependencies.todos, {
+        nodeRunId: nodeRunResult.entity.id,
+        configuredTodos: input.mutation.node.configuration?.todos,
+        timestamp
+      })
       return {
         workflow: workflowResult.entity,
         nodeRun: nodeRunResult.entity
@@ -84,10 +111,44 @@ export class ManageRequirementWorkflowUseCase {
         this.requireExecution(input.requirementId)
       ])
       const nextWorkflow = removeRequirementNode(workflow, input.nodeId)
+      await this.dependencies.nodeProtection.assertUnstarted(
+        input.requirementId,
+        [input.nodeId]
+      )
       await this.dependencies.nodeRuns.deleteByNode(execution.id, input.nodeId)
       const result = await this.dependencies.workflows.save(
         nextWorkflow,
-        input.expectedRevision
+        input.expectedRevision,
+        { reason: 'node_removed', triggerSource: 'user' }
+      )
+      if (result.status === 'conflict') {
+        throw new Error('Requirement workflow revision conflict')
+      }
+      return result.entity
+    })
+  }
+
+  async updateNode(input: {
+    requirementId: string
+    expectedRevision: number
+    nodeId: string
+    changes: UpdateRequirementNodeInput
+  }): Promise<RequirementWorkflow> {
+    return this.dependencies.unitOfWork.execute(async () => {
+      const workflow = await this.requireWorkflow(input.requirementId)
+      const nextWorkflow = updateRequirementNode(
+        workflow,
+        input.nodeId,
+        input.changes
+      )
+      await this.dependencies.nodeProtection.assertUnstarted(
+        input.requirementId,
+        [input.nodeId]
+      )
+      const result = await this.dependencies.workflows.save(
+        nextWorkflow,
+        input.expectedRevision,
+        { reason: 'node_updated', triggerSource: 'user' }
       )
       if (result.status === 'conflict') {
         throw new Error('Requirement workflow revision conflict')

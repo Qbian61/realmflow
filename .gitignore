@@ -42,6 +42,9 @@ playwright-report/
 blob-report/
 .nyc_output/
 
+# Local documentation work products
+docs/
+
 # Node / Electron dependencies and generated output
 node_modules/
 out/
@@ -81,6 +84,13 @@ pip-wheel-metadata/
 .build/
 resources/sidecar/*
 !resources/sidecar/.gitkeep
+resources/qdrant/*/
+python-service/model-assets/
+.qdrant-initialized
+
+# Local benchmark and acceptance artifacts
+benchmarks/knowledge-search/latest.json
+tmp/
 
 # Temporary files and archives
 *.tmp

@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.document.insert_blocks",
+  "version": "1.1.0",
+  "name": "Insert document blocks",
+  "description": "Insert Markdown as structured document blocks.",
+  "tags": [
+    "document"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "document.insert_blocks",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sessionId": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+      },
+      "expectedRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "afterBlockId": {
+        "type": "string",
+        "pattern": "^(paragraph|table)-[1-9][0-9]*$"
+      },
+      "markdown": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1000000
+      }
+    },
+    "required": [
+      "sessionId",
+      "expectedRevision",
+      "afterBlockId",
+      "markdown"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "filesystem.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "insert document blocks"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

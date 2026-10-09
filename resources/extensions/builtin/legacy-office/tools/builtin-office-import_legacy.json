@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.office.import_legacy",
+  "version": "1.2.0",
+  "name": "Import legacy Office file",
+  "description": "Convert an authorized legacy Office or WPS file into a new modern Office document.",
+  "tags": [
+    "office"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "office.import_legacy",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "path",
+      "outputPath",
+      "expectedChecksum",
+      "expectedAbsent"
+    ],
+    "properties": {
+      "path": {
+        "type": "string",
+        "minLength": 1
+      },
+      "outputPath": {
+        "type": "string",
+        "minLength": 1
+      },
+      "expectedChecksum": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "expectedAbsent": {
+        "type": "boolean",
+        "const": true
+      },
+      "scopeRoot": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "filesystem.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "import legacy office file"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

@@ -5,10 +5,12 @@ import { createServer } from 'node:net'
 import { join } from 'node:path'
 import { app } from 'electron'
 import type { SidecarStatus } from '../../../shared/types'
+import { waitForExitBeforeTimeout } from '../process/wait-for-exit'
 import { SidecarClient, type SidecarHealth } from './client'
 
-const HEALTH_RETRIES = 20
-const HEALTH_INTERVAL_MS = 250
+const HEALTH_RETRIES = 120
+const HEALTH_INTERVAL_MS = 500
+const STOP_TIMEOUT_MS = 5_000
 
 type HealthClient = {
   getHealth: () => Promise<SidecarHealth>
@@ -41,6 +43,7 @@ export async function waitUntilSidecarHealthy(
 
 export class SidecarManager {
   private process: ChildProcessWithoutNullStreams | undefined
+  private stopPromise: Promise<void> | undefined
   private status: SidecarStatus = 'stopped'
   private port: number | undefined
   private client: SidecarClient | undefined
@@ -62,16 +65,17 @@ export class SidecarManager {
     this.status = 'starting'
     this.port = await this.reservePort()
     const authToken = randomBytes(32).toString('base64url')
-    const servicePath = app.isPackaged
+    const isPackaged = app.isPackaged && !process.env.ELECTRON_RENDERER_URL
+    const servicePath = isPackaged
       ? join(process.resourcesPath, 'python-service')
       : join(app.getAppPath(), 'python-service')
 
-    const localPython = join(app.getAppPath(), '.venv', 'bin', 'python')
-    const executable = app.isPackaged
+    const localPython = join(servicePath, '.venv', 'bin', 'python')
+    const executable = isPackaged
       ? join(process.resourcesPath, 'sidecar', this.executableName())
       : process.env.REALMFLOW_PYTHON ||
         (existsSync(localPython) ? localPython : 'python3')
-    const args = app.isPackaged ? [] : [join(servicePath, 'main.py')]
+    const args = isPackaged ? [] : [join(servicePath, 'main.py')]
 
     this.process = spawn(executable, args, {
       cwd: servicePath,
@@ -110,12 +114,38 @@ export class SidecarManager {
       : 'error'
   }
 
-  stop(): void {
-    if (!this.process) return
-    this.process.kill('SIGTERM')
-    this.process = undefined
+  stop(): Promise<void> {
+    if (this.stopPromise) return this.stopPromise
+    const child = this.process
     this.client = undefined
-    this.status = 'stopped'
+    if (!child || child.exitCode !== null) {
+      this.process = undefined
+      this.status = 'stopped'
+      return Promise.resolve()
+    }
+
+    const exited = new Promise<void>((resolve) => {
+      child.once('exit', () => resolve())
+    })
+    this.stopPromise = this.terminate(child, exited).finally(() => {
+      if (this.process === child) this.process = undefined
+      this.client = undefined
+      this.status = 'stopped'
+      this.stopPromise = undefined
+    })
+    return this.stopPromise
+  }
+
+  private async terminate(
+    child: ChildProcessWithoutNullStreams,
+    exited: Promise<void>
+  ): Promise<void> {
+    child.kill('SIGTERM')
+    const graceful = await waitForExitBeforeTimeout(exited, STOP_TIMEOUT_MS)
+    if (!graceful && child.exitCode === null) {
+      child.kill('SIGKILL')
+      await exited
+    }
   }
 
   private reservePort(): Promise<number> {

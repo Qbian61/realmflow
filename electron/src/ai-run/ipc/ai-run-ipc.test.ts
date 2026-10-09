@@ -3,6 +3,7 @@ import type { AiRunEvent } from '../../../../domain/ai-run'
 import { IPC_INVOKE_CHANNELS } from '../../../../shared/ipc-contract'
 import {
   requireCancelAiRunInput,
+  requireAgentRunRecoveryInput,
   requireGetAiRunInput,
   requireListAiRunEventsInput,
   requireStartAiRunInput
@@ -58,6 +59,18 @@ describe('AI run IPC', () => {
       runId: 'run-1'
     })
     expect(
+      requireAgentRunRecoveryInput(
+        { runId: 'run-1', action: 'resume' },
+        'ai-run:recover'
+      )
+    ).toEqual({ runId: 'run-1', action: 'resume' })
+    expect(() =>
+      requireAgentRunRecoveryInput(
+        { runId: 'run-1', action: 'retry-anyway' },
+        'ai-run:recover'
+      )
+    ).toThrow('Invalid IPC payload')
+    expect(
       requireListAiRunEventsInput({ runId: 'run-1' }, 'ai-run:list-events')
     ).toEqual({ runId: 'run-1' })
     expect(() => requireGetAiRunInput({ runId: 7 }, 'ai-run:get')).toThrow(
@@ -80,6 +93,7 @@ describe('AI run IPC', () => {
       cancel: { execute: vi.fn() } as never,
       getRun: { execute: vi.fn() } as never,
       listEvents: { execute: vi.fn() } as never,
+      recovery: { execute: vi.fn() },
       publisher,
       ipcMain: {
         handle: (channel, handler) => handlers.set(channel, handler)
@@ -125,6 +139,7 @@ describe('AI run IPC', () => {
       cancel: { execute: vi.fn() } as never,
       getRun: getRun as never,
       listEvents: listEvents as never,
+      recovery: { execute: vi.fn() },
       publisher: { subscribe: vi.fn() },
       ipcMain: {
         handle: (channel, handler) => handlers.set(channel, handler)
@@ -174,6 +189,7 @@ describe('AI run IPC', () => {
           return events
         })
       } as never,
+      recovery: { execute: vi.fn() },
       publisher: {
         subscribe: vi.fn(() => {
           calls.push('subscribe')
@@ -191,6 +207,36 @@ describe('AI run IPC', () => {
       )
     ).resolves.toEqual({ run, events })
     expect(calls).toEqual(['subscribe', 'get', 'events'])
+  })
+
+  it('routes typed recovery actions to the Main-owned command service', async () => {
+    const handlers = new Map<string, (...args: any[]) => unknown>()
+    const recovery = {
+      execute: vi.fn().mockResolvedValue({ status: 'blocked' })
+    }
+    registerAiRunIpc({
+      executeNode: { execute: vi.fn() } as never,
+      executeStage: { execute: vi.fn() } as never,
+      cancel: { execute: vi.fn() } as never,
+      getRun: { execute: vi.fn() } as never,
+      listEvents: { execute: vi.fn() } as never,
+      recovery,
+      publisher: { subscribe: vi.fn() },
+      ipcMain: {
+        handle: (channel, handler) => handlers.set(channel, handler)
+      }
+    })
+
+    await expect(
+      handlers.get(IPC_INVOKE_CHANNELS.aiRunRecover)?.(
+        {},
+        { runId: 'run-1', action: 'branch' }
+      )
+    ).resolves.toEqual({ status: 'blocked' })
+    expect(recovery.execute).toHaveBeenCalledWith({
+      runId: 'run-1',
+      action: 'branch'
+    })
   })
 })
 

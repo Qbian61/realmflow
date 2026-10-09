@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RealmFlow Runtime Governance Acceptance</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script src="/fixtures/capability-builder-browser-fixture.js"></script>
+    <script>
+      const evaluation = {
+        id: "evaluation-safety-gate",
+        suiteVersion: "builtin.runtime.v1",
+        datasetDigest: "a".repeat(64),
+        candidateDigest: "b".repeat(64),
+        seed: 42,
+        dimensions: {
+          quality: { passed: 9, total: 10 },
+          retrieval: { passed: 8, total: 10 },
+          toolTrace: { passed: 9, total: 10 },
+          safety: { passed: 9, total: 10 },
+          recovery: { passed: 8, total: 10 },
+        },
+        scores: {
+          quality: 90,
+          retrieval: 80,
+          toolTrace: 90,
+          safety: 90,
+          recovery: 80,
+          overall: 87.5,
+        },
+        reproducibilityDigest: "c".repeat(64),
+        startedAt: 100,
+        completedAt: 120,
+      };
+      const failedRun = {
+        runId: "run-permission-failed",
+        scenarioId: "general",
+        stage: "capability",
+        errorCode: "permission_denied",
+        profileId: "builtin.general",
+        pipelineVersion: "builtin.general.v1",
+        relatedCalls: 1,
+        failedAt: 250,
+      };
+      const snapshot = {
+        revision: 7,
+        summary: {
+          totalRuns: 42,
+          completedRuns: 36,
+          failedRuns: 4,
+          recoveryRate: 66.7,
+          permissionWaits: 8,
+          averageDurationMs: 1480,
+        },
+        failedRuns: [failedRun],
+        evaluations: [evaluation],
+        capabilities: [
+          {
+            capabilityId: "generated.issue-lookup",
+            capabilityVersion: "1.2.0",
+            kind: "connector",
+            source: "generated",
+            generationSessionId: "generation-issue-lookup",
+            conversationId: "conversation-capability-studio",
+            confirmationDigest: "d".repeat(64),
+            scopeLabel: "workspace:realmflow",
+            enabled: true,
+            revision: 3,
+          },
+        ],
+        observability: {
+          retentionDays: 30,
+          maximumEvents: 50000,
+          droppedEvents: 0,
+        },
+      };
+      const detail = {
+        ...failedRun,
+        configuration: {
+          scenarioId: "general",
+          pipelineVersion: "builtin.general.v1",
+          profile: "builtin.general@1.0.0",
+          promptDigest: "e".repeat(64),
+          policyDigest: "f".repeat(64),
+          catalogDigest: "1".repeat(64),
+          bindingDigest: "2".repeat(64),
+          modelProfileId: "local-fixture-model",
+        },
+        trace: [
+          {
+            eventId: "trace-requested",
+            sequence: 1,
+            stage: "capability",
+            type: "tool.call.requested",
+            timestamp: 200,
+            summary: "issue_lookup requested",
+          },
+          {
+            eventId: "trace-permission",
+            sequence: 2,
+            stage: "capability",
+            type: "tool.call.permission_required",
+            timestamp: 220,
+            summary: "Permission required",
+          },
+          {
+            eventId: "trace-failed",
+            sequence: 3,
+            stage: "capability",
+            type: "tool.call.failed",
+            timestamp: 250,
+            summary: "permission_denied",
+          },
+        ],
+      };
+      window.realmflow.business.queryProductAnalytics = async () => ({
+        scope: { workspaces: [] },
+        summary: {
+          workspaces: 0,
+          requirements: 0,
+          workflows: 0,
+          executions: 0,
+          nodeRuns: 0,
+        },
+        requirements: [],
+        workflows: [],
+        executionStatuses: [],
+        nodeRunStatuses: [],
+        recentActivity: [],
+      });
+      window.realmflow.runtimeGovernance = {
+        getSnapshot: async () => structuredClone(snapshot),
+        getRunDetail: async () => structuredClone(detail),
+        runEvaluation: async () => structuredClone(evaluation),
+        release: async () => ({
+          status: "blocked",
+          revision: 7,
+          reasons: ["safety_threshold"],
+        }),
+        exportDiagnostic: async () => ({
+          status: "exported",
+          fileName: "realmflow-diagnostic-run-permission-failed.json",
+        }),
+      };
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

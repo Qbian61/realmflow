@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.skill.requirement_analysis",
+  "version": "1.0.0",
+  "name": "Requirement analysis",
+  "description": "Clarify goals, boundaries, risks, and acceptance criteria.",
+  "instructionsPath": "instructions/requirement_analysis.md",
+  "runtime": {
+    "kind": "instruction"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "requiredTools": [
+    {
+      "toolId": "builtin.realmflow.requirements.get",
+      "versionRange": "^1.0.0",
+      "required": true
+    },
+    {
+      "toolId": "builtin.knowledge.search",
+      "versionRange": "^1.0.0",
+      "required": true
+    },
+    {
+      "toolId": "builtin.files.read",
+      "versionRange": "^1.0.0",
+      "required": true
+    }
+  ],
+  "activation": {
+    "intents": [
+      "requirement analysis"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  },
+  "limits": {
+    "maxToolCalls": 64,
+    "timeoutMs": 900000
+  }
+}

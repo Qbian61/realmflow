@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "packageId": "realmflow.builtin.images",
+  "version": "1.0.0",
+  "name": "Images",
+  "description": "Revision-safe local image inspection, OCR, and deterministic editing.",
+  "publisher": {
+    "name": "RealmFlow",
+    "keyId": "realmflow-builtin-v1"
+  },
+  "compatibility": {
+    "realmflow": ">=0.1.0 <1.0.0",
+    "platforms": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
+  },
+  "tools": [
+    {
+      "path": "tools/builtin-image-inspect.json"
+    },
+    {
+      "path": "tools/builtin-image-ocr.json"
+    },
+    {
+      "path": "tools/builtin-image-resize.json"
+    },
+    {
+      "path": "tools/builtin-image-crop.json"
+    },
+    {
+      "path": "tools/builtin-image-rotate.json"
+    },
+    {
+      "path": "tools/builtin-image-compress.json"
+    },
+    {
+      "path": "tools/builtin-image-convert.json"
+    },
+    {
+      "path": "tools/builtin-image-composite.json"
+    },
+    {
+      "path": "tools/builtin-image-redact.json"
+    },
+    {
+      "path": "tools/builtin-image-remove_exif.json"
+    },
+    {
+      "path": "tools/builtin-image-save.json"
+    }
+  ],
+  "skills": [],
+  "assets": []
+}

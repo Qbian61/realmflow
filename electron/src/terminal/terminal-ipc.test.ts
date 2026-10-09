@@ -6,6 +6,7 @@ describe('registerTerminalIpc', () => {
     const handlers = new Map<string, (...args: any[]) => unknown>()
     const manager = {
       create: vi.fn(),
+      createHome: vi.fn(),
       write: vi.fn(),
       resize: vi.fn(),
       destroy: vi.fn(),
@@ -21,6 +22,7 @@ describe('registerTerminalIpc', () => {
 
     expect([...handlers.keys()]).toEqual([
       'terminal:create',
+      'terminal:create-home',
       'terminal:write',
       'terminal:resize',
       'terminal:destroy'
@@ -47,6 +49,14 @@ describe('registerTerminalIpc', () => {
       'destroyed',
       expect.any(Function)
     )
+    await handlers.get('terminal:create-home')?.(event, {
+      cols: 80,
+      rows: 24
+    })
+    expect(manager.createHome).toHaveBeenCalledWith(event.sender, {
+      cols: 80,
+      rows: 24
+    })
 
     await handlers.get('terminal:write')?.(event, 'terminal-1', 'ls\r')
     expect(manager.write).toHaveBeenCalledWith(12, 'terminal-1', 'ls\r')
@@ -56,6 +66,7 @@ describe('registerTerminalIpc', () => {
     const handlers = new Map<string, (...args: any[]) => unknown>()
     const manager = {
       create: vi.fn(),
+      createHome: vi.fn(),
       write: vi.fn(),
       resize: vi.fn(),
       destroy: vi.fn(),

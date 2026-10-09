@@ -1,5 +1,4 @@
 import type { ChatSession } from '../../domain/chat-session'
-import type { SpaceResourceStore } from '../../domain/space-resource'
 import type { WorkspaceNavigation } from '../../domain/workspace'
 
 export type RepositorySnapshot<T> = {
@@ -33,10 +32,8 @@ export interface Repository<T> {
 
 export type WorkspaceNavigationRepository = Repository<WorkspaceNavigation>
 export type ChatSessionRepository = Repository<ChatSession[]>
-export type SpaceResourceRepository = Repository<SpaceResourceStore>
 
 export type RendererRepositories = {
   workspaceNavigation: WorkspaceNavigationRepository
   chatSessions: ChatSessionRepository
-  spaceResources: SpaceResourceRepository
 }

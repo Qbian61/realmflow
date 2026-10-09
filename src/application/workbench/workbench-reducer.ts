@@ -1,4 +1,5 @@
 import type { TerminalEvent, TerminalSession } from '../../../shared/terminal'
+import type { CodeSnippet } from '../../../shared/code-snippet'
 import type {
   OpenedSessionFiles,
   WorkspaceFile
@@ -12,6 +13,7 @@ export type WorkspaceTab = {
   label: string
   workspaceId: string
   activeStage?: RequirementStageId
+  initialPath?: string
   initialFiles?: WorkspaceFile[]
 }
 
@@ -31,7 +33,18 @@ export type TerminalTab = {
   exited: boolean
 }
 
-export type WorkbenchTab = WorkspaceTab | WebTab | TerminalTab
+export type CodeSnippetTab = {
+  id: string
+  type: 'code'
+  label: string
+  snippet: CodeSnippet
+}
+
+export type WorkbenchTab =
+  | WorkspaceTab
+  | WebTab
+  | TerminalTab
+  | CodeSnippetTab
 
 export type WorkbenchState = {
   tabs: WorkbenchTab[]

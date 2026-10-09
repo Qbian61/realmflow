@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.attachment.read_chunk",
+  "version": "1.0.2",
+  "name": "Read attachment chunk",
+  "description": "Read one referenced long-text attachment chunk from the current conversation.",
+  "tags": [
+    "attachment"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "attachment.read_chunk",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "chunkId"
+    ],
+    "properties": {
+      "chunkId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "realmflow.read"
+  ],
+  "effects": [
+    "local_data.read"
+  ],
+  "risk": "low",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "read attachment chunk"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

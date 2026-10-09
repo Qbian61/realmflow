@@ -1,4 +1,4 @@
-import { IPC_INVOKE_CHANNELS } from '../../../shared/ipc-contract'
+import { IPC_COMMAND_CHANNELS } from '../../../shared/ipc-contract'
 import {
   requireString,
   requireTerminalDimensions
@@ -15,7 +15,7 @@ type TerminalIpcEvent = {
 
 type TerminalCommands = Pick<
   TerminalManager,
-  'create' | 'write' | 'resize' | 'destroy' | 'disposeOwner'
+  'create' | 'createHome' | 'write' | 'resize' | 'destroy' | 'disposeOwner'
 >
 
 type TerminalIpcDependencies = {
@@ -33,31 +33,42 @@ export function registerTerminalIpc({
   ipcMain
 }: TerminalIpcDependencies): void {
   const observedSenders = new Set<number>()
+  const observeSender = (event: TerminalIpcEvent): void => {
+    if (observedSenders.has(event.sender.id)) return
+    observedSenders.add(event.sender.id)
+    event.sender.once('destroyed', () => {
+      observedSenders.delete(event.sender.id)
+      manager.disposeOwner(event.sender.id)
+    })
+  }
 
   ipcMain.handle(
-    IPC_INVOKE_CHANNELS.terminalCreate,
+    IPC_COMMAND_CHANNELS.terminalCreate,
     (event, workspaceId: unknown, dimensions: unknown) => {
-      const channel = IPC_INVOKE_CHANNELS.terminalCreate
+      const channel = IPC_COMMAND_CHANNELS.terminalCreate
       const validWorkspaceId = requireString(
         workspaceId,
         channel,
         'workspaceId'
       )
       const validDimensions = requireTerminalDimensions(dimensions, channel)
-      if (!observedSenders.has(event.sender.id)) {
-        observedSenders.add(event.sender.id)
-        event.sender.once('destroyed', () => {
-          observedSenders.delete(event.sender.id)
-          manager.disposeOwner(event.sender.id)
-        })
-      }
+      observeSender(event)
       return manager.create(event.sender, validWorkspaceId, validDimensions)
     }
   )
   ipcMain.handle(
-    IPC_INVOKE_CHANNELS.terminalWrite,
+    IPC_COMMAND_CHANNELS.terminalCreateHome,
+    (event, dimensions: unknown) => {
+      const channel = IPC_COMMAND_CHANNELS.terminalCreateHome
+      const validDimensions = requireTerminalDimensions(dimensions, channel)
+      observeSender(event)
+      return manager.createHome(event.sender, validDimensions)
+    }
+  )
+  ipcMain.handle(
+    IPC_COMMAND_CHANNELS.terminalWrite,
     (event, sessionId: unknown, data: unknown) => {
-      const channel = IPC_INVOKE_CHANNELS.terminalWrite
+      const channel = IPC_COMMAND_CHANNELS.terminalWrite
       return manager.write(
         event.sender.id,
         requireString(sessionId, channel, 'sessionId'),
@@ -69,9 +80,9 @@ export function registerTerminalIpc({
     }
   )
   ipcMain.handle(
-    IPC_INVOKE_CHANNELS.terminalResize,
+    IPC_COMMAND_CHANNELS.terminalResize,
     (event, sessionId: unknown, dimensions: unknown) => {
-      const channel = IPC_INVOKE_CHANNELS.terminalResize
+      const channel = IPC_COMMAND_CHANNELS.terminalResize
       return manager.resize(
         event.sender.id,
         requireString(sessionId, channel, 'sessionId'),
@@ -80,9 +91,9 @@ export function registerTerminalIpc({
     }
   )
   ipcMain.handle(
-    IPC_INVOKE_CHANNELS.terminalDestroy,
+    IPC_COMMAND_CHANNELS.terminalDestroy,
     (event, sessionId: unknown) => {
-      const channel = IPC_INVOKE_CHANNELS.terminalDestroy
+      const channel = IPC_COMMAND_CHANNELS.terminalDestroy
       return manager.destroy(
         event.sender.id,
         requireString(sessionId, channel, 'sessionId')
