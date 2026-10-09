@@ -1,4 +1,4 @@
-import type { SpaceResourceDto } from '../../../shared/business'
+import type { KnowledgeSourceDto } from '../../../shared/business'
 import type {
   OpenedSessionFiles,
   WorkspaceFile
@@ -29,7 +29,7 @@ export function mapLocalFileResource(
 }
 
 export function mapBusinessResource(
-  resource: SpaceResourceDto
+  resource: KnowledgeSourceDto
 ): SpaceResource {
   return {
     id: resource.id,
@@ -37,9 +37,14 @@ export function mapBusinessResource(
     type: resource.type,
     locator: resource.locator,
     detail: resource.detail,
+    status: resource.status,
+    errorCode: resource.errorCode,
+    errorMessage: resource.errorMessage,
     sortOrder: resource.sortOrder,
     revision: resource.revision,
     createdAt: resource.createdAt,
-    updatedAt: resource.updatedAt
+    updatedAt: resource.updatedAt,
+    refresh: resource.refresh,
+    index: resource.index
   }
 }

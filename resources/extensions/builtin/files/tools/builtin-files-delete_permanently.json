@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.files.delete_permanently",
+  "version": "1.3.1",
+  "name": "Delete permanently",
+  "description": "Permanently delete an authorized file or directory.",
+  "tags": [
+    "files"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "files.delete_permanently",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "path",
+      "expectedChecksum"
+    ],
+    "properties": {
+      "path": {
+        "type": "string",
+        "minLength": 1
+      },
+      "scopeRoot": {
+        "type": "string",
+        "minLength": 1
+      },
+      "expectedChecksum": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "filesystem.delete"
+  ],
+  "effects": [
+    "local_data.delete"
+  ],
+  "risk": "critical",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "delete permanently"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ],
+    "requiresExplicitSelection": true
+  }
+}

@@ -6,7 +6,11 @@ import type {
   WorkflowDispatchRepository,
   WorkflowExecutionRepository
 } from '../ports/business-repositories'
-import type { ExecuteWorkflowNodeUseCase } from './execute-workflow-node'
+import {
+  isWorkflowNodeExecutable,
+  type ExecuteWorkflowNodeUseCase
+} from './execute-workflow-node'
+import { parseRecoveryWorkflowDispatchId } from './workflow-dispatch'
 
 type Dependencies = {
   dispatches: Pick<
@@ -93,6 +97,35 @@ export class AdvanceWorkflowUseCase {
       if (!workflow || !nodeRun || nodeRun.nodeId !== dispatch.nodeId) {
         throw new Error('Workflow dispatch state is incomplete')
       }
+      const recovery = parseRecoveryWorkflowDispatchId(dispatch.id)
+      if (recovery) {
+        const node = workflow.nodes.find(
+          (candidate) => candidate.id === dispatch.nodeId
+        )
+        if (
+          !['running', 'interrupted'].includes(execution.status) ||
+          nodeRun.status !== 'interrupted' ||
+          nodeRun.revision !== recovery.expectedNodeRunRevision ||
+          !isWorkflowNodeExecutable(node) ||
+          node.status !== 'interrupted'
+        ) {
+          await this.complete(dispatch)
+          return 'skipped'
+        }
+        const modelProfileId =
+          typeof nodeRun.checkpoint?.modelProfileId === 'string'
+            ? nodeRun.checkpoint.modelProfileId
+            : undefined
+        await this.dependencies.executeNode.execute({
+          requirementId: dispatch.requirementId,
+          nodeId: dispatch.nodeId,
+          nodeRunId: dispatch.nodeRunId,
+          recovery: true,
+          ...(modelProfileId ? { modelProfileId } : {})
+        })
+        await this.complete(dispatch)
+        return 'completed'
+      }
       if (execution.status !== 'running') {
         await this.complete(dispatch)
         return 'skipped'
@@ -105,9 +138,7 @@ export class AdvanceWorkflowUseCase {
         (candidate) => candidate.id === dispatch.nodeId
       )
       if (
-        !node ||
-        node.type !== 'ai_generate' ||
-        !node.executor ||
+        !isWorkflowNodeExecutable(node) ||
         !['ready', 'failed'].includes(node.status) ||
         !['ready', 'failed'].includes(nodeRun.status)
       ) {

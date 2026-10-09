@@ -58,6 +58,7 @@ describe('useAiRunController', () => {
       get: vi.fn(),
       attach: vi.fn(),
       listEvents: vi.fn(),
+      recover: vi.fn(),
       onEvent: vi.fn().mockImplementation((next) => {
         listener = next
         return () => undefined
@@ -77,7 +78,17 @@ describe('useAiRunController', () => {
     act(() => {
       listener(event(1, 'run.started'))
       listener(event(2, 'run.progress', { progress: 40 }))
-      listener(event(3, 'content.delta', { delta: '# Scope' }))
+      listener(
+        event(3, 'tool.call.requested', {
+          toolCall: {
+            index: 0,
+            id: 'call-1',
+            name: 'lookup',
+            arguments: '{}'
+          }
+        })
+      )
+      listener(event(4, 'answer.delta', { delta: '# Scope' }))
     })
     await waitFor(() =>
       expect(screen.getByText('running|40|# Scope|')).toBeInTheDocument()
@@ -86,7 +97,7 @@ describe('useAiRunController', () => {
     fireEvent.click(screen.getByRole('button', { name: 'cancel' }))
     await waitFor(() => expect(api.cancel).toHaveBeenCalledWith('run-1'))
     expect(screen.getByText(/^cancelling/)).toBeInTheDocument()
-    act(() => listener(event(4, 'run.cancelled')))
+    act(() => listener(event(5, 'run.cancelled')))
     await waitFor(() =>
       expect(screen.getByText(/^cancelled/)).toBeInTheDocument()
     )
@@ -101,6 +112,7 @@ describe('useAiRunController', () => {
       get: vi.fn(),
       attach: vi.fn(),
       listEvents: vi.fn(),
+      recover: vi.fn(),
       onEvent: vi.fn().mockImplementation((next) => {
         listener = next
         return unsubscribe
@@ -138,11 +150,12 @@ describe('useAiRunController', () => {
         },
         events: [
           event(1, 'run.started', {}, 'run-restored'),
-          event(2, 'content.delta', { delta: '# Existing' }, 'run-restored'),
+          event(2, 'answer.delta', { delta: '# Existing' }, 'run-restored'),
           event(3, 'run.progress', { progress: 60 }, 'run-restored')
         ]
       }),
       listEvents: vi.fn(),
+      recover: vi.fn(),
       onEvent: vi.fn().mockImplementation((next) => {
         listener = next
         return () => undefined
@@ -156,7 +169,12 @@ describe('useAiRunController', () => {
 
     act(() =>
       listener(
-        event(4, 'content.delta', { delta: '\n\nContinued' }, 'run-restored')
+        event(3, 'answer.delta', { delta: '\n\nDuplicate' }, 'run-restored')
+      )
+    )
+    act(() =>
+      listener(
+        event(4, 'answer.delta', { delta: '\n\nContinued' }, 'run-restored')
       )
     )
     await screen.findByText('running|60|# Existing Continued|')

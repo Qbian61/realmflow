@@ -74,13 +74,13 @@ describe('workspaceReducer', () => {
     const spacesMoved = workspaceReducer(initial, {
       type: 'space-moved',
       sourcePath: '/spaces/b',
-      targetPath: '/spaces/a'
+      targetIndex: 0
     })
     const requirementsMoved = workspaceReducer(spacesMoved, {
       type: 'requirement-moved',
       spacePath: '/spaces/a',
       sourceId: 'a-2',
-      targetId: 'a-1'
+      targetIndex: 0
     })
 
     expect(spacesMoved.spaces.map((space) => space.path)).toEqual([
@@ -93,6 +93,25 @@ describe('workspaceReducer', () => {
       )
     ).toEqual(['a-2', 'a-1'])
     expect(requirementsMoved.requirementsBySpace['/spaces/b']).toEqual(
+      navigation.requirementsBySpace['/spaces/b']
+    )
+  })
+
+  it('renames one requirement without moving or replacing sibling requirements', () => {
+    const initial = createWorkspaceState(navigation, sessions)
+
+    const renamed = workspaceReducer(initial, {
+      type: 'requirement-renamed',
+      spacePath: '/spaces/a',
+      requirementId: 'a-1',
+      title: 'Renamed A1'
+    })
+
+    expect(renamed.requirementsBySpace['/spaces/a']).toEqual([
+      { id: 'a-1', title: 'Renamed A1' },
+      navigation.requirementsBySpace['/spaces/a'][1]
+    ])
+    expect(renamed.requirementsBySpace['/spaces/b']).toBe(
       navigation.requirementsBySpace['/spaces/b']
     )
   })

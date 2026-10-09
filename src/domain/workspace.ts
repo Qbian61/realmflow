@@ -33,6 +33,7 @@ export function createDefaultWorkspaceNavigation(): WorkspaceNavigation {
   return {
     spaces: [
       {
+        id: 'xxx',
         path: '/spaces/xxx',
         label: 'xxx 空间',
         description: '查看空间中的需求与产物'

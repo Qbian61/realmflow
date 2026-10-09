@@ -1,0 +1,135 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.realmflow.node.decide_approval",
+  "version": "1.0.2",
+  "name": "Decide approval",
+  "description": "Approve or reject a NodeRun approval gate.",
+  "tags": [
+    "realmflow"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "realmflow.node.decide_approval",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "expectedNodeRunRevision",
+      "gate"
+    ],
+    "properties": {
+      "requirementId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "nodeRunId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "expectedNodeRunRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "gate": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "decisionId",
+              "expectedApprovalRevision",
+              "result"
+            ],
+            "properties": {
+              "kind": {
+                "const": "approval"
+              },
+              "decisionId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "expectedApprovalRevision": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "result": {
+                "type": "string",
+                "enum": [
+                  "approved",
+                  "rejected"
+                ]
+              },
+              "note": {
+                "type": "string",
+                "maxLength": 5000
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "gateId",
+              "passed"
+            ],
+            "properties": {
+              "kind": {
+                "const": "custom"
+              },
+              "gateId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "passed": {
+                "type": "boolean"
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "realmflow.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "critical",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "decide approval"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ],
+    "requiresExplicitSelection": true
+  }
+}

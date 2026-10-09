@@ -1,0 +1,112 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.knowledge.note.save",
+  "version": "1.0.2",
+  "name": "Save knowledge note",
+  "description": "Create or update a knowledge note.",
+  "tags": [
+    "knowledge"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "knowledge.note.save",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "operation"
+    ],
+    "properties": {
+      "operation": {
+        "type": "string",
+        "enum": [
+          "create",
+          "edit"
+        ]
+      },
+      "kind": {
+        "type": "string",
+        "enum": [
+          "conversation_note",
+          "decision",
+          "retrospective"
+        ]
+      },
+      "id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "versionId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "noteId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "sourceMessageIds": {
+        "type": "array",
+        "maxItems": 50,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "uniqueItems": true
+      },
+      "title": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "content": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 20000
+      },
+      "expectedRevision": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "knowledge.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "save knowledge note"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

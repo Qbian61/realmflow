@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.skill.test_acceptance",
+  "version": "1.0.0",
+  "name": "Test acceptance",
+  "description": "Run tests, inspect results, and produce acceptance evidence.",
+  "instructionsPath": "instructions/test_acceptance.md",
+  "runtime": {
+    "kind": "instruction"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "requiredTools": [
+    {
+      "toolId": "builtin.process.run",
+      "versionRange": "^1.0.0",
+      "required": true
+    },
+    {
+      "toolId": "builtin.files.read",
+      "versionRange": "^1.0.0",
+      "required": true
+    },
+    {
+      "toolId": "builtin.computer.observe",
+      "versionRange": "^1.0.0",
+      "required": true
+    }
+  ],
+  "activation": {
+    "intents": [
+      "test acceptance"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  },
+  "limits": {
+    "maxToolCalls": 64,
+    "timeoutMs": 900000
+  }
+}

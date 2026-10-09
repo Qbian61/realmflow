@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.git.list_branches",
+  "version": "1.0.1",
+  "name": "List branches",
+  "description": "Read local and remote branch names.",
+  "tags": [
+    "git"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "git.list_branches",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "scopeRoot": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "repository.read"
+  ],
+  "effects": [
+    "local_data.read"
+  ],
+  "risk": "low",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "list branches"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

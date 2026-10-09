@@ -1,7 +1,6 @@
 export const PERSISTENCE_DATASETS = [
   'workspaceNavigation',
-  'chatSessions',
-  'spaceResources'
+  'chatSessions'
 ] as const
 
 export type PersistenceDataset = (typeof PERSISTENCE_DATASETS)[number]

@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.document.find",
+  "version": "1.1.0",
+  "name": "Find in document",
+  "description": "Find text using stable document block locations.",
+  "tags": [
+    "document"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "document.find",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sessionId": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+      },
+      "expectedRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "query": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 100000
+      },
+      "caseSensitive": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "sessionId",
+      "query"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "filesystem.read"
+  ],
+  "effects": [
+    "local_data.read"
+  ],
+  "risk": "low",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "find in document"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

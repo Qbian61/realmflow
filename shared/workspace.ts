@@ -3,7 +3,14 @@ import type { RequirementStageId } from '../domain/requirement'
 export type { RequirementStageId } from '../domain/requirement'
 
 export type WorkspaceEntryType = 'directory' | 'file'
-export type WorkspaceFileKind = 'code' | 'markdown' | 'html' | 'image' | 'text'
+export type WorkspaceFileKind =
+  | 'code'
+  | 'markdown'
+  | 'html'
+  | 'image'
+  | 'fixed-layout'
+  | 'binary'
+  | 'text'
 
 export type WorkspaceBinding = {
   requirementId: string
@@ -57,6 +64,7 @@ export type WriteWorkspaceFileInput = {
 
 export interface WorkspaceApi {
   chooseFiles: () => Promise<OpenedSessionFiles | null>
+  openSessionFiles: (filePaths: string[]) => Promise<OpenedSessionFiles>
   chooseFolder: () => Promise<WorkspaceBinding | null>
   chooseDirectory: (requirementId: string) => Promise<WorkspaceBinding | null>
   getBinding: (requirementId: string) => Promise<WorkspaceBinding | null>
@@ -65,6 +73,10 @@ export interface WorkspaceApi {
     path?: string
   ) => Promise<WorkspaceEntry[]>
   readFile: (requirementId: string, path: string) => Promise<WorkspaceFile>
+  readPreviewBytes?: (
+    requirementId: string,
+    path: string
+  ) => Promise<Uint8Array>
   writeFile: (input: WriteWorkspaceFileInput) => Promise<WorkspaceFile>
   readManifest: (requirementId: string) => Promise<RequirementManifest>
   writeManifest: (

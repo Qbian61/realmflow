@@ -1,8 +1,13 @@
 import type { IpcMain } from 'electron'
 import type { AiRunEvent } from '../../../../domain/ai-run'
-import { IPC_INVOKE_CHANNELS } from '../../../../shared/ipc-contract'
+import {
+  IPC_COMMAND_CHANNELS,
+  IPC_QUERY_CHANNELS
+} from '../../../../shared/ipc-contract'
+import type { AgentRunRecoveryResult } from '../../../../shared/ai-run'
 import {
   requireCancelAiRunInput,
+  requireAgentRunRecoveryInput,
   requireGetAiRunInput,
   requireListAiRunEventsInput,
   requireStartAiRunInput
@@ -33,6 +38,12 @@ type Dependencies = {
   getRun: Pick<GetAiRunUseCase, 'execute'>
   listEvents: Pick<ListAiRunEventsUseCase, 'execute'>
   publisher: RunEventSubscriber
+  recovery: {
+    execute(input: {
+      runId: string
+      action: 'resume' | 'branch' | 'cancel'
+    }): Promise<AgentRunRecoveryResult>
+  }
   ipcMain: Pick<IpcMain, 'handle'>
 }
 
@@ -43,14 +54,25 @@ export function registerAiRunIpc({
   getRun,
   listEvents,
   publisher,
+  recovery,
   ipcMain
 }: Dependencies): void {
   ipcMain.handle(
-    IPC_INVOKE_CHANNELS.aiRunStart,
+    IPC_COMMAND_CHANNELS.aiRunRecover,
+    async (_event, payload: unknown) => {
+      const input = requireAgentRunRecoveryInput(
+        payload,
+        IPC_COMMAND_CHANNELS.aiRunRecover
+      )
+      return recovery.execute(input)
+    }
+  )
+  ipcMain.handle(
+    IPC_COMMAND_CHANNELS.aiRunStart,
     async (event, payload: unknown) => {
       const input = requireStartAiRunInput(
         payload,
-        IPC_INVOKE_CHANNELS.aiRunStart
+        IPC_COMMAND_CHANNELS.aiRunStart
       )
       const handle =
         input.nodeId !== undefined && input.nodeRunId !== undefined
@@ -75,28 +97,28 @@ export function registerAiRunIpc({
     }
   )
   ipcMain.handle(
-    IPC_INVOKE_CHANNELS.aiRunCancel,
+    IPC_COMMAND_CHANNELS.aiRunCancel,
     async (_event, payload: unknown) => {
       const input = requireCancelAiRunInput(
         payload,
-        IPC_INVOKE_CHANNELS.aiRunCancel
+        IPC_COMMAND_CHANNELS.aiRunCancel
       )
       await cancel.execute(input.runId)
     }
   )
   ipcMain.handle(
-    IPC_INVOKE_CHANNELS.aiRunGet,
+    IPC_QUERY_CHANNELS.aiRunGet,
     async (_event, payload: unknown) => {
-      const input = requireGetAiRunInput(payload, IPC_INVOKE_CHANNELS.aiRunGet)
+      const input = requireGetAiRunInput(payload, IPC_QUERY_CHANNELS.aiRunGet)
       return getRun.execute(input.runId)
     }
   )
   ipcMain.handle(
-    IPC_INVOKE_CHANNELS.aiRunAttach,
+    IPC_COMMAND_CHANNELS.aiRunAttach,
     async (event, payload: unknown) => {
       const input = requireGetAiRunInput(
         payload,
-        IPC_INVOKE_CHANNELS.aiRunAttach
+        IPC_COMMAND_CHANNELS.aiRunAttach
       )
       publisher.subscribe(input.runId, event.sender)
       const [run, events] = await Promise.all([
@@ -107,11 +129,11 @@ export function registerAiRunIpc({
     }
   )
   ipcMain.handle(
-    IPC_INVOKE_CHANNELS.aiRunListEvents,
+    IPC_QUERY_CHANNELS.aiRunListEvents,
     async (_event, payload: unknown) => {
       const input = requireListAiRunEventsInput(
         payload,
-        IPC_INVOKE_CHANNELS.aiRunListEvents
+        IPC_QUERY_CHANNELS.aiRunListEvents
       )
       return listEvents.execute(input.runId)
     }

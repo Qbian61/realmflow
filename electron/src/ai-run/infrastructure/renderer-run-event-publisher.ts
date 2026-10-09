@@ -17,6 +17,10 @@ export class RendererRunEventPublisher implements RunEventPublisher {
   private readonly subscribers = new Map<string, Set<EventTarget>>()
   private readonly pending = new Map<string, AiRunEvent[]>()
 
+  constructor(
+    private readonly onPublish?: (event: AiRunEvent) => void
+  ) {}
+
   subscribe(runId: string, target: EventTarget): void {
     const targets = this.subscribers.get(runId) ?? new Set<EventTarget>()
     targets.add(target)
@@ -36,6 +40,7 @@ export class RendererRunEventPublisher implements RunEventPublisher {
   }
 
   publish(event: AiRunEvent): void {
+    this.onPublish?.(event)
     const targets = this.subscribers.get(event.runId)
     if (!targets || targets.size === 0) {
       const pending = this.pending.get(event.runId) ?? []

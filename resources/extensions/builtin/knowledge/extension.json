@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "packageId": "realmflow.builtin.knowledge",
+  "version": "1.0.2",
+  "name": "Knowledge",
+  "description": "Scoped local knowledge operations.",
+  "publisher": {
+    "name": "RealmFlow",
+    "keyId": "realmflow-builtin-v1"
+  },
+  "compatibility": {
+    "realmflow": ">=0.1.0 <1.0.0",
+    "platforms": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
+  },
+  "tools": [
+    {
+      "path": "tools/builtin-knowledge-search.json"
+    },
+    {
+      "path": "tools/builtin-knowledge-source-read.json"
+    },
+    {
+      "path": "tools/builtin-knowledge-note-save.json"
+    },
+    {
+      "path": "tools/builtin-knowledge-index-refresh.json"
+    }
+  ],
+  "skills": [],
+  "assets": []
+}

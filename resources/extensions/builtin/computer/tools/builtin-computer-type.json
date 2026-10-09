@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.computer.type",
+  "version": "1.0.0",
+  "name": "Type text",
+  "description": "Type text into a non-secure field.",
+  "tags": [
+    "computer"
+  ],
+  "executor": {
+    "kind": "computer",
+    "actionSet": "type",
+    "actionSetVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "bundleId": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]{1,199}$"
+      },
+      "text": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 10000
+      }
+    },
+    "required": [
+      "bundleId",
+      "text"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "computer.control"
+  ],
+  "effects": [
+    "user_interface.change"
+  ],
+  "risk": "high",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "type text"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

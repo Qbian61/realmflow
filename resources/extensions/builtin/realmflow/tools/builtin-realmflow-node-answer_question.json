@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.realmflow.node.answer_question",
+  "version": "1.0.2",
+  "name": "Answer node question",
+  "description": "Answer an open NodeRun question.",
+  "tags": [
+    "realmflow"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "realmflow.node.answer_question",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "id",
+      "status",
+      "expectedRevision"
+    ],
+    "properties": {
+      "id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "nodeRunId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "answered",
+          "dismissed"
+        ]
+      },
+      "answer": {
+        "type": "string",
+        "maxLength": 20000
+      },
+      "expectedRevision": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "realmflow.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "answer node question"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

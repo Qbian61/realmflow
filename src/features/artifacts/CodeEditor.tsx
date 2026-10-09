@@ -5,6 +5,7 @@ import EditorWorker from 'monaco-editor/editor/editor.worker.js?worker'
 import HtmlWorker from 'monaco-editor/language/html/html.worker.js?worker'
 import JsonWorker from 'monaco-editor/language/json/json.worker.js?worker'
 import TypeScriptWorker from 'monaco-editor/language/typescript/ts.worker.js?worker'
+import { useTheme } from '../../theme/ThemeProvider'
 
 type MonacoWorkerEnvironment = typeof globalThis & {
   MonacoEnvironment?: {
@@ -37,12 +38,14 @@ export default function CodeEditor({
   value,
   onChange
 }: CodeEditorProps): JSX.Element {
+  const { resolvedTheme } = useTheme()
+
   return (
     <Editor
       height="100%"
       language={language}
       path={path}
-      theme="vs"
+      theme={resolvedTheme === 'dark' ? 'vs-dark' : 'vs'}
       value={value}
       onChange={(nextValue) => onChange(nextValue ?? '')}
       options={{

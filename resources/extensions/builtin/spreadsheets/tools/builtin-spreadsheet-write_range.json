@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.spreadsheet.write_range",
+  "version": "1.0.0",
+  "name": "Write spreadsheet range",
+  "description": "Write a two-dimensional value matrix in one operation.",
+  "tags": [
+    "spreadsheet"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "spreadsheet.write_range",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sessionId": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+      },
+      "expectedRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "sheet": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 255
+      },
+      "range": {
+        "type": "string",
+        "pattern": "^[A-Za-z]{1,3}[1-9][0-9]*:[A-Za-z]{1,3}[1-9][0-9]*$"
+      },
+      "values": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 10000,
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10000
+        }
+      }
+    },
+    "required": [
+      "sessionId",
+      "expectedRevision",
+      "sheet",
+      "range",
+      "values"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "filesystem.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "write spreadsheet range"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.web.search",
+  "version": "1.0.0",
+  "name": "Search web",
+  "description": "Search the web through an explicitly configured provider and return normalized results.",
+  "tags": [
+    "web"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "web.search",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "query"
+    ],
+    "properties": {
+      "query": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 500
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 20
+      },
+      "language": {
+        "type": "string",
+        "minLength": 2,
+        "maxLength": 16
+      },
+      "locale": {
+        "type": "string",
+        "minLength": 2,
+        "maxLength": 32
+      },
+      "recency": {
+        "type": "string",
+        "enum": [
+          "day",
+          "week",
+          "month",
+          "year",
+          "any"
+        ]
+      },
+      "safeSearch": {
+        "type": "string",
+        "enum": [
+          "strict",
+          "moderate",
+          "off"
+        ]
+      },
+      "provider": {
+        "type": "string",
+        "enum": [
+          "searxng"
+        ]
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "network.connect"
+  ],
+  "effects": [
+    "external.read"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "search web"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

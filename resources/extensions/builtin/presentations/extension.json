@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "packageId": "realmflow.builtin.presentations",
+  "version": "1.0.0",
+  "name": "Presentations",
+  "description": "Revision-safe local PPTX inspection and structured editing.",
+  "publisher": {
+    "name": "RealmFlow",
+    "keyId": "realmflow-builtin-v1"
+  },
+  "compatibility": {
+    "realmflow": ">=0.1.0 <1.0.0",
+    "platforms": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
+  },
+  "tools": [
+    {
+      "path": "tools/builtin-presentation-inspect.json"
+    },
+    {
+      "path": "tools/builtin-presentation-update_text.json"
+    },
+    {
+      "path": "tools/builtin-presentation-replace_image.json"
+    },
+    {
+      "path": "tools/builtin-presentation-table_write.json"
+    },
+    {
+      "path": "tools/builtin-presentation-chart_write.json"
+    },
+    {
+      "path": "tools/builtin-presentation-add_slide.json"
+    },
+    {
+      "path": "tools/builtin-presentation-copy_slide.json"
+    },
+    {
+      "path": "tools/builtin-presentation-delete_slide.json"
+    },
+    {
+      "path": "tools/builtin-presentation-reorder_slide.json"
+    },
+    {
+      "path": "tools/builtin-presentation-add_text.json"
+    },
+    {
+      "path": "tools/builtin-presentation-add_image.json"
+    },
+    {
+      "path": "tools/builtin-presentation-add_table.json"
+    },
+    {
+      "path": "tools/builtin-presentation-add_chart.json"
+    },
+    {
+      "path": "tools/builtin-presentation-reorder_shape.json"
+    },
+    {
+      "path": "tools/builtin-presentation-update_size.json"
+    },
+    {
+      "path": "tools/builtin-presentation-save.json"
+    }
+  ],
+  "skills": [],
+  "assets": []
+}

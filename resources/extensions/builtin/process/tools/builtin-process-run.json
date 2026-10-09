@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.process.run",
+  "version": "1.0.3",
+  "name": "Run process",
+  "description": "Run a bounded foreground process.",
+  "tags": [
+    "process"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "process.run",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "executable"
+    ],
+    "properties": {
+      "executable": {
+        "type": "string",
+        "anyOf": [
+          {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,199}$"
+          },
+          {
+            "pattern": "^/[A-Za-z0-9._+/-]{1,199}$"
+          }
+        ]
+      },
+      "arguments": {
+        "type": "array",
+        "maxItems": 1000,
+        "items": {
+          "type": "string",
+          "maxLength": 65536,
+          "not": {
+            "const": "\u0000"
+          }
+        }
+      },
+      "cwd": {
+        "type": "string"
+      },
+      "timeoutMs": {
+        "type": "integer",
+        "minimum": 1000,
+        "maximum": 3600000
+      },
+      "maxOutputBytes": {
+        "type": "integer",
+        "minimum": 1024,
+        "maximum": 16777216
+      },
+      "scopeRoot": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "process.execute"
+  ],
+  "effects": [
+    "local_process.change"
+  ],
+  "risk": "high",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "run process"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

@@ -1,5 +1,6 @@
-import { IPC_INVOKE_CHANNELS } from '../../../shared/ipc-contract'
+import { IPC_COMMAND_CHANNELS } from '../../../shared/ipc-contract'
 import {
+  requireNoIpcPayload,
   requireString,
   requireWorkbenchBounds
 } from '../ipc/runtime-validation'
@@ -34,29 +35,33 @@ export function registerWebWorkbenchIpc({
   ipcMain
 }: WebWorkbenchIpcDependencies): void {
   ipcMain.handle(
-    IPC_INVOKE_CHANNELS.webWorkbenchCreate,
+    IPC_COMMAND_CHANNELS.webWorkbenchCreate,
     (_event, url: unknown) => {
-      const channel = IPC_INVOKE_CHANNELS.webWorkbenchCreate
+      const channel = IPC_COMMAND_CHANNELS.webWorkbenchCreate
       return manager.create(requireString(url, channel, 'url'))
     }
   )
   ipcMain.handle(
-    IPC_INVOKE_CHANNELS.webWorkbenchShow,
+    IPC_COMMAND_CHANNELS.webWorkbenchShow,
     (_event, id: unknown, bounds: unknown) => {
-      const channel = IPC_INVOKE_CHANNELS.webWorkbenchShow
+      const channel = IPC_COMMAND_CHANNELS.webWorkbenchShow
       return manager.show(
         requireString(id, channel, 'id'),
         requireWorkbenchBounds(bounds, channel)
       )
     }
   )
-  ipcMain.handle(IPC_INVOKE_CHANNELS.webWorkbenchHideAll, () =>
-    manager.hideAll()
+  ipcMain.handle(
+    IPC_COMMAND_CHANNELS.webWorkbenchHideAll,
+    (_event, ...values) => {
+      requireNoIpcPayload(values, IPC_COMMAND_CHANNELS.webWorkbenchHideAll)
+      return manager.hideAll()
+    }
   )
   ipcMain.handle(
-    IPC_INVOKE_CHANNELS.webWorkbenchSetBounds,
+    IPC_COMMAND_CHANNELS.webWorkbenchSetBounds,
     (_event, id: unknown, bounds: unknown) => {
-      const channel = IPC_INVOKE_CHANNELS.webWorkbenchSetBounds
+      const channel = IPC_COMMAND_CHANNELS.webWorkbenchSetBounds
       return manager.setBounds(
         requireString(id, channel, 'id'),
         requireWorkbenchBounds(bounds, channel)
@@ -64,9 +69,9 @@ export function registerWebWorkbenchIpc({
     }
   )
   ipcMain.handle(
-    IPC_INVOKE_CHANNELS.webWorkbenchNavigate,
+    IPC_COMMAND_CHANNELS.webWorkbenchNavigate,
     (_event, id: unknown, url: unknown) => {
-      const channel = IPC_INVOKE_CHANNELS.webWorkbenchNavigate
+      const channel = IPC_COMMAND_CHANNELS.webWorkbenchNavigate
       return manager.navigate(
         requireString(id, channel, 'id'),
         requireString(url, channel, 'url')
@@ -75,31 +80,31 @@ export function registerWebWorkbenchIpc({
   )
   registerStringCommand(
     ipcMain,
-    IPC_INVOKE_CHANNELS.webWorkbenchGoBack,
+    IPC_COMMAND_CHANNELS.webWorkbenchGoBack,
     'id',
     manager.goBack.bind(manager)
   )
   registerStringCommand(
     ipcMain,
-    IPC_INVOKE_CHANNELS.webWorkbenchGoForward,
+    IPC_COMMAND_CHANNELS.webWorkbenchGoForward,
     'id',
     manager.goForward.bind(manager)
   )
   registerStringCommand(
     ipcMain,
-    IPC_INVOKE_CHANNELS.webWorkbenchReload,
+    IPC_COMMAND_CHANNELS.webWorkbenchReload,
     'id',
     manager.reload.bind(manager)
   )
   registerStringCommand(
     ipcMain,
-    IPC_INVOKE_CHANNELS.webWorkbenchDestroy,
+    IPC_COMMAND_CHANNELS.webWorkbenchDestroy,
     'id',
     manager.destroy.bind(manager)
   )
   registerStringCommand(
     ipcMain,
-    IPC_INVOKE_CHANNELS.webWorkbenchOpenExternal,
+    IPC_COMMAND_CHANNELS.webWorkbenchOpenExternal,
     'url',
     manager.openExternal.bind(manager)
   )

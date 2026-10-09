@@ -1,0 +1,95 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.archives.create",
+  "version": "1.1.0",
+  "name": "Create archive",
+  "description": "Create a new local archive from authorized files and directories.",
+  "tags": [
+    "archives"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "archives.create",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "outputPath",
+      "sources",
+      "expectedAbsent"
+    ],
+    "properties": {
+      "outputPath": {
+        "type": "string",
+        "minLength": 1
+      },
+      "expectedAbsent": {
+        "type": "boolean",
+        "const": true
+      },
+      "sources": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "expectedChecksum"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "expectedChecksum": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          }
+        }
+      },
+      "scopeRoot": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "filesystem.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "create archive"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

@@ -1,10 +1,28 @@
 import {
+  AI_RUN_EVENT_TYPES,
   createAiRun,
   transitionAiRun,
   type AiRunStatus
 } from './ai-run'
 
 describe('AiRun', () => {
+  it('defines semantic answer and Tool Loop lifecycle events', () => {
+    expect(AI_RUN_EVENT_TYPES).toEqual(
+      expect.arrayContaining([
+        'answer.delta',
+        'execution.summary.delta',
+        'reference.added',
+        'tool.call.requested',
+        'tool.call.started',
+        'tool.call.progress',
+        'tool.call.completed',
+        'tool.call.failed',
+        'tool.call.permission_required'
+      ])
+    )
+    expect(AI_RUN_EVENT_TYPES).not.toContain('content.delta')
+  })
+
   it.each<[AiRunStatus, AiRunStatus]>([
     ['created', 'running'],
     ['created', 'cancelling'],

@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "packageId": "realmflow.builtin.documents",
+  "version": "1.1.0",
+  "name": "Documents",
+  "description": "Revision-safe local DOCX inspection and editing.",
+  "publisher": {
+    "name": "RealmFlow",
+    "keyId": "realmflow-builtin-v1"
+  },
+  "compatibility": {
+    "realmflow": ">=0.1.0 <1.0.0",
+    "platforms": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
+  },
+  "tools": [
+    {
+      "path": "tools/builtin-document-create.json"
+    },
+    {
+      "path": "tools/builtin-document-export_pdf.json"
+    },
+    {
+      "path": "tools/builtin-artifact-verify.json"
+    },
+    {
+      "path": "tools/builtin-document-inspect.json"
+    },
+    {
+      "path": "tools/builtin-document-find.json"
+    },
+    {
+      "path": "tools/builtin-document-insert_blocks.json"
+    },
+    {
+      "path": "tools/builtin-document-replace_text.json"
+    },
+    {
+      "path": "tools/builtin-document-update_style.json"
+    },
+    {
+      "path": "tools/builtin-document-update_layout.json"
+    },
+    {
+      "path": "tools/builtin-document-table_insert.json"
+    },
+    {
+      "path": "tools/builtin-document-table_write.json"
+    },
+    {
+      "path": "tools/builtin-document-comment_add.json"
+    },
+    {
+      "path": "tools/builtin-document-comment_delete.json"
+    },
+    {
+      "path": "tools/builtin-document-save.json"
+    }
+  ],
+  "skills": [],
+  "assets": []
+}

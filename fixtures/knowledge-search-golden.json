@@ -1,0 +1,241 @@
+{
+  "schemaVersion": 1,
+  "seed": 322032,
+  "documents": [
+    {
+      "id": "requirement-zh-refresh-noop",
+      "kind": "requirement",
+      "language": "zh-CN",
+      "path": "requirements/knowledge-refresh-noop.md",
+      "content": "# 知识源空跑刷新\n\n刷新任务先比较来源游标与内容校验和。当版本、ETag 和 checksum 均未变化时，必须直接记录 unchanged，不启动 embedding，不写入 Qdrant，也不得发起 Connector 正文请求。\n\n验收标记：refresh-noop-zero-connector。",
+      "relevanceMarkers": [
+        "refresh-noop-zero-connector"
+      ]
+    },
+    {
+      "id": "requirement-en-generation-gate",
+      "kind": "requirement",
+      "language": "en",
+      "path": "requirements/generation-gate.md",
+      "content": "# Generation visibility gate\n\nSearch must include only generation IDs marked current in SQLite. Staging, retired, and orphan generations remain invisible even when their Qdrant points still exist.\n\nAcceptance marker: current-generation-only.",
+      "relevanceMarkers": [
+        "current-generation-only"
+      ]
+    },
+    {
+      "id": "requirement-zh-workspace-scope",
+      "kind": "requirement",
+      "language": "zh-CN",
+      "path": "requirements/workspace-scope.md",
+      "content": "# 空间知识隔离\n\n指定空间会话只允许检索所属 workspaceId。只有持久化选择 all_workspaces 的普通会话，Main 才能枚举全部未删除空间并统一竞争 Top 8。\n\n验收标记：workspace-tenant-filter。",
+      "relevanceMarkers": [
+        "workspace-tenant-filter"
+      ]
+    },
+    {
+      "id": "requirement-en-index-commit",
+      "kind": "requirement",
+      "language": "en",
+      "path": "requirements/index-commit.md",
+      "content": "# Atomic index commit\n\nA completed Qdrant upsert does not commit an index. Main verifies point count, IDs, checksums, model revision, and dimensions before switching the SQLite current generation in one transaction.\n\nAcceptance marker: verify-before-current.",
+      "relevanceMarkers": [
+        "verify-before-current"
+      ]
+    },
+    {
+      "id": "code-ts-generation-filter",
+      "kind": "code",
+      "language": "en",
+      "path": "electron/src/qdrant/generation-filter.ts",
+      "content": "export type SearchScope = {\n  workspaceId: string\n  generationIds: readonly string[]\n}\n\nexport function createGenerationFilter(scope: SearchScope) {\n  if (scope.generationIds.length === 0) {\n    throw new Error('Current generations are required')\n  }\n  return {\n    must: [\n      { key: 'workspaceId', match: { value: scope.workspaceId } },\n      { key: 'generationId', match: { any: [...scope.generationIds] } }\n    ]\n  }\n}\n\nexport const relevanceMarker = 'generation-filter-any-current'\n",
+      "relevanceMarkers": [
+        "generation-filter-any-current"
+      ]
+    },
+    {
+      "id": "code-python-embedding",
+      "kind": "code",
+      "language": "en",
+      "path": "python-service/app/services/local_embedding_excerpt.py",
+      "content": "import math\n\nEMBEDDING_DIMENSIONS = 768\n\n\ndef cls_pool_and_normalize(hidden_states):\n    vector = [float(value) for value in hidden_states[0][0]]\n    magnitude = math.sqrt(sum(value * value for value in vector))\n    if magnitude <= 0:\n        raise ValueError('invalid embedding')\n    return [value / magnitude for value in vector]\n\n\nRELEVANCE_MARKER = 'cls-l2-normalized-768'\n",
+      "relevanceMarkers": [
+        "cls-l2-normalized-768"
+      ]
+    },
+    {
+      "id": "code-ts-rrf",
+      "kind": "code",
+      "language": "en",
+      "path": "domain/rrf.ts",
+      "content": "const RRF_K = 60\n\nexport function reciprocalRankFusion(rankings: readonly string[][]) {\n  const scores = new Map<string, number>()\n  for (const ranking of rankings) {\n    ranking.forEach((id, index) => {\n      scores.set(id, (scores.get(id) ?? 0) + 1 / (RRF_K + index + 1))\n    })\n  }\n  return [...scores].sort((left, right) => right[1] - left[1])\n}\n\nexport const relevanceMarker = 'rrf-k-sixty'\n",
+      "relevanceMarkers": [
+        "rrf-k-sixty"
+      ]
+    },
+    {
+      "id": "code-python-structured-chunk",
+      "kind": "code",
+      "language": "en",
+      "path": "python-service/app/services/structured_example.py",
+      "content": "class RefreshPlanner:\n    def changed(self, previous_checksum: str, next_checksum: str) -> bool:\n        return previous_checksum != next_checksum\n\n    def plan_connector_fetch(self, changed: bool) -> int:\n        if not changed:\n            return 0\n        return 1\n\n\ndef generation_is_visible(status: str) -> bool:\n    return status == 'current'\n\n\nSTRUCTURED_RELEVANCE_MARKER = 'symbol-boundary-refresh-planner'\n",
+      "relevanceMarkers": [
+        "symbol-boundary-refresh-planner"
+      ]
+    },
+    {
+      "id": "artifact-zh-recovery-runbook",
+      "kind": "artifact",
+      "language": "zh-CN",
+      "path": "artifacts/qdrant-recovery-runbook.md",
+      "content": "# Qdrant 恢复手册\n\n## 启动检查\n\n先验证本地 Qdrant 健康状态和 collection schema。若 storage 丢失，从 SQLite 权威数据与本地正文重建。\n\n## 代际恢复\n\n旧 current generation 在新 staging generation 完整验证前持续可读。不得因为重建开始而提前删除旧 points。\n\n恢复标记：old-current-remains-readable。",
+      "relevanceMarkers": [
+        "old-current-remains-readable"
+      ]
+    },
+    {
+      "id": "artifact-en-privacy-report",
+      "kind": "artifact",
+      "language": "en",
+      "path": "artifacts/privacy-acceptance.md",
+      "content": "# Offline privacy acceptance\n\nThe embedding model and Qdrant run on loopback interfaces. The benchmark must not download assets, call cloud inference, or emit source text and vectors into result files.\n\nAcceptance marker: offline-no-source-leak.",
+      "relevanceMarkers": [
+        "offline-no-source-leak"
+      ]
+    },
+    {
+      "id": "artifact-zh-quantization-decision",
+      "kind": "artifact",
+      "language": "zh-CN",
+      "path": "artifacts/quantization-decision.md",
+      "content": "# 量化决策记录\n\n只有真实 INT8 或 scalar quantization 基准同时满足 Recall@8 与 MRR@8 质量门槛，且资源收益明确时才允许启用。资产不可运行或证据不完整时保持 Float32 并关闭量化。\n\n决策标记：conservative-float32-no-quantization。",
+      "relevanceMarkers": [
+        "conservative-float32-no-quantization"
+      ]
+    },
+    {
+      "id": "artifact-en-hnsw-report",
+      "kind": "artifact",
+      "language": "en",
+      "path": "artifacts/hnsw-evaluation.md",
+      "content": "# HNSW evaluation\n\nCompare m, ef_construct, and query ef against the exact same seeded corpus and golden queries. Select a non-default configuration only when it preserves quality and improves measured latency or index cost.\n\nDecision marker: measured-hnsw-matrix.",
+      "relevanceMarkers": [
+        "measured-hnsw-matrix"
+      ]
+    }
+  ],
+  "queries": [
+    {
+      "id": "query-zh-refresh-noop",
+      "language": "zh-CN",
+      "text": "知识源没有变化时会不会请求 Connector 正文",
+      "relevantDocumentIds": [
+        "requirement-zh-refresh-noop",
+        "code-python-structured-chunk"
+      ]
+    },
+    {
+      "id": "query-en-generation-gate",
+      "language": "en",
+      "text": "exclude staging and retired generations from search",
+      "relevantDocumentIds": [
+        "requirement-en-generation-gate",
+        "code-ts-generation-filter"
+      ]
+    },
+    {
+      "id": "query-zh-workspace-filter",
+      "language": "zh-CN",
+      "text": "指定空间会话如何防止跨空间知识泄漏",
+      "relevantDocumentIds": [
+        "requirement-zh-workspace-scope"
+      ]
+    },
+    {
+      "id": "query-en-index-commit",
+      "language": "en",
+      "text": "when does a Qdrant upsert become the current index",
+      "relevantDocumentIds": [
+        "requirement-en-index-commit"
+      ]
+    },
+    {
+      "id": "query-en-embedding-pooling",
+      "language": "en",
+      "text": "768 dimensional CLS pooling with L2 normalization",
+      "relevantDocumentIds": [
+        "code-python-embedding"
+      ]
+    },
+    {
+      "id": "query-zh-rrf",
+      "language": "zh-CN",
+      "text": "Dense 和 BM25 如何用 k 等于 60 做倒数排名融合",
+      "relevantDocumentIds": [
+        "code-ts-rrf"
+      ]
+    },
+    {
+      "id": "query-en-symbol-chunking",
+      "language": "en",
+      "text": "keep RefreshPlanner methods on parser symbol boundaries",
+      "relevantDocumentIds": [
+        "code-python-structured-chunk"
+      ]
+    },
+    {
+      "id": "query-zh-recovery",
+      "language": "zh-CN",
+      "text": "重建索引时旧代际何时删除",
+      "relevantDocumentIds": [
+        "artifact-zh-recovery-runbook"
+      ]
+    },
+    {
+      "id": "query-en-privacy",
+      "language": "en",
+      "text": "offline benchmark must not call cloud inference or leak vectors",
+      "relevantDocumentIds": [
+        "artifact-en-privacy-report"
+      ]
+    },
+    {
+      "id": "query-zh-quantization",
+      "language": "zh-CN",
+      "text": "缺少量化实测证据时应该选择什么精度",
+      "relevantDocumentIds": [
+        "artifact-zh-quantization-decision"
+      ]
+    },
+    {
+      "id": "query-en-hnsw",
+      "language": "en",
+      "text": "evaluate m ef_construct and query ef with a fixed corpus",
+      "relevantDocumentIds": [
+        "artifact-en-hnsw-report"
+      ]
+    },
+    {
+      "id": "query-zh-atomic-verify",
+      "language": "zh-CN",
+      "text": "切换 current generation 前需要校验哪些内容",
+      "relevantDocumentIds": [
+        "requirement-en-index-commit",
+        "artifact-zh-recovery-runbook"
+      ]
+    }
+  ],
+  "chunkingCases": [
+    {
+      "id": "chunk-code-refresh-planner",
+      "documentId": "code-python-structured-chunk",
+      "query": "function that avoids connector fetch when checksum is unchanged",
+      "relevanceMarker": "plan_connector_fetch"
+    },
+    {
+      "id": "chunk-artifact-generation-recovery",
+      "documentId": "artifact-zh-recovery-runbook",
+      "query": "新 staging 验证前旧 current 是否保持可读",
+      "relevanceMarker": "旧 current generation 在新 staging generation 完整验证前持续可读"
+    }
+  ]
+}

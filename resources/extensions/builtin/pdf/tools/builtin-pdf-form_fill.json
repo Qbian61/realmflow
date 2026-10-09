@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.pdf.form_fill",
+  "version": "1.0.1",
+  "name": "Fill PDF form",
+  "description": "Fill standard AcroForm fields by name.",
+  "tags": [
+    "pdf"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "pdf.form_fill",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sessionId": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+      },
+      "expectedRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "fields": {
+        "type": "object",
+        "minProperties": 1,
+        "maxProperties": 200,
+        "additionalProperties": {
+          "type": [
+            "string",
+            "boolean"
+          ]
+        }
+      }
+    },
+    "required": [
+      "sessionId",
+      "expectedRevision",
+      "fields"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "filesystem.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "fill pdf form"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

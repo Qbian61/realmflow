@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.document.table_insert",
+  "version": "1.1.0",
+  "name": "Insert document table",
+  "description": "Insert a structured table after a document block.",
+  "tags": [
+    "document"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "document.table_insert",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sessionId": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+      },
+      "expectedRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "afterBlockId": {
+        "type": "string",
+        "pattern": "^(paragraph|table)-[1-9][0-9]*$"
+      },
+      "rows": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 1000,
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "items": {
+            "type": "string",
+            "maxLength": 100000
+          }
+        }
+      }
+    },
+    "required": [
+      "sessionId",
+      "expectedRevision",
+      "afterBlockId",
+      "rows"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "filesystem.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "insert document table"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

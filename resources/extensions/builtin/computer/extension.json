@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "packageId": "realmflow.builtin.computer",
+  "version": "1.0.0",
+  "name": "Computer Use",
+  "description": "Authorized macOS observation and control.",
+  "publisher": {
+    "name": "RealmFlow",
+    "keyId": "realmflow-builtin-v1"
+  },
+  "compatibility": {
+    "realmflow": ">=0.1.0 <1.0.0",
+    "platforms": [
+      "darwin"
+    ]
+  },
+  "tools": [
+    {
+      "path": "tools/builtin-computer-observe.json"
+    },
+    {
+      "path": "tools/builtin-computer-focus.json"
+    },
+    {
+      "path": "tools/builtin-computer-click.json"
+    },
+    {
+      "path": "tools/builtin-computer-type.json"
+    },
+    {
+      "path": "tools/builtin-computer-key.json"
+    },
+    {
+      "path": "tools/builtin-computer-scroll.json"
+    },
+    {
+      "path": "tools/builtin-computer-wait.json"
+    },
+    {
+      "path": "tools/builtin-computer-screenshot.json"
+    }
+  ],
+  "skills": [],
+  "assets": []
+}

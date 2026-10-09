@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.office.inspect_original",
+  "version": "1.2.0",
+  "name": "Inspect original Office file",
+  "description": "Open an Office template or macro-enabled document in a read-only local session.",
+  "tags": [
+    "office"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "office.inspect_original",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "path"
+    ],
+    "properties": {
+      "path": {
+        "type": "string",
+        "minLength": 1
+      },
+      "scopeRoot": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "filesystem.read"
+  ],
+  "effects": [
+    "local_data.read"
+  ],
+  "risk": "low",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "inspect original office file"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

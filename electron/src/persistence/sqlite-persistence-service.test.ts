@@ -58,13 +58,6 @@ describe('SqlitePersistenceService', () => {
         value: { version: 4, sessions: [] }
       }
     })
-    await expect(service.load('spaceResources')).resolves.toEqual({
-      status: 'loaded',
-      snapshot: {
-        revision: 0,
-        value: { version: 1, resourcesBySpace: {} }
-      }
-    })
   })
 
   it('normalizes aggregate saves and returns the latest snapshot on conflict', async () => {
@@ -115,7 +108,7 @@ describe('SqlitePersistenceService', () => {
     expect(onChanged).toHaveBeenCalledTimes(2)
   })
 
-  it('persists chat and resource aggregates against workspace foreign keys', async () => {
+  it('persists chat aggregates against workspace foreign keys', async () => {
     const service = new SqlitePersistenceService(database, vi.fn())
     await service.save('workspaceNavigation', navigation, 0)
 
@@ -145,28 +138,6 @@ describe('SqlitePersistenceService', () => {
         0
       )
     ).resolves.toMatchObject({ status: 'saved' })
-    await expect(
-      service.save(
-        'spaceResources',
-        {
-          version: 1,
-          resourcesBySpace: {
-            '/spaces/one': [
-              {
-                id: 'resource-1',
-                name: 'Source',
-                type: 'repository',
-                locator: 'https://example.com/repo.git',
-                detail: '',
-                updatedAt: 10
-              }
-            ]
-          }
-        },
-        0
-      )
-    ).resolves.toMatchObject({ status: 'saved' })
-
     await expect(service.load('chatSessions')).resolves.toMatchObject({
       snapshot: {
         revision: 1,
@@ -178,16 +149,6 @@ describe('SqlitePersistenceService', () => {
               messages: [{ id: 'message-1' }]
             }
           ]
-        }
-      }
-    })
-    await expect(service.load('spaceResources')).resolves.toMatchObject({
-      snapshot: {
-        revision: 1,
-        value: {
-          resourcesBySpace: {
-            '/spaces/one': [{ id: 'resource-1' }]
-          }
         }
       }
     })

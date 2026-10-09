@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.computer.scroll",
+  "version": "1.0.0",
+  "name": "Scroll",
+  "description": "Scroll an authorized window.",
+  "tags": [
+    "computer"
+  ],
+  "executor": {
+    "kind": "computer",
+    "actionSet": "scroll",
+    "actionSetVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "bundleId": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]{1,199}$"
+      },
+      "deltaY": {
+        "type": "integer",
+        "enum": [
+          -10,
+          -9,
+          -8,
+          -7,
+          -6,
+          -5,
+          -4,
+          -3,
+          -2,
+          -1,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ]
+      }
+    },
+    "required": [
+      "bundleId",
+      "deltaY"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "computer.control"
+  ],
+  "effects": [
+    "user_interface.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "scroll"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

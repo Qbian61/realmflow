@@ -7,13 +7,16 @@ import type {
   RequirementWorkflowRepository
 } from '../ports/business-repositories'
 import type { ManageNodeExecutionUseCase } from './manage-node-execution'
+import { NodeCompletionGateError } from './node-completion-gate-evaluator'
 
 type Dependencies = {
   generate: Pick<GenerateStageArtifactUseCase, 'execute'>
   runs: Pick<RunRepository, 'get'>
   requirements: Pick<RequirementRepository, 'get'>
   workflows: Pick<RequirementWorkflowRepository, 'get'>
-  nodeRuns: Pick<NodeRunRepository, 'get'>
+  nodeRuns: Pick<NodeRunRepository, 'get' | 'getLatestByNode'> & {
+    getLatestByNode: NonNullable<NodeRunRepository['getLatestByNode']>
+  }
   manager: Pick<
     ManageNodeExecutionUseCase,
     'startNode' | 'completeNode' | 'waitForUser' | 'finishNode'
@@ -61,11 +64,13 @@ export class ExecuteWorkflowStageUseCase {
     let run
     try {
       await completion
+      if (!(await this.isCurrentBinding(input.nodeRunId, runId))) return
       run = await this.dependencies.runs.get(runId)
       if (run?.status === 'completed') {
         await this.completeOrWait(input.requirementId, input.nodeRunId)
       }
     } catch (error) {
+      if (!(await this.isCurrentBinding(input.nodeRunId, runId))) return
       await this.dependencies.manager.finishNode({
         requirementId: input.requirementId,
         nodeRunId: input.nodeRunId,
@@ -83,6 +88,19 @@ export class ExecuteWorkflowStageUseCase {
         ...(run.error ? { error: run.error } : {})
       })
     }
+  }
+
+  private async isCurrentBinding(
+    nodeRunId: string,
+    runId: string
+  ): Promise<boolean> {
+    const nodeRun = await this.dependencies.nodeRuns.get(nodeRunId)
+    if (!nodeRun || nodeRun.aiRunId !== runId) return false
+    const latest = await this.dependencies.nodeRuns.getLatestByNode(
+      nodeRun.executionId,
+      nodeRun.nodeId
+    )
+    return latest?.id === nodeRun.id && latest.aiRunId === runId
   }
 
   private async completeOrWait(
@@ -104,16 +122,10 @@ export class ExecuteWorkflowStageUseCase {
         expectedNodeRunRevision: nodeRun.revision,
         expectedWorkflowRevision: workflow.revision,
         expectedRequirementRevision: requirement.revision,
-        executionFinished: true,
-        requiredArtifactsValid: true,
-        approvalPassed: true,
-        customGatePassed: true
+        executionFinished: true
       })
     } catch (error) {
-      if (
-        error instanceof Error &&
-        error.message === 'Node completion gates are not satisfied'
-      ) {
+      if (error instanceof NodeCompletionGateError) {
         await this.dependencies.manager.waitForUser({
           requirementId,
           nodeRunId

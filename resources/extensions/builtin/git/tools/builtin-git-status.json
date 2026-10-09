@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.git.status",
+  "version": "1.0.1",
+  "name": "Git status",
+  "description": "Read repository working tree status.",
+  "tags": [
+    "git"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "git.status",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "scopeRoot": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "repository.read"
+  ],
+  "effects": [
+    "local_data.read"
+  ],
+  "risk": "low",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "git status"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

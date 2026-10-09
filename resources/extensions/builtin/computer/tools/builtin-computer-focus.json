@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.computer.focus",
+  "version": "1.0.0",
+  "name": "Focus application",
+  "description": "Focus an authorized application or window.",
+  "tags": [
+    "computer"
+  ],
+  "executor": {
+    "kind": "computer",
+    "actionSet": "focus",
+    "actionSetVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "bundleId": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]{1,199}$"
+      }
+    },
+    "required": [
+      "bundleId"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "computer.control"
+  ],
+  "effects": [
+    "user_interface.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "focus application"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

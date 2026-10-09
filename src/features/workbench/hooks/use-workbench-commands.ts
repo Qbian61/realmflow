@@ -13,13 +13,17 @@ import {
   type SetStateAction
 } from 'react'
 import type { RealmFlowApi } from '../../../../shared/types'
+import type { CodeSnippet } from '../../../../shared/code-snippet'
 import type { OpenedSessionFiles } from '../../../../shared/workspace'
 import type {
   WorkbenchAction,
   WorkbenchTab
 } from '../../../application/workbench/workbench-reducer'
 import { workspaceTabFromSelection } from '../../../application/workbench/workbench-reducer'
-import type { RequirementStageId } from '../../../domain/requirement'
+import {
+  isRequirementStageId,
+  type RequirementStageId
+} from '../../../domain/requirement'
 import type { WorkbenchLauncherAction } from '../WorkbenchLayout'
 
 export type WorkbenchCommands = {
@@ -28,9 +32,10 @@ export type WorkbenchCommands = {
   openFolder: () => Promise<void>
   openUrl: (url?: string) => Promise<void>
   openTerminal: () => Promise<void>
+  openCodeSnippet: (snippet: CodeSnippet) => void
   openRequirementArtifact: (
     requirementId: string,
-    stage: RequirementStageId,
+    stageOrRelativePath: RequirementStageId | string,
     label: string
   ) => void
   openPanel: () => void
@@ -133,6 +138,18 @@ export function useWorkbenchCommands({
     [api, closeTerminal, dispatch, tabs]
   )
 
+  const openCodeSnippet = useCallback(
+    (snippet: CodeSnippet): void => {
+      activateTab({
+        id: `code:${snippetId(snippet)}`,
+        type: 'code',
+        label: snippet.suggestedName,
+        snippet
+      })
+    },
+    [activateTab]
+  )
+
   const openLinkedWebContent = useCallback(
     (event: MouseEvent<HTMLDivElement>): void => {
       if (
@@ -166,13 +183,16 @@ export function useWorkbenchCommands({
       openFolder,
       openUrl,
       openTerminal,
-      openRequirementArtifact: (requirementId, stage, label) => {
+      openCodeSnippet,
+      openRequirementArtifact: (requirementId, stageOrRelativePath, label) => {
         activateTab({
           id: `requirement:${requirementId}`,
           type: 'workspace',
           label,
           workspaceId: requirementId,
-          activeStage: stage
+          ...(isRequirementStageId(stageOrRelativePath)
+            ? { activeStage: stageOrRelativePath }
+            : { initialPath: stageOrRelativePath })
         })
       },
       openPanel: () => setPanelOpen(true),
@@ -187,6 +207,7 @@ export function useWorkbenchCommands({
       openFiles,
       openFolder,
       openTerminal,
+      openCodeSnippet,
       openUrl,
       openWorkspaceSelection,
       setPanelOpen
@@ -239,4 +260,14 @@ export function useWorkbenchCommands({
     closeTab,
     openLinkedWebContent
   }
+}
+
+function snippetId(snippet: CodeSnippet): string {
+  const value = `${snippet.language}\u0000${snippet.content}`
+  let hash = 2166136261
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return (hash >>> 0).toString(36)
 }

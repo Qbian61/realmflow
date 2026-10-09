@@ -17,11 +17,23 @@ describe('application icon', () => {
       resolveAppIconPath({
         isPackaged: true,
         resourcesPath: '/Applications/RealmFlow.app/Contents/Resources',
-        cwd: '/workspace/realmflow'
+        cwd: '/workspace/realmflow',
+        exists: () => true
       })
     ).toBe(
       join('/Applications/RealmFlow.app/Contents/Resources', 'logo.png')
     )
+  })
+
+  it('falls back to the development icon when packaged resources are absent', () => {
+    expect(
+      resolveAppIconPath({
+        isPackaged: true,
+        resourcesPath: '/Applications/Electron.app/Contents/Resources',
+        cwd: '/workspace/realmflow',
+        exists: (path) => path === '/workspace/realmflow/logo.png'
+      })
+    ).toBe(join('/workspace/realmflow', 'logo.png'))
   })
 
   it('configures logo.png as the packaged macOS icon and resource', () => {

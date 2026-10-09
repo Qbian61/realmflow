@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.spreadsheet.filter",
+  "version": "1.0.0",
+  "name": "Filter spreadsheet rows",
+  "description": "Evaluate and persist a bounded spreadsheet filter.",
+  "tags": [
+    "spreadsheet"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "spreadsheet.filter",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sessionId": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+      },
+      "expectedRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "sheet": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 255
+      },
+      "range": {
+        "type": "string",
+        "pattern": "^[A-Za-z]{1,3}[1-9][0-9]*:[A-Za-z]{1,3}[1-9][0-9]*$"
+      },
+      "column": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "operator": {
+        "type": "string",
+        "enum": [
+          "equals",
+          "not_equals",
+          "contains"
+        ]
+      },
+      "value": {
+        "type": [
+          "string",
+          "number",
+          "boolean"
+        ]
+      }
+    },
+    "required": [
+      "sessionId",
+      "expectedRevision",
+      "sheet",
+      "range",
+      "column",
+      "operator",
+      "value"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "filesystem.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "low",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "filter spreadsheet rows"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

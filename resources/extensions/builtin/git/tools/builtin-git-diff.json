@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.git.diff",
+  "version": "1.0.1",
+  "name": "Git diff",
+  "description": "Read staged or unstaged differences.",
+  "tags": [
+    "git"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "git.diff",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "scopeRoot": {
+        "type": "string",
+        "minLength": 1
+      },
+      "staged": {
+        "type": "boolean"
+      },
+      "path": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "repository.read"
+  ],
+  "effects": [
+    "local_data.read"
+  ],
+  "risk": "low",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "git diff"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

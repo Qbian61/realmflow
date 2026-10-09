@@ -16,20 +16,27 @@ export type WorkspaceAction =
   | { type: 'space-created'; space: WorkspaceSpace }
   | { type: 'space-renamed'; spacePath: string; label: string }
   | { type: 'space-deleted'; spacePath: string }
-  | { type: 'space-moved'; sourcePath: string; targetPath: string }
+  | { type: 'space-moved'; sourcePath: string; targetIndex: number }
   | {
       type: 'requirement-created'
       spacePath: string
       requirement: WorkspaceRequirement
+    }
+  | {
+      type: 'requirement-renamed'
+      spacePath: string
+      requirementId: string
+      title: string
     }
   | { type: 'requirement-deleted'; spacePath: string; requirementId: string }
   | {
       type: 'requirement-moved'
       spacePath: string
       sourceId: string
-      targetId: string
+      targetIndex: number
     }
   | { type: 'session-created'; session: ChatSession }
+  | { type: 'session-synced'; session: ChatSession }
   | {
       type: 'session-message-appended'
       sessionId: string
@@ -80,7 +87,7 @@ export function workspaceReducer(
         spaces: moveById(
           state.spaces,
           action.sourcePath,
-          action.targetPath,
+          action.targetIndex,
           (space) => space.path
         )
       }
@@ -93,6 +100,20 @@ export function workspaceReducer(
             action.requirement,
             ...(state.requirementsBySpace[action.spacePath] ?? [])
           ]
+        }
+      }
+    case 'requirement-renamed':
+      return {
+        ...state,
+        requirementsBySpace: {
+          ...state.requirementsBySpace,
+          [action.spacePath]: (
+            state.requirementsBySpace[action.spacePath] ?? []
+          ).map((requirement) =>
+            requirement.id === action.requirementId
+              ? { ...requirement, title: action.title }
+              : requirement
+          )
         }
       }
     case 'requirement-deleted':
@@ -115,13 +136,21 @@ export function workspaceReducer(
           [action.spacePath]: moveById(
             state.requirementsBySpace[action.spacePath] ?? [],
             action.sourceId,
-            action.targetId,
+            action.targetIndex,
             (requirement) => requirement.id
           )
         }
       }
     case 'session-created':
       return { ...state, sessions: [action.session, ...state.sessions] }
+    case 'session-synced':
+      return {
+        ...state,
+        sessions: [
+          action.session,
+          ...state.sessions.filter((session) => session.id !== action.session.id)
+        ]
+      }
     case 'session-message-appended': {
       const session = state.sessions.find(
         (item) => item.id === action.sessionId
@@ -150,20 +179,19 @@ export function workspaceReducer(
 function moveById<T>(
   items: T[],
   sourceId: string,
-  targetId: string,
+  targetIndex: number,
   getId: (item: T) => string
 ): T[] {
   const sourceIndex = items.findIndex((item) => getId(item) === sourceId)
-  const targetIndex = items.findIndex((item) => getId(item) === targetId)
+  const boundedTarget = Math.max(0, Math.min(targetIndex, items.length - 1))
   if (
     sourceIndex < 0 ||
-    targetIndex < 0 ||
-    sourceIndex === targetIndex
+    sourceIndex === boundedTarget
   ) {
     return items
   }
   const next = [...items]
   const [moved] = next.splice(sourceIndex, 1)
-  next.splice(targetIndex, 0, moved)
+  next.splice(boundedTarget, 0, moved)
   return next
 }

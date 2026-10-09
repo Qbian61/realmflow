@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.skill.technical_design",
+  "version": "1.0.0",
+  "name": "Technical design",
+  "description": "Design architecture, protocols, data models, migration, and priorities.",
+  "instructionsPath": "instructions/technical_design.md",
+  "runtime": {
+    "kind": "instruction"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "requiredTools": [
+    {
+      "toolId": "builtin.files.read",
+      "versionRange": "^1.0.0",
+      "required": true
+    },
+    {
+      "toolId": "builtin.files.search",
+      "versionRange": "^1.0.0",
+      "required": true
+    },
+    {
+      "toolId": "builtin.git.status",
+      "versionRange": "^1.0.0",
+      "required": true
+    },
+    {
+      "toolId": "builtin.knowledge.search",
+      "versionRange": "^1.0.0",
+      "required": true
+    }
+  ],
+  "activation": {
+    "intents": [
+      "technical design"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  },
+  "limits": {
+    "maxToolCalls": 64,
+    "timeoutMs": 900000
+  }
+}

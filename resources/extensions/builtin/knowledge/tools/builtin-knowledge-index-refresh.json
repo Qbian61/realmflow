@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.knowledge.index.refresh",
+  "version": "1.0.2",
+  "name": "Refresh knowledge index",
+  "description": "Refresh or rebuild a knowledge source index.",
+  "tags": [
+    "knowledge"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "knowledge.index.refresh",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "sourceId",
+      "idempotencyKey"
+    ],
+    "properties": {
+      "sourceId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "idempotencyKey": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "knowledge.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "refresh knowledge index"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "packageId": "realmflow.builtin.domain",
+  "version": "1.0.2",
+  "name": "RealmFlow",
+  "description": "RealmFlow domain queries and commands.",
+  "publisher": {
+    "name": "RealmFlow",
+    "keyId": "realmflow-builtin-v1"
+  },
+  "compatibility": {
+    "realmflow": ">=0.1.0 <1.0.0",
+    "platforms": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
+  },
+  "tools": [
+    {
+      "path": "tools/builtin-realmflow-spaces-list.json"
+    },
+    {
+      "path": "tools/builtin-realmflow-requirements-list.json"
+    },
+    {
+      "path": "tools/builtin-realmflow-requirements-get.json"
+    },
+    {
+      "path": "tools/builtin-realmflow-workflow-get_execution.json"
+    },
+    {
+      "path": "tools/builtin-realmflow-node-answer_question.json"
+    },
+    {
+      "path": "tools/builtin-realmflow-node-decide_approval.json"
+    },
+    {
+      "path": "tools/builtin-realmflow-node-todo-manage.json"
+    },
+    {
+      "path": "tools/builtin-realmflow-artifacts-list.json"
+    },
+    {
+      "path": "tools/builtin-realmflow-artifacts-read.json"
+    },
+    {
+      "path": "tools/builtin-attachment-read_chunk.json"
+    }
+  ],
+  "skills": [],
+  "assets": []
+}

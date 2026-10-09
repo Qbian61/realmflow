@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.image.save",
+  "version": "1.0.0",
+  "name": "Save image",
+  "description": "Atomically commit the current image revision.",
+  "tags": [
+    "image"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "image.save",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sessionId": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+      },
+      "expectedRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "path": {
+        "type": "string",
+        "minLength": 1
+      },
+      "scopeRoot": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "required": [
+      "sessionId",
+      "expectedRevision"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "filesystem.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "save image"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.document.comment_delete",
+  "version": "1.1.0",
+  "name": "Delete document comment",
+  "description": "Delete a Word comment by its stable ID.",
+  "tags": [
+    "document"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "document.comment_delete",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sessionId": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+      },
+      "expectedRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "commentId": {
+        "type": "string",
+        "pattern": "^[0-9]+$"
+      }
+    },
+    "required": [
+      "sessionId",
+      "expectedRevision",
+      "commentId"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "filesystem.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "delete document comment"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

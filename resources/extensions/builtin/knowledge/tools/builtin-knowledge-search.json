@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.knowledge.search",
+  "version": "1.0.2",
+  "name": "Search knowledge",
+  "description": "Search within the persisted knowledge scope.",
+  "tags": [
+    "knowledge"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "knowledge.search",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "query": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000
+      },
+      "topK": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 20
+      },
+      "sourceKinds": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "file",
+            "document",
+            "repository",
+            "artifact",
+            "requirement_memory",
+            "conversation_note",
+            "decision",
+            "retrospective"
+          ]
+        },
+        "uniqueItems": true
+      }
+    },
+    "required": [
+      "query"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "knowledge.read"
+  ],
+  "effects": [
+    "local_data.read"
+  ],
+  "risk": "low",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "search knowledge"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

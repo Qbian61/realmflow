@@ -44,6 +44,7 @@ export class WorkspaceStageContextRepository
       requirementId,
       requirementTitle: requirement.title,
       stageId,
+      workspaceId: requirement.workspaceId,
       workspaceName: binding.rootName,
       existingArtifacts
     }
@@ -60,12 +61,23 @@ export class WorkspaceStageContextRepository
       input.requirementId,
       input.executor.legacyStageId ?? 'analysis'
     )
+    const requestedReasoning = input.executor.reasoning ?? 'inherit'
+    const effectiveReasoning =
+      requestedReasoning === 'inherit' ? undefined : requestedReasoning
     return {
       requirementId: base.requirementId,
       requirementTitle: base.requirementTitle,
       nodeId: input.nodeId,
+      workspaceId: base.workspaceId,
       workspaceName: base.workspaceName,
       prompt: input.executor.prompt,
+      ...(effectiveReasoning
+        ? {
+            reasoning: effectiveReasoning,
+            effectiveReasoning
+          }
+        : {}),
+      requestedReasoning,
       artifactPath: input.executor.artifact.relativePath,
       existingArtifacts: input.executor.legacyStageId
         ? base.existingArtifacts
@@ -77,10 +89,12 @@ export class WorkspaceStageContextRepository
 function findRequirement(
   value: unknown,
   requirementId: string
-): { title: string } | undefined {
+): { title: string; workspaceId: string } | undefined {
   if (!isRecord(value) || value.version !== 1) return undefined
   if (!isRecord(value.requirementsBySpace)) return undefined
-  for (const requirements of Object.values(value.requirementsBySpace)) {
+  for (const [workspaceId, requirements] of Object.entries(
+    value.requirementsBySpace
+  )) {
     if (!Array.isArray(requirements)) continue
     const requirement = requirements.find(
       (candidate) =>
@@ -89,7 +103,7 @@ function findRequirement(
         typeof candidate.title === 'string'
     )
     if (isRecord(requirement) && typeof requirement.title === 'string') {
-      return { title: requirement.title }
+      return { title: requirement.title, workspaceId }
     }
   }
   return undefined

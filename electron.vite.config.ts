@@ -7,7 +7,16 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: resolve(__dirname, 'electron/src/main.ts'),
-        external: ['better-sqlite3', 'node-pty']
+        external: [
+          'better-sqlite3',
+          'mammoth',
+          'node-pty',
+          'sharp',
+          'tesseract.js',
+          /^@napi-rs\/canvas(?:\/.*)?$/,
+          /^@tesseract\.js-data(?:\/.*)?$/,
+          /^pdfjs-dist(?:\/.*)?$/
+        ]
       }
     }
   },

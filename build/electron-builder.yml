@@ -13,14 +13,38 @@ extraResources:
     filter:
       - "**/*"
       - "!tests/**/*"
+      - "!.venv/**/*"
+      - "!.pytest_cache/**/*"
+      - "!**/__pycache__/**/*"
+      - "!**/*.pyc"
   - from: resources/sidecar
     to: sidecar
     filter:
       - "**/*"
+  - from: resources/extensions/builtin
+    to: builtin-extensions
+    filter:
+      - "**/*"
+  - from: resources/qdrant/${platform}-${arch}
+    to: qdrant
+    filter:
+      - qdrant
+      - qdrant.exe
+  - from: resources/qdrant/LICENSE.qdrant
+    to: qdrant/LICENSE
+  - from: THIRD_PARTY_NOTICES.md
+    to: THIRD_PARTY_NOTICES.md
 asar: true
 asarUnpack:
   - node_modules/better-sqlite3/**/*
   - node_modules/node-pty/**/*
+  - node_modules/@napi-rs/canvas/**/*
+  - node_modules/@napi-rs/canvas-*/**/*
+  - node_modules/sharp/**/*
+  - node_modules/@img/**/*
+  - node_modules/tesseract.js/**/*
+  - node_modules/tesseract.js-core/**/*
+  - node_modules/@tesseract.js-data/**/*
 mac:
   icon: logo.png
   target:

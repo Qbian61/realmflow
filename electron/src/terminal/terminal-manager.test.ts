@@ -2,6 +2,40 @@ import { vi } from 'vitest'
 import { TerminalManager } from './terminal-manager'
 
 describe('TerminalManager', () => {
+  it('starts a shell in the current user home directory', async () => {
+    const process = terminalProcess()
+    const spawn = vi.fn().mockReturnValue(process)
+    const manager = new TerminalManager({
+      workspace: {
+        resolveTerminalBinding: vi.fn()
+      },
+      spawn,
+      shell: '/bin/zsh',
+      env: { PATH: '/usr/bin' },
+      homeDirectory: () => '/Users/tester'
+    })
+
+    const session = await manager.createHome(
+      { id: 7, send: vi.fn() },
+      { cols: 80, rows: 24 }
+    )
+
+    expect(spawn).toHaveBeenCalledWith(
+      '/bin/zsh',
+      [],
+      expect.objectContaining({
+        cols: 80,
+        rows: 24,
+        cwd: '/Users/tester'
+      })
+    )
+    expect(session).toMatchObject({
+      title: 'tester',
+      cwd: '/Users/tester',
+      shell: 'zsh'
+    })
+  })
+
   it('starts a shell in an authorized folder and forwards terminal traffic', async () => {
     let emitData: ((data: string) => void) | undefined
     let emitExit: ((event: { exitCode: number }) => void) | undefined
@@ -105,4 +139,68 @@ describe('TerminalManager', () => {
     manager.disposeOwner(7)
     expect(process.kill).toHaveBeenCalledTimes(1)
   })
+
+  it('rejects an untrusted absolute path before spawning a shell', async () => {
+    const workspace = {
+      resolveTerminalBinding: vi
+        .fn()
+        .mockRejectedValue(new Error('Workspace binding not found'))
+    }
+    const spawn = vi.fn()
+    const manager = new TerminalManager({
+      workspace,
+      spawn,
+      shell: '/bin/zsh',
+      env: {}
+    })
+
+    await expect(
+      manager.create(
+        { id: 7, send: vi.fn() },
+        '/tmp/untrusted-project',
+        { cols: 80, rows: 24 }
+      )
+    ).rejects.toThrow('Workspace binding not found')
+    expect(workspace.resolveTerminalBinding).toHaveBeenCalledWith(
+      '/tmp/untrusted-project'
+    )
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('destroys every running PTY when the manager is disposed', async () => {
+    const processes = [terminalProcess(), terminalProcess()]
+    const manager = new TerminalManager({
+      workspace: {
+        resolveTerminalBinding: vi.fn().mockResolvedValue({
+          requirementId: 'session-folder',
+          rootName: 'project',
+          rootPath: '/tmp/project'
+        })
+      },
+      spawn: vi
+        .fn()
+        .mockReturnValueOnce(processes[0])
+        .mockReturnValueOnce(processes[1]),
+      shell: '/bin/zsh',
+      env: {}
+    })
+    const sender = { id: 7, send: vi.fn() }
+    await manager.create(sender, 'session-folder', { cols: 80, rows: 24 })
+    await manager.create(sender, 'session-folder', { cols: 80, rows: 24 })
+
+    manager.dispose()
+
+    expect(processes[0].kill).toHaveBeenCalledOnce()
+    expect(processes[1].kill).toHaveBeenCalledOnce()
+  })
 })
+
+function terminalProcess() {
+  return {
+    write: vi.fn(),
+    resize: vi.fn(),
+    kill: vi.fn(),
+    onData: vi.fn(() => ({ dispose: vi.fn() })),
+    onExit: vi.fn(() => ({ dispose: vi.fn() }))
+  }
+}

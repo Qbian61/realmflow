@@ -1,18 +1,19 @@
 import {
   ArrowLeft,
   ArrowRight,
+  Code2,
   ExternalLink,
+  Folder,
   Globe2,
-  LoaderCircle,
   Maximize2,
   Minimize2,
   PanelRightClose,
   PanelRightOpen,
   Plus,
   RefreshCw,
-  X,
-  type LucideIcon
-} from 'lucide-react'
+  Terminal,
+  type LucideIcon,
+} from "lucide-react";
 import {
   lazy,
   Suspense,
@@ -21,60 +22,83 @@ import {
   type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
-  type RefObject
-} from 'react'
-import type { TerminalApi } from '../../../shared/terminal'
+  type RefObject,
+} from "react";
+import type { TerminalApi } from "../../../shared/terminal";
+import type { CodeSnippetApi } from "../../../shared/code-snippet";
 import type {
+  CodeSnippetTab,
   TerminalTab,
   WebTab,
   WorkbenchTab,
-  WorkspaceTab
-} from '../../application/workbench/workbench-reducer'
-import ArtifactWorkbench from '../artifacts/ArtifactWorkbench'
+  WorkspaceTab,
+} from "../../application/workbench/workbench-reducer";
+import {
+  Button,
+  Dialog,
+  DialogBody,
+  DialogFooter,
+  DialogHeader,
+  DocumentTabs,
+  Field,
+  IconButton,
+  Toolbar,
+} from "../../components/ui";
+import ArtifactWorkbench from "../artifacts/ArtifactWorkbench";
+import { useLocalization } from "../../localization/LocalizationProvider";
 
-const TerminalPane = lazy(() => import('./TerminalPane'))
+const TerminalPane = lazy(() => import("./TerminalPane"));
+const CodeSnippetPane = lazy(() => import("./CodeSnippetPane"));
 
 export type WorkbenchLauncherAction = {
-  id: string
-  label: string
-  description: string
-  icon: LucideIcon
-  run: () => void | Promise<void>
+  id: string;
+  label: string;
+  description: string;
+  icon: LucideIcon;
+  run: () => void | Promise<void>;
+};
+
+function workbenchTabIcon(type: WorkbenchTab["type"]): JSX.Element {
+  if (type === "workspace") return <Folder size={14} />;
+  if (type === "web") return <Globe2 size={14} />;
+  if (type === "terminal") return <Terminal size={14} />;
+  return <Code2 size={14} />;
 }
 
 type WorkbenchLayoutProps = {
-  children: ReactNode
-  layoutRef: RefObject<HTMLDivElement>
-  panelRef: RefObject<HTMLElement>
-  addButtonRef: RefObject<HTMLButtonElement>
-  panelOpen: boolean
-  panelMaximized: boolean
-  panelWidth: number
-  tabs: WorkbenchTab[]
-  activeTab?: WorkbenchTab
-  activeTabId?: string
-  urlDialogOpen: boolean
-  urlDraft: string
-  urlError: string
-  terminalApi?: TerminalApi
-  launcherActions: WorkbenchLauncherAction[]
-  onPageClick: (event: MouseEvent<HTMLDivElement>) => void
-  onTogglePanel: () => void
-  onResizeStart: (event: MouseEvent<HTMLDivElement>) => void
-  onResizeKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void
-  onSelectTab: (tabId: string) => void
-  onCloseTab: (tabId: string) => void
-  onToggleAddMenu: () => void
-  onToggleMaximized: () => void
-  onNavigateWeb: (tab: WebTab, url: string) => void
-  onGoBack: (tabId: string) => void
-  onGoForward: (tabId: string) => void
-  onReload: (tabId: string) => void
-  onOpenExternal: (url: string) => void
-  onUrlDraftChange: (value: string) => void
-  onCloseUrlDialog: () => void
-  onSubmitUrl: () => void
-}
+  children: ReactNode;
+  layoutRef: RefObject<HTMLDivElement>;
+  panelRef: RefObject<HTMLElement>;
+  addButtonRef: RefObject<HTMLButtonElement>;
+  panelOpen: boolean;
+  panelMaximized: boolean;
+  panelWidth: number;
+  tabs: WorkbenchTab[];
+  activeTab?: WorkbenchTab;
+  activeTabId?: string;
+  urlDialogOpen: boolean;
+  urlDraft: string;
+  urlError: string;
+  terminalApi?: TerminalApi;
+  codeSnippetApi?: CodeSnippetApi;
+  launcherActions: WorkbenchLauncherAction[];
+  onPageClick: (event: MouseEvent<HTMLDivElement>) => void;
+  onTogglePanel: () => void;
+  onResizeStart: (event: MouseEvent<HTMLDivElement>) => void;
+  onResizeKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void;
+  onSelectTab: (tabId: string) => void;
+  onCloseTab: (tabId: string) => void;
+  onToggleAddMenu: () => void;
+  onToggleMaximized: () => void;
+  onNavigateWeb: (tab: WebTab, url: string) => void;
+  onGoBack: (tabId: string) => void;
+  onGoForward: (tabId: string) => void;
+  onReload: (tabId: string) => void;
+  onOpenExternal: (url: string) => void;
+  onUrlDraftChange: (value: string) => void;
+  onCloseUrlDialog: () => void;
+  onSubmitUrl: () => void;
+};
 
 export function WorkbenchLayout({
   children,
@@ -91,6 +115,7 @@ export function WorkbenchLayout({
   urlDraft,
   urlError,
   terminalApi,
+  codeSnippetApi,
   launcherActions,
   onPageClick,
   onTogglePanel,
@@ -107,28 +132,38 @@ export function WorkbenchLayout({
   onOpenExternal,
   onUrlDraftChange,
   onCloseUrlDialog,
-  onSubmitUrl
+  onSubmitUrl,
 }: WorkbenchLayoutProps): JSX.Element {
+  const { t } = useLocalization();
+
   return (
     <>
       <div
         ref={layoutRef}
         className={[
-          'global-workbench-layout',
-          panelOpen ? 'open' : '',
-          panelMaximized ? 'maximized' : ''
+          "global-workbench-layout",
+          panelOpen ? "open" : "",
+          panelMaximized ? "maximized" : "",
         ]
           .filter(Boolean)
-          .join(' ')}
-        style={{ '--global-workbench-width': `${panelWidth}px` } as CSSProperties}
+          .join(" ")}
+        style={
+          { "--global-workbench-width": `${panelWidth}px` } as CSSProperties
+        }
       >
         <div className="global-workbench-page" onClickCapture={onPageClick}>
           {children}
-          <div className="global-workbench-tools" aria-label="工作区工具">
-            <button
-              type="button"
-              aria-label={panelOpen ? '收起工作区' : '打开工作区'}
-              title={panelOpen ? '收起工作区' : '打开工作区'}
+          <Toolbar
+            className="global-workbench-tools"
+            aria-label={t("workbench.tools")}
+          >
+            <IconButton
+              size="default"
+              variant="ghost"
+              aria-label={t(
+                panelOpen ? "workbench.collapse" : "workbench.open",
+              )}
+              title={t(panelOpen ? "workbench.collapse" : "workbench.open")}
               onClick={onTogglePanel}
             >
               {panelOpen ? (
@@ -136,94 +171,91 @@ export function WorkbenchLayout({
               ) : (
                 <PanelRightOpen size={18} strokeWidth={1.8} />
               )}
-            </button>
-          </div>
+            </IconButton>
+          </Toolbar>
         </div>
 
         <div
           className="global-workbench-resizer"
           hidden={!panelOpen}
           role="separator"
-          aria-label="调整全局工作区宽度"
+          aria-label={t("workbench.resize")}
           tabIndex={0}
           onMouseDown={onResizeStart}
           onKeyDown={onResizeKeyDown}
         />
         <aside
           className={
-            tabs.length > 0
-              ? 'global-workbench'
-              : 'global-workbench empty'
+            tabs.length > 0 ? "global-workbench" : "global-workbench empty"
           }
           hidden={!panelOpen}
-          aria-label="全局工作区"
+          aria-label={t("workbench.aria")}
           ref={panelRef}
         >
           <header className="global-workbench-header">
-            <div className="global-workbench-tabbar">
-              <div className="global-workbench-tabs" role="tablist">
-                {tabs.map((tab) => (
-                  <div
-                    className={tab.id === activeTabId ? 'active' : ''}
-                    key={tab.id}
-                  >
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={tab.id === activeTabId}
-                      onClick={() => onSelectTab(tab.id)}
-                    >
-                      {tab.type === 'web' && tab.page.loading ? (
-                        <LoaderCircle className="spinning" size={13} />
-                      ) : null}
-                      <span>{tab.label}</span>
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={`关闭 ${tab.label}`}
-                      onClick={() => onCloseTab(tab.id)}
-                    >
-                      <X size={12} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-              <div className="global-workbench-add">
-                <button
-                  ref={addButtonRef}
-                  type="button"
-                  aria-label="添加工作区内容"
-                  title="添加工作区内容"
-                  onClick={onToggleAddMenu}
+            <DocumentTabs
+              aria-label={t("workbench.aria")}
+              className="global-workbench-tabbar"
+              value={activeTabId ?? ""}
+              items={tabs.map((tab) => ({
+                value: tab.id,
+                label: tab.label,
+                leading: workbenchTabIcon(tab.type),
+                loading: tab.type === "web" && tab.page.loading,
+                closable: true,
+              }))}
+              onValueChange={onSelectTab}
+              onClose={onCloseTab}
+              getCloseLabel={(item) =>
+                t("workbench.closeTab", { name: item.label })
+              }
+              toolbar={
+                <Toolbar
+                  className="global-workbench-header-actions"
+                  aria-label={t("workbench.tools")}
                 >
-                  <Plus size={18} />
-                </button>
-              </div>
-            </div>
-            <div className="global-workbench-header-actions">
-              <button
-                type="button"
-                aria-label={
-                  panelMaximized ? '还原工作区' : '最大化工作区'
-                }
-                title={panelMaximized ? '还原工作区' : '最大化工作区'}
-                onClick={onToggleMaximized}
-              >
-                {panelMaximized ? (
-                  <Minimize2 size={17} />
-                ) : (
-                  <Maximize2 size={17} />
-                )}
-              </button>
-            </div>
+                  <IconButton
+                    size="default"
+                    variant="ghost"
+                    title={t("workbench.add")}
+                    aria-label={t("workbench.add")}
+                    ref={addButtonRef}
+                    onClick={onToggleAddMenu}
+                  >
+                    <Plus size={18} />
+                  </IconButton>
+                  <IconButton
+                    size="default"
+                    variant="ghost"
+                    aria-label={t(
+                      panelMaximized
+                        ? "workbench.restore"
+                        : "workbench.maximize",
+                    )}
+                    title={t(
+                      panelMaximized
+                        ? "workbench.restore"
+                        : "workbench.maximize",
+                    )}
+                    onClick={onToggleMaximized}
+                  >
+                    {panelMaximized ? (
+                      <Minimize2 size={17} />
+                    ) : (
+                      <Maximize2 size={17} />
+                    )}
+                  </IconButton>
+                </Toolbar>
+              }
+            />
           </header>
 
           {tabs.length === 0 ? (
             <div className="global-workbench-empty">
-              <p>从这里开始</p>
+              <p>{t("workbench.startHere")}</p>
               <div>
                 {launcherActions.map((action) => {
-                  const Icon = action.icon
+                  const Icon = action.icon;
                   return (
                     <button
                       type="button"
@@ -235,14 +267,14 @@ export function WorkbenchLayout({
                       <strong>{action.label}</strong>
                       <span>{action.description}</span>
                     </button>
-                  )
+                  );
                 })}
               </div>
             </div>
           ) : null}
 
           {tabs
-            .filter((tab): tab is WorkspaceTab => tab.type === 'workspace')
+            .filter((tab): tab is WorkspaceTab => tab.type === "workspace")
             .map((tab) => (
               <div
                 className="global-workspace-tab-content"
@@ -252,11 +284,12 @@ export function WorkbenchLayout({
                 <ArtifactWorkbench
                   requirementId={tab.workspaceId}
                   activeStage={tab.activeStage}
+                  initialPath={tab.initialPath}
                   initialFiles={tab.initialFiles}
                 />
               </div>
             ))}
-          {activeTab?.type === 'web' ? (
+          {activeTab?.type === "web" ? (
             <WebPane
               tab={activeTab}
               onNavigate={onNavigateWeb}
@@ -268,7 +301,7 @@ export function WorkbenchLayout({
           ) : null}
           {terminalApi
             ? tabs
-                .filter((tab): tab is TerminalTab => tab.type === 'terminal')
+                .filter((tab): tab is TerminalTab => tab.type === "terminal")
                 .map((tab) => (
                   <div
                     className="global-terminal-tab-content"
@@ -278,7 +311,7 @@ export function WorkbenchLayout({
                     <Suspense
                       fallback={
                         <div className="global-terminal-loading">
-                          正在启动终端...
+                          {t("workbench.terminalStarting")}
                         </div>
                       }
                     >
@@ -293,53 +326,82 @@ export function WorkbenchLayout({
                   </div>
                 ))
             : null}
+          {tabs
+            .filter((tab): tab is CodeSnippetTab => tab.type === "code")
+            .map((tab) => (
+              <div
+                className="global-code-tab-content"
+                hidden={tab.id !== activeTabId}
+                key={tab.id}
+              >
+                <Suspense
+                  fallback={
+                    <div className="global-terminal-loading">
+                      {t("workbench.code.loading")}
+                    </div>
+                  }
+                >
+                  <CodeSnippetPane
+                    snippet={tab.snippet}
+                    api={codeSnippetApi}
+                  />
+                </Suspense>
+              </div>
+            ))}
         </aside>
       </div>
 
       {urlDialogOpen ? (
-        <div
-          className="global-url-dialog-backdrop"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) onCloseUrlDialog()
+        <Dialog
+          open
+          size="compact"
+          className="global-url-dialog"
+          aria-labelledby="global-url-dialog-title"
+          onOpenChange={(open) => {
+            if (!open) onCloseUrlDialog();
           }}
         >
           <form
-            className="global-url-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="global-url-dialog-title"
             onSubmit={(event) => {
-              event.preventDefault()
-              onSubmitUrl()
+              event.preventDefault();
+              onSubmitUrl();
             }}
           >
-            <div>
+            <DialogHeader>
               <Globe2 size={18} />
-              <h2 id="global-url-dialog-title">打开网页</h2>
-            </div>
-            <label htmlFor="global-web-url">网页地址</label>
-            <input
-              id="global-web-url"
-              autoFocus
-              value={urlDraft}
-              onChange={(event) => onUrlDraftChange(event.target.value)}
-              placeholder="https://example.com"
-            />
-            {urlError ? <p role="alert">{urlError}</p> : null}
-            <footer>
-              <button type="button" onClick={onCloseUrlDialog}>
-                取消
-              </button>
-              <button type="submit" disabled={!urlDraft.trim()}>
-                打开
-              </button>
-            </footer>
+              <h2 id="global-url-dialog-title">{t("workbench.web.open")}</h2>
+            </DialogHeader>
+            <DialogBody className="global-url-dialog__body">
+              <Field name="workbench-web-address"
+                label={t("workbench.web.address")}
+                error={urlError || undefined}
+              >
+                <input type="url" inputMode="url"
+                  id="global-web-url"
+                  data-autofocus
+                  value={urlDraft}
+                  onChange={(event) => onUrlDraftChange(event.target.value)}
+                  placeholder="https://example.com"
+                />
+              </Field>
+            </DialogBody>
+            <DialogFooter>
+              <Button onClick={onCloseUrlDialog}>
+                {t("common.cancel")}
+              </Button>
+              <Button
+                variant="primary"
+                type="submit"
+                disabled={!urlDraft.trim()}
+              >
+                {t("common.open")}
+              </Button>
+            </DialogFooter>
           </form>
-        </div>
+        </Dialog>
       ) : null}
     </>
-  )
+  );
 }
 
 function WebPane({
@@ -348,26 +410,28 @@ function WebPane({
   onGoBack,
   onGoForward,
   onReload,
-  onOpenExternal
+  onOpenExternal,
 }: {
-  tab: WebTab
-  onNavigate: (tab: WebTab, url: string) => void
-  onGoBack: (tabId: string) => void
-  onGoForward: (tabId: string) => void
-  onReload: (tabId: string) => void
-  onOpenExternal: (url: string) => void
+  tab: WebTab;
+  onNavigate: (tab: WebTab, url: string) => void;
+  onGoBack: (tabId: string) => void;
+  onGoForward: (tabId: string) => void;
+  onReload: (tabId: string) => void;
+  onOpenExternal: (url: string) => void;
 }): JSX.Element {
+  const { t } = useLocalization();
   const submit = (event: FormEvent<HTMLFormElement>): void => {
-    event.preventDefault()
-    const data = new FormData(event.currentTarget)
-    onNavigate(tab, String(data.get('url') ?? ''))
-  }
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    onNavigate(tab, String(data.get("url") ?? ""));
+  };
   return (
     <div className="global-web-workbench">
       <form onSubmit={submit}>
         <button
           type="button"
-          aria-label="后退"
+          aria-label={t("workbench.web.back")}
+          title={t("workbench.web.back")}
           disabled={!tab.page.canGoBack}
           onClick={() => onGoBack(tab.id)}
         >
@@ -375,7 +439,8 @@ function WebPane({
         </button>
         <button
           type="button"
-          aria-label="前进"
+          aria-label={t("workbench.web.forward")}
+          title={t("workbench.web.forward")}
           disabled={!tab.page.canGoForward}
           onClick={() => onGoForward(tab.id)}
         >
@@ -383,20 +448,22 @@ function WebPane({
         </button>
         <button
           type="button"
-          aria-label="重新加载"
+          aria-label={t("workbench.web.reload")}
+          title={t("workbench.web.reload")}
           onClick={() => onReload(tab.id)}
         >
           <RefreshCw size={15} />
         </button>
-        <input
+        <input type="url" inputMode="url" autoComplete="off"
           key={tab.page.url}
           name="url"
-          aria-label="网页地址"
+          aria-label={t("workbench.web.address")}
           defaultValue={tab.page.url}
         />
         <button
           type="button"
-          aria-label="在系统浏览器打开"
+          aria-label={t("workbench.web.openExternal")}
+          title={t("workbench.web.openExternal")}
           onClick={() => onOpenExternal(tab.page.url)}
         >
           <ExternalLink size={15} />
@@ -404,10 +471,10 @@ function WebPane({
       </form>
       {tab.page.error ? (
         <div className="global-web-error">
-          <strong>网页无法在应用内打开</strong>
+          <strong>{t("workbench.web.error")}</strong>
           <span>{tab.page.error}</span>
         </div>
       ) : null}
     </div>
-  )
+  );
 }

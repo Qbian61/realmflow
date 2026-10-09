@@ -39,25 +39,11 @@ type ChatSessionsPayload = {
       role?: string
       content: string
       createdAt: number
+      completedAt?: number
     }>
     createdAt: number
     updatedAt: number
   }>
-}
-
-type SpaceResourcesPayload = {
-  version: 1
-  resourcesBySpace: Record<
-    string,
-    Array<{
-      id: string
-      name: string
-      type: string
-      locator: string
-      detail: string
-      updatedAt: number
-    }>
-  >
 }
 
 export class SqlitePersistenceService {
@@ -125,8 +111,6 @@ export class SqlitePersistenceService {
         return { revision, value: this.loadWorkspaceNavigation() }
       case 'chatSessions':
         return { revision, value: this.loadChatSessions() }
-      case 'spaceResources':
-        return { revision, value: this.loadSpaceResources() }
     }
   }
 
@@ -143,9 +127,7 @@ export class SqlitePersistenceService {
     const valid =
       dataset === 'workspaceNavigation'
         ? isWorkspaceNavigationPayload(value)
-        : dataset === 'chatSessions'
-          ? isChatSessionsPayload(value)
-          : isSpaceResourcesPayload(value)
+        : isChatSessionsPayload(value)
     if (!valid) throw new TypeError(`Invalid ${dataset} payload`)
     return value
   }
@@ -158,8 +140,6 @@ export class SqlitePersistenceService {
       case 'chatSessions':
         this.saveChatSessions(value as ChatSessionsPayload)
         return
-      case 'spaceResources':
-        this.saveSpaceResources(value as SpaceResourcesPayload)
     }
   }
 
@@ -221,7 +201,7 @@ export class SqlitePersistenceService {
       updated_at: number
     }>
     const getMessages = this.database.prepare(
-      `SELECT id, role, content, created_at FROM chat_messages
+      `SELECT id, role, content, created_at, completed_at FROM chat_messages
        WHERE session_id = ? ORDER BY sort_order, id`
     )
     return {
@@ -236,51 +216,20 @@ export class SqlitePersistenceService {
             role: string
             content: string
             created_at: number
+            completed_at: number | null
           }>
         ).map((message) => ({
           id: message.id,
           role: message.role,
           content: message.content,
-          createdAt: message.created_at
+          createdAt: message.created_at,
+          ...(message.completed_at === null
+            ? {}
+            : { completedAt: message.completed_at })
         })),
         createdAt: row.created_at,
         updatedAt: row.updated_at
       }))
-    }
-  }
-
-  private loadSpaceResources(): SpaceResourcesPayload {
-    const spaces = this.database
-      .prepare('SELECT id, path FROM workspaces ORDER BY sort_order, id')
-      .all() as Array<{ id: string; path: string }>
-    const getResources = this.database.prepare(
-      `SELECT id, name, type, locator, detail, updated_at
-       FROM space_resources WHERE workspace_id = ? ORDER BY sort_order, id`
-    )
-    return {
-      version: 1,
-      resourcesBySpace: Object.fromEntries(
-        spaces.map((space) => [
-          space.path,
-          (
-            getResources.all(space.id) as Array<{
-              id: string
-              name: string
-              type: string
-              locator: string
-              detail: string
-              updated_at: number
-            }>
-          ).map((resource) => ({
-            id: resource.id,
-            name: resource.name,
-            type: resource.type,
-            locator: resource.locator,
-            detail: resource.detail,
-            updatedAt: resource.updated_at
-          }))
-        ])
-      )
     }
   }
 
@@ -366,10 +315,13 @@ export class SqlitePersistenceService {
     )
     const upsertSession = this.database.prepare(
       `INSERT INTO chat_sessions (
-        id, workspace_id, title, sort_order, revision, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, 1, ?, ?)
+        id, workspace_id, kind, knowledge_scope, title, sort_order, revision,
+        created_at, updated_at
+      ) VALUES (?, ?, 'space', ?, ?, ?, 1, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         workspace_id = excluded.workspace_id,
+        kind = excluded.kind,
+        knowledge_scope = excluded.knowledge_scope,
         title = excluded.title,
         sort_order = excluded.sort_order,
         revision = chat_sessions.revision + 1,
@@ -380,8 +332,8 @@ export class SqlitePersistenceService {
     )
     const insertMessage = this.database.prepare(
       `INSERT INTO chat_messages (
-        id, session_id, role, content, sort_order, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?)`
+        id, session_id, role, content, sort_order, created_at, completed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
     )
     value.sessions.forEach((session, sessionIndex) => {
       const workspaceId = workspaceIds.get(session.spacePath)
@@ -393,6 +345,7 @@ export class SqlitePersistenceService {
       upsertSession.run(
         session.id,
         workspaceId,
+        JSON.stringify({ kind: 'workspace', workspaceId }),
         session.title,
         sessionIndex,
         session.createdAt,
@@ -406,7 +359,8 @@ export class SqlitePersistenceService {
           message.role ?? 'user',
           message.content,
           messageIndex,
-          message.createdAt
+          message.createdAt,
+          message.completedAt ?? null
         )
       })
     })
@@ -417,56 +371,6 @@ export class SqlitePersistenceService {
     )
   }
 
-  private saveSpaceResources(value: SpaceResourcesPayload): void {
-    const workspaceIds = new Map(
-      (
-        this.database
-          .prepare('SELECT id, path FROM workspaces')
-          .all() as Array<{ id: string; path: string }>
-      ).map((workspace) => [workspace.path, workspace.id])
-    )
-    const resourceIds: string[] = []
-    const upsertResource = this.database.prepare(
-      `INSERT INTO space_resources (
-        id, workspace_id, name, type, locator, detail, sort_order, revision,
-        created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        workspace_id = excluded.workspace_id,
-        name = excluded.name,
-        type = excluded.type,
-        locator = excluded.locator,
-        detail = excluded.detail,
-        sort_order = excluded.sort_order,
-        revision = space_resources.revision + 1,
-        updated_at = excluded.updated_at`
-    )
-    for (const [spacePath, resources] of Object.entries(
-      value.resourcesBySpace
-    )) {
-      const workspaceId = workspaceIds.get(spacePath)
-      if (!workspaceId) {
-        throw new TypeError(
-          `Invalid spaceResources payload: unknown space ${spacePath}`
-        )
-      }
-      resources.forEach((resource, index) => {
-        resourceIds.push(resource.id)
-        upsertResource.run(
-          resource.id,
-          workspaceId,
-          resource.name,
-          resource.type,
-          resource.locator,
-          resource.detail,
-          index,
-          resource.updatedAt,
-          resource.updatedAt
-        )
-      })
-    }
-    deleteMissing(this.database, 'space_resources', resourceIds)
-  }
 }
 
 function isWorkspaceNavigationPayload(
@@ -533,35 +437,11 @@ function isChatSessionsPayload(value: unknown): value is ChatSessionsPayload {
             typeof message.id === 'string' &&
             typeof message.content === 'string' &&
             typeof message.createdAt === 'number' &&
+            (message.completedAt === undefined ||
+              typeof message.completedAt === 'number') &&
             (message.role === undefined ||
               message.role === 'user' ||
               message.role === 'assistant')
-        )
-    )
-  )
-}
-
-function isSpaceResourcesPayload(
-  value: unknown
-): value is SpaceResourcesPayload {
-  return (
-    isRecord(value) &&
-    value.version === 1 &&
-    isRecord(value.resourcesBySpace) &&
-    Object.values(value.resourcesBySpace).every(
-      (resources) =>
-        Array.isArray(resources) &&
-        resources.every(
-          (resource) =>
-            isRecord(resource) &&
-            typeof resource.id === 'string' &&
-            typeof resource.name === 'string' &&
-            ['file', 'document', 'repository'].includes(
-              String(resource.type)
-            ) &&
-            typeof resource.locator === 'string' &&
-            typeof resource.detail === 'string' &&
-            typeof resource.updatedAt === 'number'
         )
     )
   )
@@ -580,7 +460,7 @@ function stableWorkspaceId(path: string): string {
 
 function deleteMissing(
   database: Database.Database,
-  table: 'workspaces' | 'requirements' | 'chat_sessions' | 'space_resources',
+  table: 'workspaces' | 'requirements' | 'chat_sessions',
   ids: string[]
 ): void {
   if (ids.length === 0) {

@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.document.replace_text",
+  "version": "1.1.0",
+  "name": "Replace document text",
+  "description": "Replace text without rewriting unrelated blocks.",
+  "tags": [
+    "document"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "document.replace_text",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sessionId": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+      },
+      "expectedRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "query": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 100000
+      },
+      "replacement": {
+        "type": "string",
+        "maxLength": 100000
+      },
+      "replaceAll": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "sessionId",
+      "expectedRevision",
+      "query",
+      "replacement"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "filesystem.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "replace document text"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

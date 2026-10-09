@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.pdf.ocr",
+  "version": "1.0.1",
+  "name": "Recognize PDF page text",
+  "description": "Render and recognize one scanned PDF page locally.",
+  "tags": [
+    "pdf"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "pdf.ocr",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sessionId": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+      },
+      "expectedRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "pageNumber": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100000
+      },
+      "maxDimension": {
+        "type": "integer",
+        "minimum": 64,
+        "maximum": 2048
+      },
+      "language": {
+        "type": "string",
+        "minLength": 2,
+        "maxLength": 32,
+        "pattern": "^[A-Za-z0-9_-]+$"
+      }
+    },
+    "required": [
+      "sessionId",
+      "pageNumber"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "filesystem.read"
+  ],
+  "effects": [
+    "local_data.read"
+  ],
+  "risk": "low",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "recognize pdf page text"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

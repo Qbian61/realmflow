@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.pdf.merge",
+  "version": "1.0.1",
+  "name": "Merge PDF",
+  "description": "Append pages from authorized PDF files.",
+  "tags": [
+    "pdf"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "pdf.merge",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sessionId": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+      },
+      "expectedRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "paths": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "scopeRoot": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "required": [
+      "sessionId",
+      "expectedRevision",
+      "paths"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "filesystem.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "merge pdf"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

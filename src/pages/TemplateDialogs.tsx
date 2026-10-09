@@ -1,276 +1,316 @@
 import {
   type FormEvent,
   type ReactNode,
-  useEffect,
   useMemo,
   useRef,
-  useState
-} from 'react'
-import { Plus, X } from 'lucide-react'
+  useState,
+} from "react";
+import { Plus, X } from "lucide-react";
+import {
+  Button,
+  Dialog,
+  DialogBody,
+  DialogFooter,
+  DialogHeader,
+  Field,
+  IconButton,
+} from "../components/ui";
+import { useWorkspacePageActive } from "../features/navigation/WorkspaceRouteCache";
+import { useLocalization } from "../localization/LocalizationProvider";
 
 export type TemplateDefinition = {
-  title: string
-  tag: string
-  description: string
-  prompt: string
-  uses: number
-}
+  title: string;
+  tag: string;
+  description: string;
+  prompt: string;
+  uses: number;
+};
 
 type CreateTemplateDialogProps = {
-  availableTags: string[]
-  onClose: () => void
-  onCreate: (template: TemplateDefinition) => void
-}
+  availableTags: string[];
+  onClose: () => void;
+  onCreate: (template: TemplateDefinition) => void;
+};
 
 type UseTemplateDialogProps = {
-  template: TemplateDefinition
-  onClose: () => void
-  onUse: (prompt: string) => void
-}
+  template: TemplateDefinition;
+  onClose: () => void;
+  onUse: (prompt: string) => void;
+};
 
 function getPlaceholders(prompt: string): string[] {
   const names = [...prompt.matchAll(/\{\{\s*([^{}]+?)\s*\}\}/g)].map(
-    (match) => match[1]
-  )
-  return [...new Set(names)]
+    (match) => match[1],
+  );
+  return [...new Set(names)];
 }
 
 function DialogFrame({
   title,
   onClose,
-  children
+  children,
 }: {
-  title: string
-  onClose: () => void
-  children: ReactNode
+  title: string;
+  onClose: () => void;
+  children: ReactNode;
 }): JSX.Element {
-  useEffect(() => {
-    const closeOnEscape = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', closeOnEscape)
-    return () => document.removeEventListener('keydown', closeOnEscape)
-  }, [onClose])
+  const { t } = useLocalization();
+  const pageActive = useWorkspacePageActive();
 
   return (
-    <div
-      className="template-dialog-backdrop"
-      role="presentation"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose()
+    <Dialog
+      open
+      size="wide"
+      locked={!pageActive}
+      aria-labelledby="template-dialog-title"
+      onOpenChange={(open) => {
+        if (!open) onClose();
       }}
     >
-      <section
-        className="template-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="template-dialog-title"
-      >
-        <header>
+      <div className="template-dialog">
+        <DialogHeader>
           <h2 id="template-dialog-title">{title}</h2>
-          <button type="button" aria-label="关闭弹窗" title="关闭弹窗" onClick={onClose}>
+          <IconButton
+            aria-label={t("templateDialog.close")}
+            title={t("templateDialog.close")}
+            variant="ghost"
+            onClick={onClose}
+          >
             <X size={22} />
-          </button>
-        </header>
+          </IconButton>
+        </DialogHeader>
         {children}
-      </section>
-    </div>
-  )
+      </div>
+    </Dialog>
+  );
 }
 
 export function CreateTemplateDialog({
   availableTags,
   onClose,
-  onCreate
+  onCreate,
 }: CreateTemplateDialogProps): JSX.Element {
-  const [name, setName] = useState('')
-  const [tag, setTag] = useState('')
-  const [prompt, setPrompt] = useState('')
-  const [placeholder, setPlaceholder] = useState('')
-  const promptRef = useRef<HTMLTextAreaElement>(null)
-  const placeholders = useMemo(() => getPlaceholders(prompt), [prompt])
+  const { t } = useLocalization();
+  const [name, setName] = useState("");
+  const [tag, setTag] = useState("");
+  const [prompt, setPrompt] = useState("");
+  const [placeholder, setPlaceholder] = useState("");
+  const promptRef = useRef<HTMLTextAreaElement>(null);
+  const placeholders = useMemo(() => getPlaceholders(prompt), [prompt]);
 
   const addPlaceholder = (): void => {
-    const normalizedName = placeholder.trim().replace(/\s+/g, '_')
-    if (!normalizedName) return
-    setPrompt((current) => `${current}${current ? ' ' : ''}{{${normalizedName}}}`)
-    setPlaceholder('')
-    promptRef.current?.focus()
-  }
+    const normalizedName = placeholder.trim().replace(/\s+/g, "_");
+    if (!normalizedName) return;
+    setPrompt(
+      (current) => `${current}${current ? " " : ""}{{${normalizedName}}}`,
+    );
+    setPlaceholder("");
+    promptRef.current?.focus();
+  };
 
   const submit = (event: FormEvent<HTMLFormElement>): void => {
-    event.preventDefault()
-    if (!name.trim() || !tag.trim() || !prompt.trim()) return
+    event.preventDefault();
+    if (!name.trim() || !tag.trim() || !prompt.trim()) return;
     onCreate({
       title: name.trim(),
       tag: tag.trim(),
-      description: `自定义模板，包含 ${placeholders.length} 个占位符。`,
+      description: t("templateDialog.customDescription", {
+        count: placeholders.length,
+      }),
       prompt: prompt.trim(),
-      uses: 0
-    })
-  }
+      uses: 0,
+    });
+  };
 
   return (
-    <DialogFrame title="创建模板" onClose={onClose}>
-      <form className="template-dialog-form" onSubmit={submit}>
+    <DialogFrame title={t("template.create")} onClose={onClose}>
+      <form className="template-dialog-form-shell" onSubmit={submit}>
+        <DialogBody className="template-dialog-form">
         <div className="template-dialog-column">
           <div className="dialog-section-heading">
-            <strong>编写模板提示词</strong>
-            <span>使用双花括号标记需要用户填写的内容</span>
+            <strong>{t("templateDialog.writeHeading")}</strong>
+            <span>{t("templateDialog.writeHint")}</span>
           </div>
           <div className="template-meta-fields">
-            <label>
-              <span>模板名称</span>
+            <Field name="template-dialog-name" label={t("templateDialog.name")}>
               <input
                 value={name}
-                aria-label="模板名称"
-                placeholder="例如：接口设计助手"
+                aria-label={t("templateDialog.name")}
+                placeholder={t("templateDialog.namePlaceholder")}
                 onChange={(event) => setName(event.target.value)}
               />
-            </label>
-            <label>
-              <span>所属标签</span>
+            </Field>
+            <Field name="template-dialog-tag" label={t("templateDialog.tag")}>
               <input
                 list="existing-template-tags"
                 value={tag}
-                aria-label="所属标签"
-                placeholder="选择已有标签或输入新标签"
+                aria-label={t("templateDialog.tag")}
+                placeholder={t("templateDialog.tagPlaceholder")}
                 onChange={(event) => setTag(event.target.value)}
               />
-              <datalist id="existing-template-tags">
-                {availableTags.map((existingTag) => (
-                  <option key={existingTag} value={existingTag} />
-                ))}
-              </datalist>
-            </label>
+            </Field>
+            <datalist id="existing-template-tags">
+              {availableTags.map((existingTag) => (
+                <option key={existingTag} value={existingTag} />
+              ))}
+            </datalist>
           </div>
-          <label className="template-prompt-field">
-            <span>提示词</span>
+          <Field name="template-dialog-prompt"
+            className="template-prompt-field"
+            label={t("templateDialog.prompt")}
+          >
             <textarea
               ref={promptRef}
               value={prompt}
-              aria-label="模板提示词"
-              placeholder="例如：请根据 {{需求文档}} 生成一份技术方案。"
+              aria-label={t("templateDialog.promptAria")}
+              placeholder={t("templateDialog.promptPlaceholder")}
               onChange={(event) => setPrompt(event.target.value)}
             />
-          </label>
+          </Field>
         </div>
 
         <div className="template-dialog-column parameter-column">
           <div className="dialog-section-heading">
-            <strong>占位符配置</strong>
-            <span>添加后将自动插入提示词</span>
+            <strong>{t("templateDialog.placeholderHeading")}</strong>
+            <span>{t("templateDialog.placeholderHint")}</span>
           </div>
           <div className="placeholder-adder">
-            <input
-              value={placeholder}
-              aria-label="占位符名称"
-              placeholder="输入占位符名称"
-              onChange={(event) => setPlaceholder(event.target.value)}
-            />
-            <button type="button" aria-label="添加占位符" onClick={addPlaceholder}>
+            <Field name="template-dialog-placeholder-name" label={t("templateDialog.placeholderName")}>
+              <input
+                value={placeholder}
+                placeholder={t("templateDialog.placeholderNamePlaceholder")}
+                onChange={(event) => setPlaceholder(event.target.value)}
+              />
+            </Field>
+            <IconButton
+              aria-label={t("templateDialog.addPlaceholder")}
+              title={t("templateDialog.addPlaceholder")}
+              variant="ghost"
+              onClick={addPlaceholder}
+            >
               <Plus size={18} />
-            </button>
+            </IconButton>
           </div>
-          <div className="placeholder-list" aria-label="已添加占位符">
+          <div
+            className="placeholder-list"
+            aria-label={t("templateDialog.placeholderList")}
+          >
             {placeholders.length > 0 ? (
-              placeholders.map((name) => <span key={name}>{`{{${name}}}`}</span>)
+              placeholders.map((name) => (
+                <span key={name}>{`{{${name}}}`}</span>
+              ))
             ) : (
               <div className="parameter-empty">
-                <strong>暂无占位符</strong>
-                <span>在左侧输入提示词或添加占位符</span>
+                <strong>{t("templateDialog.noPlaceholders")}</strong>
+                <span>{t("templateDialog.noPlaceholdersHint")}</span>
               </div>
             )}
           </div>
         </div>
-
-        <footer className="template-dialog-footer">
-          <button type="button" onClick={onClose}>
-            取消
-          </button>
-          <button type="submit" disabled={!name.trim() || !tag.trim() || !prompt.trim()}>
-            保存模板
-          </button>
-        </footer>
+        </DialogBody>
+        <DialogFooter>
+          <Button type="button" onClick={onClose}>
+            {t("common.cancel")}
+          </Button>
+          <Button
+            type="submit"
+            variant="primary"
+            disabled={!name.trim() || !tag.trim() || !prompt.trim()}
+          >
+            {t("templateDialog.save")}
+          </Button>
+        </DialogFooter>
       </form>
     </DialogFrame>
-  )
+  );
 }
 
 export function UseTemplateDialog({
   template,
   onClose,
-  onUse
+  onUse,
 }: UseTemplateDialogProps): JSX.Element {
-  const placeholders = useMemo(() => getPlaceholders(template.prompt), [template.prompt])
-  const [values, setValues] = useState<Record<string, string>>({})
-  const canUse = placeholders.every((name) => values[name]?.trim())
+  const { t } = useLocalization();
+  const placeholders = useMemo(
+    () => getPlaceholders(template.prompt),
+    [template.prompt],
+  );
+  const [values, setValues] = useState<Record<string, string>>({});
+  const canUse = placeholders.every((name) => values[name]?.trim());
 
   const useTemplate = (): void => {
-    if (!canUse) return
+    if (!canUse) return;
     const resolvedPrompt = template.prompt.replace(
       /\{\{\s*([^{}]+?)\s*\}\}/g,
-      (_, name: string) => values[name.trim()]?.trim() ?? ''
-    )
-    onUse(resolvedPrompt)
-  }
+      (_, name: string) => values[name.trim()]?.trim() ?? "",
+    );
+    onUse(resolvedPrompt);
+  };
 
   return (
     <DialogFrame title={template.title} onClose={onClose}>
-      <div className="template-dialog-summary">
-        <span>{template.tag}</span>
-        <p>{template.description}</p>
-      </div>
-      <div className="template-use-body">
+      <DialogBody className="template-use-content">
+        <div className="template-dialog-summary">
+          <span>{template.tag}</span>
+          <p>{template.description}</p>
+        </div>
+        <div className="template-use-body">
         <div className="template-dialog-column">
           <div className="dialog-section-heading">
-            <strong>模板提示词</strong>
-            <span>占位符将在使用时替换为右侧填写的内容</span>
+            <strong>{t("templateDialog.previewHeading")}</strong>
+            <span>{t("templateDialog.previewHint")}</span>
           </div>
           <div className="template-prompt-preview">
-            {template.prompt.split(/(\{\{\s*[^{}]+?\s*\}\})/g).map((part, index) =>
-              part.startsWith('{{') ? (
-                <mark key={`${part}-${index}`}>{part}</mark>
-              ) : (
-                <span key={`${part}-${index}`}>{part}</span>
-              )
-            )}
+            {template.prompt
+              .split(/(\{\{\s*[^{}]+?\s*\}\})/g)
+              .map((part, index) =>
+                part.startsWith("{{") ? (
+                  <mark key={`${part}-${index}`}>{part}</mark>
+                ) : (
+                  <span key={`${part}-${index}`}>{part}</span>
+                ),
+              )}
           </div>
         </div>
 
         <div className="template-dialog-column parameter-column">
           <div className="dialog-section-heading">
-            <strong>填写任务信息</strong>
-            <span>输入内容将替换模板中的对应占位符</span>
+            <strong>{t("templateDialog.taskHeading")}</strong>
+            <span>{t("templateDialog.taskHint")}</span>
           </div>
           <div className="template-parameter-fields">
             {placeholders.map((name) => (
-              <label key={name}>
-                <span>{name}</span>
+              <Field name={`template-placeholder-${name}`} label={name} key={name}>
                 <textarea
-                  value={values[name] ?? ''}
-                  aria-label={`占位符 ${name}`}
-                  placeholder={`请输入${name}`}
+                  value={values[name] ?? ""}
+                  aria-label={t("templateDialog.placeholderAria", { name })}
+                  placeholder={t("templateDialog.placeholderInput", { name })}
                   onChange={(event) =>
                     setValues((current) => ({
                       ...current,
-                      [name]: event.target.value
+                      [name]: event.target.value,
                     }))
                   }
                 />
-              </label>
+              </Field>
             ))}
           </div>
         </div>
-      </div>
-      <footer className="template-dialog-footer">
-        <button type="button" onClick={onClose}>
-          取消
-        </button>
-        <button type="button" disabled={!canUse} onClick={useTemplate}>
-          使用
-        </button>
-      </footer>
+        </div>
+      </DialogBody>
+      <DialogFooter>
+        <Button type="button" onClick={onClose}>
+          {t("common.cancel")}
+        </Button>
+        <Button
+          type="button"
+          variant="primary"
+          disabled={!canUse}
+          onClick={useTemplate}
+        >
+          {t("templateDialog.use")}
+        </Button>
+      </DialogFooter>
     </DialogFrame>
-  )
+  );
 }

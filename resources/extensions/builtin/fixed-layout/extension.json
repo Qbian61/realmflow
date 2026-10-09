@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "packageId": "realmflow.builtin.fixed-layout",
+  "version": "1.1.0",
+  "name": "Fixed Layout",
+  "description": "Read-only local OFD inspection, preview, and OCR.",
+  "publisher": {
+    "name": "RealmFlow",
+    "keyId": "realmflow-builtin-v1"
+  },
+  "compatibility": {
+    "realmflow": ">=0.1.0 <1.0.0",
+    "platforms": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
+  },
+  "tools": [
+    {
+      "path": "tools/builtin-fixed_layout-inspect.json"
+    },
+    {
+      "path": "tools/builtin-fixed_layout-ocr.json"
+    }
+  ],
+  "skills": [],
+  "assets": []
+}

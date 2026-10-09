@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.computer.click",
+  "version": "1.0.0",
+  "name": "Click",
+  "description": "Click a coordinate or accessible element.",
+  "tags": [
+    "computer"
+  ],
+  "executor": {
+    "kind": "computer",
+    "actionSet": "click",
+    "actionSetVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "bundleId": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]{1,199}$"
+      },
+      "x": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 100000
+      },
+      "y": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 100000
+      }
+    },
+    "required": [
+      "bundleId",
+      "x",
+      "y"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "computer.control"
+  ],
+  "effects": [
+    "user_interface.change"
+  ],
+  "risk": "high",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "click"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

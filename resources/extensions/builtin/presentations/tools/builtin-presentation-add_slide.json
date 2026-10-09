@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.presentation.add_slide",
+  "version": "1.0.0",
+  "name": "Add presentation slide",
+  "description": "Add a blank slide at an explicit position.",
+  "tags": [
+    "presentation"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "presentation.add_slide",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sessionId": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+      },
+      "expectedRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "afterSlideId": {
+        "type": "string",
+        "pattern": "^slide-[0-9]+$"
+      },
+      "notes": {
+        "type": "string",
+        "maxLength": 100000
+      }
+    },
+    "required": [
+      "sessionId",
+      "expectedRevision"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "filesystem.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "add presentation slide"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

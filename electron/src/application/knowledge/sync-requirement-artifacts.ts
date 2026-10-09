@@ -1,4 +1,8 @@
 import { createHash } from 'node:crypto'
+import type {
+  FrozenKnowledgeSourceSnapshot,
+  KnowledgeIndexEnqueueResult
+} from './knowledge-index-coordinator'
 
 export type KnowledgeArtifact = {
   id: string
@@ -8,37 +12,6 @@ export type KnowledgeArtifact = {
   checksum: string
   version: number
   formal: boolean
-}
-
-export type KnowledgeChunk = {
-  id: string
-  index: number
-  content: string
-  checksum: string
-}
-
-export type KnowledgeDocument = {
-  id: string
-  workspaceId: string
-  sourceRequirementId: string
-  sourceNodeId?: string
-  sourceArtifactId: string
-  sourceVersion: number
-  sourcePath: string
-  checksum: string
-  content: string
-  chunks: KnowledgeChunk[]
-  updatedAt: number
-}
-
-export type KnowledgeSyncFailure = {
-  id: string
-  requirementId: string
-  artifactId: string
-  status: 'failed'
-  retryable: true
-  error: string
-  createdAt: number
 }
 
 export type KnowledgeSyncDependencies = {
@@ -57,36 +30,38 @@ export type KnowledgeSyncDependencies = {
     listByRequirement: (requirementId: string) => Promise<KnowledgeArtifact[]>
     readContent: (artifact: KnowledgeArtifact) => Promise<string>
   }
-  knowledge: {
-    getBySource: (
-      requirementId: string,
-      sourcePath: string
-    ) => Promise<KnowledgeDocument | undefined>
-    replaceDocument: (document: KnowledgeDocument) => Promise<void>
+  coordinator: {
+    enqueueSnapshot(
+      snapshot: FrozenKnowledgeSourceSnapshot,
+      triggerSource: 'source_event'
+    ): Promise<KnowledgeIndexEnqueueResult>
   }
-  jobs: {
-    recordFailure: (failure: KnowledgeSyncFailure) => Promise<void> | void
-  }
-  now?: () => number
-  createId?: (kind: 'document' | 'chunk' | 'job', sourceId: string) => string
 }
 
-export class SyncRequirementArtifactsUseCase {
-  private readonly chunkSize: number
+type SyncResult = { synced: number; skipped: number; failed: number }
 
-  constructor(
-    private readonly dependencies: KnowledgeSyncDependencies,
-    options: { chunkSize?: number } = {}
-  ) {
-    this.chunkSize = options.chunkSize ?? 2_000
-    if (!Number.isInteger(this.chunkSize) || this.chunkSize <= 0) {
-      throw new Error('Knowledge chunk size must be a positive integer')
+export class SyncRequirementArtifactsUseCase {
+  private readonly active = new Map<string, Promise<SyncResult>>()
+
+  constructor(private readonly dependencies: KnowledgeSyncDependencies) {}
+
+  async execute(requirementId: string): Promise<SyncResult> {
+    const running = this.active.get(requirementId)
+    if (running) return running
+    const promise = this.executeOnce(requirementId)
+    this.active.set(requirementId, promise)
+    try {
+      return await promise
+    } finally {
+      this.active.delete(requirementId)
     }
   }
 
-  async execute(
-    requirementId: string
-  ): Promise<{ synced: number; skipped: number; failed: number }> {
+  async recover(): Promise<SyncResult> {
+    return { synced: 0, skipped: 0, failed: 0 }
+  }
+
+  private async executeOnce(requirementId: string): Promise<SyncResult> {
     const requirement = await this.dependencies.requirements.get(requirementId)
     if (
       !requirement ||
@@ -96,90 +71,47 @@ export class SyncRequirementArtifactsUseCase {
       return { synced: 0, skipped: 0, failed: 0 }
     }
 
-    const artifacts = (
+    const artifacts =
       await this.dependencies.artifacts.listByRequirement(requirementId)
-    ).filter((artifact) => artifact.formal)
-    let synced = 0
-    let skipped = 0
-    let failed = 0
-
+    const result: SyncResult = { synced: 0, skipped: 0, failed: 0 }
     for (const artifact of artifacts) {
+      if (!artifact.formal) {
+        result.skipped += 1
+        continue
+      }
       try {
-        const existing = await this.dependencies.knowledge.getBySource(
-          requirementId,
-          artifact.relativePath
-        )
-        if (
-          existing?.checksum === artifact.checksum &&
-          existing.sourceVersion === artifact.version
-        ) {
-          skipped += 1
-          continue
+        const content = await this.dependencies.artifacts.readContent(artifact)
+        if (checksum(content) !== artifact.checksum) {
+          throw new Error('Artifact content changed before knowledge enqueue')
         }
-        const content =
-          await this.dependencies.artifacts.readContent(artifact)
-        const documentId =
-          existing?.id ?? this.createId('document', artifact.id)
-        await this.dependencies.knowledge.replaceDocument({
-          id: documentId,
-          workspaceId: requirement.workspaceId,
-          sourceRequirementId: requirement.id,
-          ...(artifact.nodeId ? { sourceNodeId: artifact.nodeId } : {}),
-          sourceArtifactId: artifact.id,
-          sourceVersion: artifact.version,
-          sourcePath: artifact.relativePath,
-          checksum: artifact.checksum,
-          content,
-          chunks: chunkContent(content, this.chunkSize).map(
-            (chunkContentValue, index) => ({
-              id: this.createId('chunk', `${documentId}:${index}`),
-              index,
-              content: chunkContentValue,
-              checksum: checksum(chunkContentValue)
-            })
-          ),
-          updatedAt: this.now()
-        })
-        synced += 1
-      } catch (error) {
-        failed += 1
-        const createdAt = this.now()
-        await this.dependencies.jobs.recordFailure({
-          id: this.createId('job', `${artifact.id}:${createdAt}`),
-          requirementId,
-          artifactId: artifact.id,
-          status: 'failed',
-          retryable: true,
-          error: error instanceof Error ? error.message : String(error),
-          createdAt
-        })
+        const enqueued = await this.dependencies.coordinator.enqueueSnapshot(
+          {
+            scopeKind: 'workspace',
+            scopeId: requirement.workspaceId,
+            sourceKind: 'artifact',
+            sourceId: artifact.id,
+            sourceRevision: artifact.version,
+            sourceVersion: `artifact:${artifact.version}`,
+            sourceChecksum: artifact.checksum,
+            documents: [
+              {
+                documentKey: artifact.relativePath,
+                sourceEntityId: artifact.id,
+                title: artifact.relativePath,
+                content
+              }
+            ]
+          },
+          'source_event'
+        )
+        if (enqueued.status === 'replayed') result.skipped += 1
+        else result.synced += 1
+      } catch {
+        result.failed += 1
       }
     }
-
-    return { synced, skipped, failed }
+    return result
   }
-
-  private now(): number {
-    return (this.dependencies.now ?? Date.now)()
-  }
-
-  private createId(
-    kind: 'document' | 'chunk' | 'job',
-    sourceId: string
-  ): string {
-    return (
-      this.dependencies.createId?.(kind, sourceId) ??
-      `${kind}-${checksum(sourceId).slice('sha256:'.length, 24)}`
-    )
-  }
-}
-
-function chunkContent(content: string, chunkSize: number): string[] {
-  const chunks: string[] = []
-  for (let offset = 0; offset < content.length; offset += chunkSize) {
-    chunks.push(content.slice(offset, offset + chunkSize))
-  }
-  return chunks
 }
 
 function checksum(content: string): string {

@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.process.discover",
+  "version": "1.0.3",
+  "name": "Discover tools",
+  "description": "Discover local executables and versions.",
+  "tags": [
+    "process"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "process.discover",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "names"
+    ],
+    "properties": {
+      "names": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,199}$"
+        }
+      },
+      "cwd": {
+        "type": "string"
+      },
+      "scopeRoot": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "process.discover"
+  ],
+  "effects": [
+    "local_process.change"
+  ],
+  "risk": "low",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "discover tools"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

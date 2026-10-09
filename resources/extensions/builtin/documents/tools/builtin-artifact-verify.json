@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.artifact.verify",
+  "version": "1.1.0",
+  "name": "Verify artifact",
+  "description": "Read back and verify a DOCX or PDF artifact against explicit acceptance criteria.",
+  "tags": [
+    "artifact"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "artifact.verify",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "path",
+      "format"
+    ],
+    "properties": {
+      "path": {
+        "type": "string",
+        "minLength": 1
+      },
+      "format": {
+        "type": "string",
+        "enum": [
+          "docx",
+          "pdf"
+        ]
+      },
+      "expectedChecksum": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      },
+      "minimumByteSize": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "minimumPageCount": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "scopeRoot": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "filesystem.read"
+  ],
+  "effects": [
+    "local_data.read"
+  ],
+  "risk": "low",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "verify artifact"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

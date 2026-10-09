@@ -1,7 +1,14 @@
 import type {
   AiGenerateExecutorConfig,
-  RequirementWorkflow
+  RequirementNode,
+  RequirementWorkflow,
+  WorkflowNodeConfiguration
 } from '../../../../domain/workflow'
+import {
+  ModelRoutingError,
+  type ModelRouteRequest,
+  type ModelRouteResult
+} from '../../../../domain/model'
 import type { RunRepository } from '../../ai-run/application/ports'
 import type {
   NodeRunRepository,
@@ -9,7 +16,7 @@ import type {
   RequirementWorkflowRepository
 } from '../ports/business-repositories'
 import type { ManageNodeExecutionUseCase } from './manage-node-execution'
-import type { NodeCompletionGateEvaluator } from './node-completion-gate-evaluator'
+import { NodeCompletionGateError } from './node-completion-gate-evaluator'
 
 type Dependencies = {
   generate: {
@@ -25,12 +32,21 @@ type Dependencies = {
   runs: Pick<RunRepository, 'get'>
   requirements: Pick<RequirementRepository, 'get'>
   workflows: Pick<RequirementWorkflowRepository, 'get'>
-  nodeRuns: Pick<NodeRunRepository, 'get'>
-  gateEvaluator: Pick<NodeCompletionGateEvaluator, 'evaluate'>
+  nodeRuns: Pick<NodeRunRepository, 'get' | 'getLatestByNode'> & {
+    getLatestByNode: NonNullable<NodeRunRepository['getLatestByNode']>
+  }
+  models: {
+    routeModel: (request: ModelRouteRequest) => Promise<ModelRouteResult>
+  }
   advance: { drain: () => Promise<unknown> }
   manager: Pick<
     ManageNodeExecutionUseCase,
-    'reserveNode' | 'bindAiRun' | 'completeNode' | 'waitForUser' | 'finishNode'
+    | 'reserveNode'
+    | 'bindAiRun'
+    | 'completeNode'
+    | 'waitForUser'
+    | 'finishNode'
+    | 'failRecovery'
   >
 }
 
@@ -42,13 +58,18 @@ export class ExecuteWorkflowNodeUseCase {
     nodeId: string
     nodeRunId: string
     modelProfileId?: string
+    recovery?: boolean
   }): Promise<{ runId: string; completion: Promise<void> }> {
     const workflow = await this.dependencies.workflows.get(input.requirementId)
     const node = workflow?.nodes.find(
       (candidate) => candidate.id === input.nodeId
     )
     if (!node) throw new Error(`Workflow node not found: ${input.nodeId}`)
-    if (node.type !== 'ai_generate' || !node.executor) {
+    const executor =
+      node.type === 'ai_generate' || node.type === 'tool'
+        ? node.executor
+        : undefined
+    if (!executor) {
       throw new Error(`Workflow node is not AI executable: ${input.nodeId}`)
     }
     const nodeRun = await this.dependencies.nodeRuns.get(input.nodeRunId)
@@ -57,6 +78,13 @@ export class ExecuteWorkflowNodeUseCase {
         `Node run does not match workflow node: ${input.nodeRunId}`
       )
     }
+    const route = await this.dependencies.models.routeModel(
+      routeRequest(node.configuration?.model, nodeRun.checkpoint, input.modelProfileId)
+    )
+    if (route.outcome === 'unavailable') {
+      throw new ModelRoutingError(route.code, route.message)
+    }
+    const modelProfileId = route.profile.id
 
     await this.dependencies.manager.reserveNode({
       requirementId: input.requirementId,
@@ -68,10 +96,8 @@ export class ExecuteWorkflowNodeUseCase {
         requirementId: input.requirementId,
         nodeId: input.nodeId,
         nodeRunId: input.nodeRunId,
-        executor: node.executor,
-        ...(input.modelProfileId
-          ? { modelProfileId: input.modelProfileId }
-          : {})
+        executor,
+        modelProfileId
       })
       const latestNodeRun = await this.dependencies.nodeRuns.get(
         input.nodeRunId
@@ -86,23 +112,26 @@ export class ExecuteWorkflowNodeUseCase {
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
+      const settleFailure = () =>
+        input.recovery
+          ? this.dependencies.manager.failRecovery({
+              requirementId: input.requirementId,
+              nodeRunId: input.nodeRunId,
+              error: message
+            })
+          : this.dependencies.manager.finishNode({
+              requirementId: input.requirementId,
+              nodeRunId: input.nodeRunId,
+              status: 'failed',
+              error: message
+            })
       if (generated) {
         await Promise.allSettled([
           this.dependencies.cancel.execute(generated.runId),
-          this.dependencies.manager.finishNode({
-            requirementId: input.requirementId,
-            nodeRunId: input.nodeRunId,
-            status: 'failed',
-            error: message
-          })
+          settleFailure()
         ])
       } else {
-        await this.dependencies.manager.finishNode({
-          requirementId: input.requirementId,
-          nodeRunId: input.nodeRunId,
-          status: 'failed',
-          error: message
-        })
+        await settleFailure()
       }
       throw error
     }
@@ -124,11 +153,13 @@ export class ExecuteWorkflowNodeUseCase {
     let run
     try {
       await completion
+      if (!(await this.isCurrentBinding(input.nodeRunId, runId))) return
       run = await this.dependencies.runs.get(runId)
       if (run?.status === 'completed') {
         await this.completeOrWait(input.requirementId, input.nodeRunId)
       }
     } catch (error) {
+      if (!(await this.isCurrentBinding(input.nodeRunId, runId))) return
       await this.dependencies.manager.finishNode({
         requirementId: input.requirementId,
         nodeRunId: input.nodeRunId,
@@ -148,6 +179,19 @@ export class ExecuteWorkflowNodeUseCase {
     }
   }
 
+  private async isCurrentBinding(
+    nodeRunId: string,
+    runId: string
+  ): Promise<boolean> {
+    const nodeRun = await this.dependencies.nodeRuns.get(nodeRunId)
+    if (!nodeRun || nodeRun.aiRunId !== runId) return false
+    const latest = await this.dependencies.nodeRuns.getLatestByNode(
+      nodeRun.executionId,
+      nodeRun.nodeId
+    )
+    return latest?.id === nodeRun.id && latest.aiRunId === runId
+  }
+
   private async completeOrWait(
     requirementId: string,
     nodeRunId: string
@@ -160,16 +204,6 @@ export class ExecuteWorkflowNodeUseCase {
     if (!requirement || !workflow || !nodeRun) {
       throw new Error('Workflow execution state is incomplete')
     }
-    const node = workflow.nodes.find(
-      (candidate) => candidate.id === nodeRun.nodeId
-    )
-    if (!node) throw new Error(`Workflow node not found: ${nodeRun.nodeId}`)
-    const gates = await this.dependencies.gateEvaluator.evaluate({
-      requirementId,
-      node,
-      nodeRun,
-      executionFinished: true
-    })
     try {
       await this.dependencies.manager.completeNode({
         requirementId,
@@ -177,14 +211,11 @@ export class ExecuteWorkflowNodeUseCase {
         expectedNodeRunRevision: nodeRun.revision,
         expectedWorkflowRevision: workflow.revision,
         expectedRequirementRevision: requirement.revision,
-        ...gates
+        executionFinished: true
       })
       await this.dependencies.advance.drain()
     } catch (error) {
-      if (
-        error instanceof Error &&
-        error.message === 'Node completion gates are not satisfied'
-      ) {
+      if (error instanceof NodeCompletionGateError) {
         await this.dependencies.manager.waitForUser({
           requirementId,
           nodeRunId
@@ -193,5 +224,41 @@ export class ExecuteWorkflowNodeUseCase {
       }
       throw error
     }
+  }
+}
+
+export function isWorkflowNodeExecutable(
+  node: RequirementNode | undefined
+): node is RequirementNode {
+  return Boolean(
+    node &&
+      (
+        (node.type === 'ai_generate' || node.type === 'tool') &&
+        node.executor
+      )
+  )
+}
+
+function routeRequest(
+  strategy: WorkflowNodeConfiguration['model'] | undefined,
+  checkpoint: Record<string, unknown> | undefined,
+  inheritedProfileId: string | undefined
+): ModelRouteRequest {
+  const checkpointProfileId =
+    typeof checkpoint?.modelProfileId === 'string'
+      ? checkpoint.modelProfileId
+      : undefined
+  if (checkpointProfileId) {
+    return { strategy: 'fixed', profileId: checkpointProfileId }
+  }
+  if (strategy?.strategy === 'fixed') return strategy
+  if (strategy?.strategy === 'capability') return strategy
+  if (inheritedProfileId) {
+    return { strategy: 'fixed', profileId: inheritedProfileId }
+  }
+  return {
+    strategy: 'capability',
+    requiredCapabilities: ['text'],
+    minimumContextWindow: 1
   }
 }

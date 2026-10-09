@@ -1,14 +1,15 @@
 import {
+  access,
   mkdir,
   readFile,
   readdir,
-  realpath,
   rename,
   rm,
   stat,
   writeFile
 } from 'node:fs/promises'
-import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path'
+import { constants } from 'node:fs'
+import { basename, dirname, extname, relative, resolve, sep } from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import type {
   RequirementManifest,
@@ -24,9 +25,21 @@ import type {
   ArtifactMetadataInput,
   WorkspaceMetadataStore
 } from './workspace-metadata-store'
+import { SecurePathService } from './secure-path-service'
 
 const MAX_TEXT_FILE_SIZE = 2 * 1024 * 1024
+const MAX_FIXED_LAYOUT_FILE_SIZE = 20 * 1024 * 1024
 const IMAGE_EXTENSIONS = new Set(['.avif', '.gif', '.jpeg', '.jpg', '.png', '.webp'])
+const FIXED_LAYOUT_EXTENSIONS = new Set(['.ofd', '.pdf'])
+const BINARY_EXTENSIONS = new Set([
+  '.doc',
+  '.docx',
+  '.ppt',
+  '.pptx',
+  '.xls',
+  '.xlsx',
+  '.zip'
+])
 const MARKDOWN_EXTENSIONS = new Set(['.markdown', '.md', '.mdx'])
 const HTML_EXTENSIONS = new Set(['.htm', '.html'])
 
@@ -88,6 +101,11 @@ export type PendingManagedDirectoryMove = {
   rollback: () => Promise<void>
 }
 
+export type PendingManagedDirectoryRename = ManagedDirectory & {
+  originalPath: string
+  rollback: () => Promise<void>
+}
+
 export type CreateManagedSpaceDirectoryInput = {
   rootPath: string
   spaceId: string
@@ -101,16 +119,28 @@ export type CreateManagedRequirementDirectoryInput = {
   name: string
 }
 
+export type ManagedSpaceInspection = ManagedDirectory
+
 export class WorkspaceService {
   private readonly sessionBindings = new Map<string, SessionBinding>()
+  private readonly activeWrites = new Map<string, number>()
 
-  constructor(private readonly metadata: WorkspaceMetadataStore) {}
+  constructor(
+    private readonly metadata: WorkspaceMetadataStore,
+    private readonly securePaths = new SecurePathService()
+  ) {}
+
+  getManagedDirectoryName(input: {
+    entityId: string
+    name: string
+  }): string {
+    return `${this.safeDirectoryName(input.name)}--${this.safeStableId(
+      input.entityId
+    )}`
+  }
 
   async initializeWorkRoot(rootPath: string, rootId: string): Promise<string> {
-    const canonicalRoot = await realpath(rootPath)
-    if (!(await stat(canonicalRoot)).isDirectory()) {
-      throw new Error('Work root must be a directory')
-    }
+    const canonicalRoot = await this.securePaths.canonicalizeDirectory(rootPath)
     const metadataPath = resolve(canonicalRoot, '.realmflow')
     await mkdir(resolve(metadataPath, 'tmp'), { recursive: true })
     await mkdir(resolve(metadataPath, 'trash'), { recursive: true })
@@ -124,7 +154,9 @@ export class WorkspaceService {
   async prepareManagedSpaceDirectory(
     input: CreateManagedSpaceDirectoryInput
   ): Promise<PendingManagedDirectory> {
-    const canonicalRoot = await realpath(input.rootPath)
+    const canonicalRoot = await this.securePaths.canonicalizeDirectory(
+      input.rootPath
+    )
     await this.assertManagedRoot(canonicalRoot)
     return this.prepareManagedDirectory({
       parentPath: canonicalRoot,
@@ -156,7 +188,9 @@ export class WorkspaceService {
   async prepareManagedRequirementDirectory(
     input: CreateManagedRequirementDirectoryInput
   ): Promise<PendingManagedDirectory> {
-    const canonicalSpace = await realpath(input.spacePath)
+    const canonicalSpace = await this.securePaths.canonicalizeDirectory(
+      input.spacePath
+    )
     const manifest = JSON.parse(
       await readFile(resolve(canonicalSpace, '.realmflow', 'space.json'), 'utf8')
     ) as { spaceId?: unknown }
@@ -190,23 +224,77 @@ export class WorkspaceService {
     }
   }
 
+  async inspectManagedSpaceDirectory(input: {
+    path: string
+    spaceId: string
+  }): Promise<ManagedSpaceInspection> {
+    const path = await this.securePaths.canonicalizeDirectory(input.path)
+    try {
+      await access(path, constants.W_OK)
+    } catch {
+      throw new Error('Selected directory is not writable')
+    }
+    let manifestPath: string
+    try {
+      manifestPath = (
+        await this.securePaths.resolveExistingPath(
+          path,
+          '.realmflow/space.json'
+        )
+      ).targetPath
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        throw new Error('Managed space manifest is invalid')
+      }
+      throw error
+    }
+    let manifest: { version?: unknown; spaceId?: unknown }
+    try {
+      manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
+        version?: unknown
+        spaceId?: unknown
+      }
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw new Error('Managed space manifest is invalid')
+      }
+      throw error
+    }
+    if (manifest.version !== 1) {
+      throw new Error('Managed space manifest is invalid')
+    }
+    if (manifest.spaceId !== input.spaceId) {
+      throw new Error('Managed space manifest does not match')
+    }
+    return {
+      path,
+      directoryName: basename(path)
+    }
+  }
+
   async moveManagedDirectoryToTrash(input: {
     workRootPath: string
     entityType: 'space' | 'requirement'
     entityId: string
     path: string
   }): Promise<PendingManagedDirectoryMove> {
-    const workRootPath = await realpath(input.workRootPath)
+    const workRootPath = await this.securePaths.canonicalizeDirectory(
+      input.workRootPath
+    )
     await this.assertManagedRoot(workRootPath)
-    const originalPath = await realpath(input.path)
-    this.assertInside(workRootPath, originalPath)
+    const originalPath = (
+      await this.securePaths.resolveExistingPath(
+        workRootPath,
+        relative(workRootPath, input.path)
+      )
+    ).targetPath
     const trashRoot = resolve(workRootPath, '.realmflow', 'trash')
     await mkdir(trashRoot, { recursive: true })
     const movedPath = resolve(
       trashRoot,
       `${input.entityType}-${this.safeStableId(input.entityId)}-${randomUUID()}`
     )
-    this.assertInside(trashRoot, movedPath)
+    this.securePaths.assertInside(trashRoot, movedPath)
     await rename(originalPath, movedPath)
     return {
       originalPath,
@@ -221,15 +309,187 @@ export class WorkspaceService {
     originalPath: string
     trashPath: string
   }): Promise<PendingManagedDirectoryMove> {
-    const trashPath = await realpath(input.trashPath)
-    await rename(trashPath, input.originalPath)
+    const trashRoot = dirname(input.trashPath)
+    const metadataRoot = dirname(trashRoot)
+    const workRootPath = dirname(metadataRoot)
+    if (basename(trashRoot) !== 'trash' || basename(metadataRoot) !== '.realmflow') {
+      throw new Error('Managed trash path is invalid')
+    }
+    const canonicalRoot = await this.securePaths.canonicalizeDirectory(workRootPath)
+    await this.assertManagedRoot(canonicalRoot)
+    const trashPath = (
+      await this.securePaths.resolveExistingPath(
+        canonicalRoot,
+        relative(canonicalRoot, input.trashPath)
+      )
+    ).targetPath
+    const originalPath = (
+      await this.securePaths.resolvePathForCreation(
+        canonicalRoot,
+        relative(canonicalRoot, input.originalPath)
+      )
+    ).targetPath
+    await rename(trashPath, originalPath)
     return {
       originalPath: trashPath,
-      movedPath: input.originalPath,
+      movedPath: originalPath,
       rollback: async () => {
-        await rename(input.originalPath, trashPath)
+        await rename(originalPath, trashPath)
       }
     }
+  }
+
+  async purgeManagedTrashDirectory(input: { trashPath: string }): Promise<void> {
+    const trashRoot = dirname(input.trashPath)
+    const metadataRoot = dirname(trashRoot)
+    const workRootPath = dirname(metadataRoot)
+    const entryName = basename(input.trashPath)
+    if (
+      basename(trashRoot) !== 'trash' ||
+      basename(metadataRoot) !== '.realmflow' ||
+      !entryName
+    ) {
+      throw new Error('Managed trash path is invalid')
+    }
+
+    const canonicalRoot = await this.securePaths.canonicalizeDirectory(
+      workRootPath
+    )
+    await this.assertManagedRoot(canonicalRoot)
+    const expectedTrashRoot = resolve(canonicalRoot, '.realmflow', 'trash')
+    const trashPath = resolve(expectedTrashRoot, entryName)
+    if (resolve(input.trashPath) !== trashPath) {
+      throw new Error('Managed trash path is invalid')
+    }
+    this.securePaths.assertInside(expectedTrashRoot, trashPath)
+
+    const purgeRoot = resolve(canonicalRoot, '.realmflow', 'purge')
+    const purgePath = resolve(purgeRoot, entryName)
+    this.securePaths.assertInside(purgeRoot, purgePath)
+    await mkdir(purgeRoot, { recursive: true })
+    const canonicalPurgeRoot =
+      await this.securePaths.canonicalizeDirectory(purgeRoot)
+    this.securePaths.assertInside(canonicalRoot, canonicalPurgeRoot)
+    if (canonicalPurgeRoot !== purgeRoot) {
+      throw new Error('Managed purge path is invalid')
+    }
+
+    const trashExists = await this.pathExists(trashPath)
+    const purgeExists = await this.pathExists(purgePath)
+    if (trashExists && purgeExists) {
+      throw new Error('Managed purge path already exists')
+    }
+    if (trashExists) {
+      const existingTrashPath = (
+        await this.securePaths.resolveExistingPath(
+          canonicalRoot,
+          relative(canonicalRoot, trashPath)
+        )
+      ).targetPath
+      await rename(existingTrashPath, purgePath)
+    }
+    if (trashExists || purgeExists) {
+      const existingPurgePath = (
+        await this.securePaths.resolveExistingPath(
+          canonicalRoot,
+          relative(canonicalRoot, purgePath)
+        )
+      ).targetPath
+      await rm(existingPurgePath, { recursive: true, force: true })
+    }
+  }
+
+  async renameManagedDirectory(input: {
+    parentPath: string
+    currentPath: string
+    entityType: 'space' | 'requirement'
+    entityId: string
+    name: string
+  }): Promise<PendingManagedDirectoryRename> {
+    const canonicalParent = await this.securePaths.canonicalizeDirectory(
+      input.parentPath
+    )
+    if (input.entityType === 'space') {
+      await this.assertManagedRoot(canonicalParent)
+    } else {
+      await this.assertManagedSpace(canonicalParent)
+    }
+    const currentPath = (
+      await this.securePaths.resolveExistingPath(
+        canonicalParent,
+        relative(canonicalParent, input.currentPath)
+      )
+    ).targetPath
+    if (dirname(currentPath) !== canonicalParent) {
+      throw new Error('Path is outside the bound workspace')
+    }
+    await this.assertManagedEntity(
+      currentPath,
+      input.entityType,
+      input.entityId
+    )
+
+    const directoryName = this.getManagedDirectoryName({
+      entityId: input.entityId,
+      name: input.name
+    })
+    const targetPath = (
+      await this.securePaths.resolvePathForCreation(
+        canonicalParent,
+        directoryName
+      )
+    ).targetPath
+    if (targetPath === currentPath) {
+      return {
+        path: currentPath,
+        directoryName,
+        originalPath: currentPath,
+        rollback: async () => {}
+      }
+    }
+    try {
+      await stat(targetPath)
+      throw new Error('Managed directory already exists')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+
+    await rename(currentPath, targetPath)
+    let moved = true
+    const rollback = async () => {
+      if (!moved) return
+      await rename(targetPath, currentPath)
+      moved = false
+    }
+    try {
+      await this.assertManagedEntity(
+        targetPath,
+        input.entityType,
+        input.entityId
+      )
+    } catch (error) {
+      await rollback()
+      throw error
+    }
+    return {
+      path: targetPath,
+      directoryName,
+      originalPath: currentPath,
+      rollback
+    }
+  }
+
+  async hasActiveWrites(path: string): Promise<boolean> {
+    const canonicalPath = await this.securePaths.canonicalizeDirectory(path)
+    return [...this.activeWrites.keys()].some((activeRoot) => {
+      const nestedPath = relative(canonicalPath, activeRoot)
+      return (
+        nestedPath === '' ||
+        (!nestedPath.startsWith(`..${sep}`) &&
+          nestedPath !== '..' &&
+          !nestedPath.startsWith(sep))
+      )
+    })
   }
 
   async bindRequirement(
@@ -237,11 +497,7 @@ export class WorkspaceService {
     rootPath: string
   ): Promise<WorkspaceBinding> {
     this.assertRequirementId(requirementId)
-    const canonicalRoot = await realpath(rootPath)
-    const rootStats = await stat(canonicalRoot)
-    if (!rootStats.isDirectory()) {
-      throw new Error('Workspace root must be a directory')
-    }
+    const canonicalRoot = await this.securePaths.canonicalizeDirectory(rootPath)
 
     await this.metadata.setBinding(requirementId, canonicalRoot)
     return this.createBinding(requirementId, canonicalRoot)
@@ -255,7 +511,7 @@ export class WorkspaceService {
     if (!rootPath) return null
 
     try {
-      const canonicalRoot = await realpath(rootPath)
+      const canonicalRoot = await this.securePaths.canonicalizeDirectory(rootPath)
       return this.createBinding(requirementId, canonicalRoot)
     } catch {
       return null
@@ -263,11 +519,7 @@ export class WorkspaceService {
   }
 
   async bindSessionDirectory(rootPath: string): Promise<WorkspaceBinding> {
-    const canonicalRoot = await realpath(rootPath)
-    const rootStats = await stat(canonicalRoot)
-    if (!rootStats.isDirectory()) {
-      throw new Error('Workspace root must be a directory')
-    }
+    const canonicalRoot = await this.securePaths.canonicalizeDirectory(rootPath)
     const workspaceId = `session-${randomUUID()}`
     this.sessionBindings.set(workspaceId, {
       rootPath: canonicalRoot,
@@ -276,9 +528,41 @@ export class WorkspaceService {
     return this.createBinding(workspaceId, canonicalRoot)
   }
 
+  async getSessionDirectoryBinding(
+    workspaceId: string
+  ): Promise<WorkspaceBinding | null> {
+    const binding = this.sessionBindings.get(workspaceId)
+    if (!binding || binding.allowedFiles) return null
+    try {
+      const canonicalRoot = await this.securePaths.canonicalizeDirectory(
+        binding.rootPath
+      )
+      return this.createBinding(workspaceId, canonicalRoot)
+    } catch {
+      return null
+    }
+  }
+
+  async assertSessionDirectoryAvailable(rootPath: string): Promise<void> {
+    try {
+      const canonicalRoot =
+        await this.securePaths.canonicalizeDirectory(rootPath)
+      if (canonicalRoot !== rootPath) throw new Error('Folder binding changed')
+    } catch {
+      throw new Error('绑定的文件夹不可用，请检查目录后重试')
+    }
+  }
+
   async openSessionFiles(filePaths: string[]): Promise<OpenedSessionFiles> {
     if (filePaths.length === 0) throw new Error('No files were selected')
-    const canonicalPaths = await Promise.all(filePaths.map((path) => realpath(path)))
+    const canonicalPaths = await Promise.all(
+      filePaths.map(async (path) => {
+        const parentPath = await this.securePaths.canonicalizeDirectory(dirname(path))
+        return (
+          await this.securePaths.resolveExistingPath(parentPath, basename(path))
+        ).targetPath
+      })
+    )
     const rootPath = dirname(canonicalPaths[0])
     if (canonicalPaths.some((path) => dirname(path) !== rootPath)) {
       throw new Error('Selected files must share a directory')
@@ -296,6 +580,28 @@ export class WorkspaceService {
       [...allowedFiles].map((path) => this.readFile(workspaceId, path))
     )
     return { binding, files }
+  }
+
+  async resolveSelectedFile(
+    selectionId: string,
+    relativePath: string
+  ): Promise<string> {
+    const selection = this.sessionBindings.get(selectionId)
+    if (!selection?.allowedFiles) {
+      throw new Error('File selection is no longer available')
+    }
+    const normalizedPath = this.securePaths.normalizeRelativePath(relativePath)
+    if (!selection.allowedFiles.has(normalizedPath)) {
+      throw new Error('File is not authorized for this session')
+    }
+    const { targetPath } = await this.securePaths.resolveExistingPath(
+      selection.rootPath,
+      normalizedPath
+    )
+    if (!(await stat(targetPath)).isFile()) {
+      throw new Error('Selected path is not a file')
+    }
+    return targetPath
   }
 
   async resolveTerminalBinding(
@@ -326,8 +632,12 @@ export class WorkspaceService {
         if (allowedFiles && !allowedFiles.has(entry.name)) return null
         const entryPath = resolve(targetPath, entry.name)
         try {
-          const canonicalPath = await realpath(entryPath)
-          this.assertInside(rootPath, canonicalPath)
+          const canonicalPath = (
+            await this.securePaths.resolveExistingPath(
+              rootPath,
+              relative(rootPath, entryPath)
+            )
+          ).targetPath
           const entryStats = await stat(canonicalPath)
           if (!entryStats.isDirectory() && !entryStats.isFile()) return null
           const relativePath = relative(rootPath, canonicalPath).split(sep).join('/')
@@ -356,7 +666,7 @@ export class WorkspaceService {
   }
 
   async writeFile(input: WriteWorkspaceFileInput): Promise<WorkspaceFile> {
-    const { targetPath } = await this.resolveExistingPath(
+    const { rootPath, targetPath } = await this.resolveExistingPath(
       input.requirementId,
       input.path
     )
@@ -365,7 +675,7 @@ export class WorkspaceService {
     if (currentVersion !== input.expectedVersion) {
       throw new Error('File changed outside RealmFlow')
     }
-    if (this.fileKind(input.path) === 'image') {
+    if (this.isBinaryKind(this.fileKind(input.path))) {
       throw new Error('Binary files are read-only')
     }
     if (Buffer.byteLength(input.content, 'utf8') > MAX_TEXT_FILE_SIZE) {
@@ -373,12 +683,14 @@ export class WorkspaceService {
     }
 
     const temporaryPath = `${targetPath}.realmflow-${randomUUID()}.tmp`
-    await writeFile(temporaryPath, input.content, {
-      encoding: 'utf8',
-      mode: currentStats.mode
+    return this.withActiveWrite(rootPath, async () => {
+      await writeFile(temporaryPath, input.content, {
+        encoding: 'utf8',
+        mode: currentStats.mode
+      })
+      await rename(temporaryPath, targetPath)
+      return this.readWorkspaceFile(targetPath, input.path)
     })
-    await rename(temporaryPath, targetPath)
-    return this.readWorkspaceFile(targetPath, input.path)
   }
 
   async readManifest(requirementId: string): Promise<RequirementManifest> {
@@ -389,35 +701,38 @@ export class WorkspaceService {
     requirementId: string,
     manifest: RequirementManifest
   ): Promise<RequirementManifest> {
-    const validatedManifest = this.validateManifest(requirementId, manifest)
-    for (const stage of Object.values(validatedManifest.stages)) {
-      if (!stage) continue
-      for (const artifact of stage.artifacts) {
-        await this.resolveExistingPath(requirementId, artifact.path)
+    const binding = await this.requireBinding(requirementId)
+    return this.withActiveWrite(binding.rootPath, async () => {
+      const validatedManifest = this.validateManifest(requirementId, manifest)
+      for (const stage of Object.values(validatedManifest.stages)) {
+        if (!stage) continue
+        for (const artifact of stage.artifacts) {
+          await this.resolveExistingPath(requirementId, artifact.path)
+        }
       }
-    }
 
-    const artifacts: ArtifactMetadataInput[] = []
-    for (const [stageId, stage] of Object.entries(
-      validatedManifest.stages
-    )) {
-      if (!stage) continue
-      for (const artifact of stage.artifacts) {
-        const file = await this.readFile(requirementId, artifact.path)
-        artifacts.push({
-          stageId: stageId as RequirementStageId,
-          path: artifact.path,
-          kind: file.kind,
-          checksum: `sha256:${createHash('sha256')
-            .update(file.content)
-            .digest('hex')}`,
-          byteSize: file.size,
-          primary: artifact.primary === true
-        })
+      const artifacts: ArtifactMetadataInput[] = []
+      for (const [stageId, stage] of Object.entries(
+        validatedManifest.stages
+      )) {
+        if (!stage) continue
+        for (const artifact of stage.artifacts) {
+          const file = await this.readFile(requirementId, artifact.path)
+          artifacts.push({
+            stageId: stageId as RequirementStageId,
+            path: artifact.path,
+            kind: file.kind,
+            checksum: `sha256:${createHash('sha256')
+              .update(file.content)
+              .digest('hex')}`,
+            byteSize: file.size,
+            primary: artifact.primary === true
+          })
+        }
       }
-    }
-    await this.metadata.replaceManifest(requirementId, artifacts)
-    return validatedManifest
+      await this.metadata.replaceManifest(requirementId, artifacts)
+      return validatedManifest
+    })
   }
 
   async getPreviewUrl(requirementId: string, filePath: string): Promise<string> {
@@ -427,6 +742,25 @@ export class WorkspaceService {
       .map((segment) => encodeURIComponent(segment))
       .join('/')
     return `realmflow-artifact://preview/${encodeURIComponent(requirementId)}/${encodedPath}`
+  }
+
+  async readPreviewBytes(
+    requirementId: string,
+    filePath: string
+  ): Promise<Uint8Array> {
+    if (this.fileKind(filePath) !== 'fixed-layout') {
+      throw new Error('Binary preview format is not supported')
+    }
+    const { targetPath } = await this.resolveExistingPath(
+      requirementId,
+      filePath
+    )
+    const metadata = await stat(targetPath)
+    if (!metadata.isFile()) throw new Error('Path is not a file')
+    if (metadata.size > MAX_FIXED_LAYOUT_FILE_SIZE) {
+      throw new Error('File exceeds the preview size limit')
+    }
+    return new Uint8Array(await readFile(targetPath))
   }
 
   async resolvePreviewPath(
@@ -440,33 +774,20 @@ export class WorkspaceService {
     requirementId: string,
     requestedPath: string
   ): Promise<{ rootPath: string; targetPath: string }> {
-    if (requestedPath.includes('\0') || isAbsolute(requestedPath)) {
-      throw new Error('Path is outside the bound workspace')
-    }
+    const normalizedPath = this.securePaths.normalizeRelativePath(
+      requestedPath,
+      true
+    )
     const binding = await this.requireBinding(requirementId)
-    const rootPath = await realpath(binding.rootPath)
     const allowedFiles = this.sessionBindings.get(requirementId)?.allowedFiles
-    const normalizedPath = requestedPath.split('\\').join('/')
-    if (allowedFiles && requestedPath && !allowedFiles.has(normalizedPath)) {
+    if (allowedFiles && normalizedPath && !allowedFiles.has(normalizedPath)) {
       throw new Error('File is not authorized for this session')
     }
-    const candidatePath = resolve(rootPath, requestedPath || '.')
-    this.assertInside(rootPath, candidatePath)
-
-    const targetPath = await realpath(candidatePath)
-    this.assertInside(rootPath, targetPath)
-    return { rootPath, targetPath }
-  }
-
-  private assertInside(rootPath: string, targetPath: string): void {
-    const relativePath = relative(rootPath, targetPath)
-    if (
-      relativePath === '..' ||
-      relativePath.startsWith(`..${sep}`) ||
-      isAbsolute(relativePath)
-    ) {
-      throw new Error('Path is outside the bound workspace')
-    }
+    return this.securePaths.resolveExistingPath(
+      binding.rootPath,
+      normalizedPath,
+      true
+    )
   }
 
   private async assertManagedRoot(rootPath: string): Promise<void> {
@@ -475,6 +796,47 @@ export class WorkspaceService {
     ) as { version?: unknown; rootId?: unknown }
     if (manifest.version !== 1 || typeof manifest.rootId !== 'string') {
       throw new Error('Work root manifest is invalid')
+    }
+  }
+
+  private async pathExists(path: string): Promise<boolean> {
+    try {
+      await stat(path)
+      return true
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+      throw error
+    }
+  }
+
+  private async assertManagedSpace(spacePath: string): Promise<void> {
+    const manifest = JSON.parse(
+      await readFile(resolve(spacePath, '.realmflow', 'space.json'), 'utf8')
+    ) as { version?: unknown; spaceId?: unknown }
+    if (manifest.version !== 1 || typeof manifest.spaceId !== 'string') {
+      throw new Error('Managed space manifest is invalid')
+    }
+  }
+
+  private async assertManagedEntity(
+    path: string,
+    entityType: 'space' | 'requirement',
+    entityId: string
+  ): Promise<void> {
+    const manifest = JSON.parse(
+      await readFile(
+        resolve(path, '.realmflow', `${entityType}.json`),
+        'utf8'
+      )
+    ) as {
+      version?: unknown
+      spaceId?: unknown
+      requirementId?: unknown
+    }
+    const manifestId =
+      entityType === 'space' ? manifest.spaceId : manifest.requirementId
+    if (manifest.version !== 1 || manifestId !== entityId) {
+      throw new Error(`Managed ${entityType} manifest does not match`)
     }
   }
 
@@ -487,24 +849,36 @@ export class WorkspaceService {
     manifest: Record<string, unknown>
     directories: string[]
   }): Promise<PendingManagedDirectory> {
-    const directoryName = `${this.safeDirectoryName(input.name)}--${this.safeStableId(
-      input.entityId
-    )}`
+    const directoryName = this.getManagedDirectoryName({
+      entityId: input.entityId,
+      name: input.name
+    })
     const finalPath = resolve(input.parentPath, directoryName)
-    this.assertInside(input.parentPath, finalPath)
+    this.securePaths.assertInside(input.parentPath, finalPath)
+    try {
+      await stat(finalPath)
+      throw new Error('Managed directory already exists')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
     await mkdir(input.temporaryRoot, { recursive: true })
     const temporaryPath = resolve(
       input.temporaryRoot,
       `${directoryName}-${randomUUID()}.tmp`
     )
-    await mkdir(resolve(temporaryPath, '.realmflow'), { recursive: true })
-    for (const directory of input.directories) {
-      await mkdir(resolve(temporaryPath, directory), { recursive: true })
+    try {
+      await mkdir(resolve(temporaryPath, '.realmflow'), { recursive: true })
+      for (const directory of input.directories) {
+        await mkdir(resolve(temporaryPath, directory), { recursive: true })
+      }
+      await this.writeJsonAtomically(
+        resolve(temporaryPath, '.realmflow', input.manifestName),
+        input.manifest
+      )
+    } catch (error) {
+      await rm(temporaryPath, { recursive: true, force: true })
+      throw error
     }
-    await this.writeJsonAtomically(
-      resolve(temporaryPath, '.realmflow', input.manifestName),
-      input.manifest
-    )
 
     let committed = false
     return {
@@ -536,6 +910,23 @@ export class WorkspaceService {
     await rename(temporaryPath, targetPath)
   }
 
+  private async withActiveWrite<T>(
+    rootPath: string,
+    operation: () => Promise<T>
+  ): Promise<T> {
+    this.activeWrites.set(rootPath, (this.activeWrites.get(rootPath) ?? 0) + 1)
+    try {
+      return await operation()
+    } finally {
+      const remaining = (this.activeWrites.get(rootPath) ?? 1) - 1
+      if (remaining === 0) {
+        this.activeWrites.delete(rootPath)
+      } else {
+        this.activeWrites.set(rootPath, remaining)
+      }
+    }
+  }
+
   private safeDirectoryName(name: string): string {
     const safe = name
       .normalize('NFKC')
@@ -549,9 +940,9 @@ export class WorkspaceService {
   }
 
   private safeStableId(id: string): string {
-    const safe = id.replace(/[^A-Za-z0-9_-]/g, '')
-    if (!safe) throw new Error('Managed directory id is invalid')
-    return safe.slice(-24)
+    const validId = this.securePaths.validateStableId(id)
+    if (validId.length <= 24) return validId
+    return createHash('sha256').update(validId).digest('hex').slice(0, 24)
   }
 
   private async readWorkspaceFile(
@@ -561,12 +952,12 @@ export class WorkspaceService {
     const fileStats = await stat(targetPath)
     if (!fileStats.isFile()) throw new Error('Path is not a file')
     const kind = this.fileKind(relativePath)
-    if (kind !== 'image' && fileStats.size > MAX_TEXT_FILE_SIZE) {
+    if (!this.isBinaryKind(kind) && fileStats.size > MAX_TEXT_FILE_SIZE) {
       throw new Error('File exceeds the editable size limit')
     }
 
-    const content = kind === 'image' ? '' : await readFile(targetPath, 'utf8')
-    if (kind !== 'image' && content.includes('\0')) {
+    const content = this.isBinaryKind(kind) ? '' : await readFile(targetPath, 'utf8')
+    if (!this.isBinaryKind(kind) && content.includes('\0')) {
       throw new Error('Binary files are read-only')
     }
 
@@ -585,6 +976,8 @@ export class WorkspaceService {
   private fileKind(filePath: string): WorkspaceFileKind {
     const extension = extname(filePath).toLowerCase()
     if (IMAGE_EXTENSIONS.has(extension)) return 'image'
+    if (FIXED_LAYOUT_EXTENSIONS.has(extension)) return 'fixed-layout'
+    if (BINARY_EXTENSIONS.has(extension)) return 'binary'
     if (MARKDOWN_EXTENSIONS.has(extension)) return 'markdown'
     if (HTML_EXTENSIONS.has(extension)) return 'html'
     if (LANGUAGE_BY_EXTENSION[extension]) return 'code'
@@ -592,7 +985,15 @@ export class WorkspaceService {
   }
 
   private language(filePath: string): string {
+    if (FIXED_LAYOUT_EXTENSIONS.has(extname(filePath).toLowerCase())) {
+      return 'binary'
+    }
+    if (BINARY_EXTENSIONS.has(extname(filePath).toLowerCase())) return 'binary'
     return LANGUAGE_BY_EXTENSION[extname(filePath).toLowerCase()] ?? 'plaintext'
+  }
+
+  private isBinaryKind(kind: WorkspaceFileKind): boolean {
+    return kind === 'image' || kind === 'fixed-layout' || kind === 'binary'
   }
 
   private createVersion(modifiedAt: number, size: number): string {
@@ -624,23 +1025,10 @@ export class WorkspaceService {
         if (!artifact || typeof artifact.path !== 'string') {
           throw new Error('Requirement manifest is invalid')
         }
-        this.assertRelativePath(artifact.path)
+        this.securePaths.normalizeRelativePath(artifact.path)
       }
     }
     return candidate
-  }
-
-  private assertRelativePath(filePath: string): void {
-    if (
-      !filePath ||
-      filePath.includes('\0') ||
-      isAbsolute(filePath) ||
-      filePath === '..' ||
-      filePath.startsWith('../') ||
-      filePath.includes('/../')
-    ) {
-      throw new Error('Path is outside the bound workspace')
-    }
   }
 
   private assertRequirementId(requirementId: string): void {

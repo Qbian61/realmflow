@@ -6,7 +6,15 @@ requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115,<1.0",
   "httpx>=0.28,<1.0",
-  "uvicorn[standard]>=0.32,<1.0"
+  "numpy>=2,<3",
+  "onnxruntime>=1.20,<2",
+  "openpyxl==3.1.5",
+  "python-docx==1.2.0",
+  "python-pptx==1.0.2",
+  "tokenizers>=0.20,<1",
+  "tree-sitter-language-pack>=0.13,<1.0",
+  "uvicorn[standard]>=0.32,<1.0",
+  "xlrd==2.0.2",
 ]
 
 [project.optional-dependencies]

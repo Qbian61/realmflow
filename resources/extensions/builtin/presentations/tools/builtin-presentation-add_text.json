@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.presentation.add_text",
+  "version": "1.0.0",
+  "name": "Add presentation text",
+  "description": "Add a bounded text box to a slide.",
+  "tags": [
+    "presentation"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "presentation.add_text",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sessionId": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+      },
+      "expectedRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "slideId": {
+        "type": "string",
+        "pattern": "^slide-[0-9]+$"
+      },
+      "text": {
+        "type": "string",
+        "maxLength": 100000
+      },
+      "bounds": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "leftPt",
+          "topPt",
+          "widthPt",
+          "heightPt"
+        ],
+        "properties": {
+          "leftPt": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 2880
+          },
+          "topPt": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 2880
+          },
+          "widthPt": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 2880
+          },
+          "heightPt": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 2880
+          }
+        }
+      }
+    },
+    "required": [
+      "sessionId",
+      "expectedRevision",
+      "slideId",
+      "text",
+      "bounds"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "filesystem.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "add presentation text"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

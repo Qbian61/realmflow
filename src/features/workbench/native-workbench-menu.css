@@ -14,16 +14,12 @@ body.native-overlay-body {
   background: transparent;
 }
 
-.native-workbench-menu {
-  display: grid;
+.ui-menu.native-workbench-menu {
+  position: relative;
   width: 100%;
+  max-width: none;
   min-height: 100vh;
   padding: 10px;
-  color: #292929;
-  background: #fff;
-  border: 1px solid #e2e2e2;
-  border-radius: 10px;
-  box-shadow: 0 16px 38px rgba(0, 0, 0, 0.14);
   font-family:
     Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
@@ -40,7 +36,7 @@ body.native-overlay-body {
 .native-workbench-menu input {
   min-width: 0;
   padding: 0;
-  color: #292929;
+  color: var(--tone-292929);
   background: transparent;
   border: 0;
   outline: none;
@@ -48,37 +44,21 @@ body.native-overlay-body {
   font-size: 13px;
 }
 
+.native-workbench-menu label:focus-within {
+  box-shadow: inset 0 -2px var(--color-focus);
+}
+
 .native-workbench-menu kbd {
-  color: #8a8a8a;
+  color: var(--tone-8a8a8a);
   font-family: inherit;
   font-size: 11px;
 }
 
-.native-workbench-menu-divider {
-  height: 1px;
+.native-workbench-menu .native-workbench-menu-divider {
   margin: 4px 0 6px;
-  background: #e7e7e7;
 }
 
-.native-workbench-menu > button {
-  display: grid;
+.native-workbench-menu > .ui-menu-item {
   height: 34px;
-  grid-template-columns: 24px minmax(0, 1fr);
-  align-items: center;
-  gap: 7px;
-  padding: 0 8px;
-  color: #292929;
-  background: transparent;
-  border: 0;
-  border-radius: 6px;
-  text-align: left;
-  cursor: pointer;
-  font: inherit;
   font-size: 13px;
-}
-
-.native-workbench-menu > button:hover,
-.native-workbench-menu > button:focus-visible {
-  background: #f1f1f1;
-  outline: none;
 }

@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.presentation.copy_slide",
+  "version": "1.0.0",
+  "name": "Copy presentation slide",
+  "description": "Copy a slide and its local relationships.",
+  "tags": [
+    "presentation"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "presentation.copy_slide",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sessionId": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+      },
+      "expectedRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "slideId": {
+        "type": "string",
+        "pattern": "^slide-[0-9]+$"
+      },
+      "afterSlideId": {
+        "type": "string",
+        "pattern": "^slide-[0-9]+$"
+      }
+    },
+    "required": [
+      "sessionId",
+      "expectedRevision",
+      "slideId",
+      "afterSlideId"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "filesystem.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "copy presentation slide"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

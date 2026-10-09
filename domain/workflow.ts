@@ -1,4 +1,7 @@
 import type { RequirementStageId } from './requirement'
+import type { ModelCapability } from './model'
+import type { ToolCapability } from './tool-definition'
+import type { WorkflowExecutionStatus } from './workflow-execution'
 
 export type WorkflowNodeType =
   'ai_generate' | 'human_input' | 'tool' | 'approval'
@@ -19,6 +22,7 @@ export type NodeRunStatus =
 export type AiGenerateExecutorConfig = {
   kind: 'ai_generate'
   prompt: string
+  reasoning?: WorkflowReasoningPolicy
   artifact: {
     relativePath: string
     kind: string
@@ -29,6 +33,54 @@ export type AiGenerateExecutorConfig = {
   legacyStageId?: RequirementStageId
 }
 
+export type WorkflowReasoningPolicy =
+  'inherit' | 'off' | 'low' | 'medium' | 'high'
+
+export type WorkflowNodeConfiguration = {
+  input: {
+    includeRequirementBody: boolean
+    predecessorArtifacts: 'none' | 'direct' | 'all'
+    includeSpaceKnowledge: boolean
+    attachments: string[]
+  }
+  prompt: string
+  reasoning?: WorkflowReasoningPolicy
+  model:
+    | { strategy: 'inherit' }
+    | { strategy: 'fixed'; profileId: string }
+    | {
+        strategy: 'capability'
+        requiredCapabilities: ModelCapability[]
+        minimumContextWindow: number
+      }
+  connectorIds: string[]
+  permissions: Array<{
+    capability: ToolCapability
+    scope: 'requirement' | 'space'
+  }>
+  artifact: {
+    required: boolean
+    relativePath: string
+    kind: string
+  }
+  todos: Array<{
+    title: string
+    required: boolean
+  }>
+  completionGate: {
+    requireApproval: boolean
+    customGateId?: string
+  }
+  retry: {
+    maxAttempts: number
+    backoffMs: number
+  }
+  skip: {
+    allowed: boolean
+    requireReason: boolean
+  }
+}
+
 export type RequirementNode = {
   id: string
   type: WorkflowNodeType
@@ -37,6 +89,7 @@ export type RequirementNode = {
   order: number
   status: NodeRunStatus
   allowSkip: boolean
+  configuration?: WorkflowNodeConfiguration
   executor?: AiGenerateExecutorConfig
   completionGate?: {
     requireApproval?: boolean
@@ -50,12 +103,57 @@ export type WorkflowEdge = {
   targetNodeId: string
 }
 
+export type WorkflowNodePosition = {
+  x: number
+  y: number
+}
+
 export type RequirementWorkflow = {
   requirementId: string
   templateVersionId: string
   revision: number
+  maxParallelism: number
   nodes: RequirementNode[]
   edges: WorkflowEdge[]
+}
+
+export type WorkflowTopologyDiff = {
+  addedNodeIds: string[]
+  removedNodeIds: string[]
+  updatedNodeIds: string[]
+  reorderedNodeIds: string[]
+  addedEdgeIds: string[]
+  removedEdgeIds: string[]
+  updatedEdgeIds: string[]
+}
+
+export type WorkflowRevisionReason =
+  | 'workflow_created'
+  | 'node_inserted'
+  | 'node_updated'
+  | 'node_removed'
+  | 'edge_updated'
+  | 'nodes_reordered'
+  | 'node_status_changed'
+  | 'node_skipped'
+  | 'template_migrated'
+  | 'startup_interrupted'
+  | 'parallelism_changed'
+  | 'workflow_rolled_back'
+
+export type WorkflowRevisionTriggerSource = 'user' | 'system' | 'recovery'
+
+export type WorkflowRevisionMetadata = {
+  reason: WorkflowRevisionReason
+  triggerSource: WorkflowRevisionTriggerSource
+}
+
+export type RequirementWorkflowRevisionRecord = WorkflowRevisionMetadata & {
+  requirementId: string
+  revision: number
+  snapshot: RequirementWorkflow
+  diff: WorkflowTopologyDiff
+  createdAt: number
 }
 
 export type WorkflowValidationResult = {
@@ -69,6 +167,18 @@ export type InsertRequirementNodeInput = {
   beforeNodeId?: string
 }
 
+export type UpdateRequirementNodeInput = Partial<
+  Pick<
+    RequirementNode,
+    | 'name'
+    | 'description'
+    | 'allowSkip'
+    | 'configuration'
+    | 'executor'
+    | 'completionGate'
+  >
+>
+
 export type WorkflowTemplateSnapshot = {
   id: string
   nodes: Array<
@@ -80,11 +190,22 @@ export type WorkflowTemplateSnapshot = {
   edges: WorkflowEdge[]
 }
 
-const IMMUTABLE_TOPOLOGY_STATUSES = new Set<NodeRunStatus>([
+const EDITABLE_NODE_STATUSES = new Set<NodeRunStatus>(['pending', 'ready'])
+const ACTIVE_NODE_STATUSES = new Set<NodeRunStatus>([
+  'ready',
   'running',
-  'completed',
-  'skipped'
+  'waiting_user',
+  'paused',
+  'blocked',
+  'interrupted'
 ])
+
+function compareWorkflowNodes(
+  left: Pick<RequirementNode, 'id' | 'order'>,
+  right: Pick<RequirementNode, 'id' | 'order'>
+): number {
+  return left.order - right.order || left.id.localeCompare(right.id)
+}
 
 function edgeId(sourceNodeId: string, targetNodeId: string): string {
   return `${sourceNodeId}--${targetNodeId}`
@@ -107,15 +228,96 @@ function assertTopologyMutable(
     if (!nodeId) continue
     const target = workflow.nodes.find((item) => item.id === nodeId)
     if (!target) throw new Error(`Workflow node not found: ${nodeId}`)
-    if (IMMUTABLE_TOPOLOGY_STATUSES.has(target.status)) {
-      throw new Error('Completed workflow nodes are immutable')
+    if (!EDITABLE_NODE_STATUSES.has(target.status)) {
+      throw new Error('Only pending or ready workflow nodes can edit topology')
     }
+  }
+}
+
+function requireWorkflowNode(
+  workflow: RequirementWorkflow,
+  nodeId: string
+): RequirementNode {
+  const node = workflow.nodes.find((item) => item.id === nodeId)
+  if (!node) throw new Error(`Workflow node not found: ${nodeId}`)
+  return node
+}
+
+function assertNodeEditable(node: RequirementNode, operation: string): void {
+  if (!EDITABLE_NODE_STATUSES.has(node.status)) {
+    throw new Error(`Only pending or ready workflow nodes can be ${operation}`)
+  }
+}
+
+function cloneNodeConfiguration(
+  configuration: WorkflowNodeConfiguration
+): WorkflowNodeConfiguration {
+  return {
+    ...configuration,
+    input: {
+      ...configuration.input,
+      attachments: [...configuration.input.attachments]
+    },
+    model: { ...configuration.model },
+    connectorIds: [...configuration.connectorIds],
+    permissions: configuration.permissions.map((permission) => ({
+      ...permission
+    })),
+    artifact: { ...configuration.artifact },
+    todos: configuration.todos.map((todo) => ({ ...todo })),
+    completionGate: { ...configuration.completionGate },
+    retry: { ...configuration.retry },
+    skip: { ...configuration.skip }
+  }
+}
+
+function cloneNodeExecutor(
+  executor: AiGenerateExecutorConfig
+): AiGenerateExecutorConfig {
+  return {
+    ...executor,
+    artifact: { ...executor.artifact },
+    ...(executor.context
+      ? {
+          context: {
+            ...executor.context,
+            ...(executor.context.attachments
+              ? { attachments: [...executor.context.attachments] }
+              : {})
+          }
+        }
+      : {})
   }
 }
 
 function assertValidWorkflow(workflow: RequirementWorkflow): void {
   const result = validateWorkflow(workflow)
   if (!result.valid) throw new Error(result.errors[0])
+}
+
+function recalculateEditableNodeStatuses(
+  workflow: RequirementWorkflow
+): RequirementWorkflow {
+  const recalculationInput = {
+    ...workflow,
+    nodes: workflow.nodes.map((node) =>
+      EDITABLE_NODE_STATUSES.has(node.status)
+        ? { ...node, status: 'pending' as const }
+        : node
+    )
+  }
+  const readyNodeIds = new Set(getStableReadyNodeIds(recalculationInput))
+  return {
+    ...workflow,
+    nodes: workflow.nodes.map((node) =>
+      EDITABLE_NODE_STATUSES.has(node.status)
+        ? {
+            ...node,
+            status: readyNodeIds.has(node.id) ? 'ready' : 'pending'
+          }
+        : node
+    )
+  }
 }
 
 export function validateWorkflow(
@@ -195,11 +397,56 @@ export function instantiateRequirementWorkflow(
     requirementId,
     templateVersionId: template.id,
     revision: 0,
-    nodes: template.nodes.map(({ stableKey: _stableKey, ...node }) => ({
-      ...node,
-      id: instanceNodeId.get(node.id) as string,
-      status: 'pending'
-    })),
+    maxParallelism: 1,
+    nodes: template.nodes.map(({ stableKey: _stableKey, ...node }) => {
+      const configuration = node.configuration
+        ? {
+            ...node.configuration,
+            input: {
+              ...node.configuration.input,
+              attachments: [...node.configuration.input.attachments]
+            },
+            model: { ...node.configuration.model },
+            connectorIds: [...node.configuration.connectorIds],
+            permissions: node.configuration.permissions.map((permission) => ({
+              ...permission
+            })),
+            artifact: { ...node.configuration.artifact },
+            todos: node.configuration.todos.map((todo) => ({ ...todo })),
+            completionGate: { ...node.configuration.completionGate },
+            retry: { ...node.configuration.retry },
+            skip: { ...node.configuration.skip }
+          }
+        : undefined
+      const executor = node.executor
+        ? {
+            ...node.executor,
+            artifact: { ...node.executor.artifact },
+            ...(node.executor.context
+              ? {
+                  context: {
+                    ...node.executor.context,
+                    ...(node.executor.context.attachments
+                      ? {
+                          attachments: [...node.executor.context.attachments]
+                        }
+                      : {})
+                  }
+                }
+              : {})
+          }
+        : undefined
+      return {
+        ...node,
+        ...(configuration ? { configuration } : {}),
+        ...(executor ? { executor } : {}),
+        ...(node.completionGate
+          ? { completionGate: { ...node.completionGate } }
+          : {}),
+        id: instanceNodeId.get(node.id) as string,
+        status: 'pending'
+      }
+    }),
     edges: template.edges.map((edge) => ({
       id: `${requirementId}:${edge.id}`,
       sourceNodeId: instanceNodeId.get(edge.sourceNodeId) as string,
@@ -207,13 +454,70 @@ export function instantiateRequirementWorkflow(
     }))
   }
   assertValidWorkflow(workflow)
-  const firstReadyNodeId = getReadyNodeIds(workflow)[0]
+  const readyNodeIds = new Set(getStableReadyNodeIds(workflow))
   return {
     ...workflow,
     nodes: workflow.nodes.map((node) =>
-      node.id === firstReadyNodeId ? { ...node, status: 'ready' } : node
+      readyNodeIds.has(node.id) ? { ...node, status: 'ready' } : node
     )
   }
+}
+
+export function createWorkflowTopologyDiff(
+  previous: RequirementWorkflow | undefined,
+  current: RequirementWorkflow
+): WorkflowTopologyDiff {
+  const previousNodes = new Map(
+    (previous?.nodes ?? []).map((node) => [node.id, node])
+  )
+  const currentNodes = new Map(current.nodes.map((node) => [node.id, node]))
+  const previousEdges = new Map(
+    (previous?.edges ?? []).map((edge) => [edge.id, edge])
+  )
+  const currentEdges = new Map(current.edges.map((edge) => [edge.id, edge]))
+
+  return {
+    addedNodeIds: current.nodes
+      .filter((node) => !previousNodes.has(node.id))
+      .map((node) => node.id),
+    removedNodeIds: (previous?.nodes ?? [])
+      .filter((node) => !currentNodes.has(node.id))
+      .map((node) => node.id),
+    updatedNodeIds: current.nodes
+      .filter((node) => {
+        const prior = previousNodes.get(node.id)
+        return prior ? nodeContentChanged(prior, node) : false
+      })
+      .map((node) => node.id),
+    reorderedNodeIds: current.nodes
+      .filter((node) => previousNodes.get(node.id)?.order !== node.order)
+      .filter((node) => previousNodes.has(node.id))
+      .map((node) => node.id),
+    addedEdgeIds: current.edges
+      .filter((edge) => !previousEdges.has(edge.id))
+      .map((edge) => edge.id),
+    removedEdgeIds: (previous?.edges ?? [])
+      .filter((edge) => !currentEdges.has(edge.id))
+      .map((edge) => edge.id),
+    updatedEdgeIds: current.edges
+      .filter((edge) => {
+        const prior = previousEdges.get(edge.id)
+        return prior
+          ? prior.sourceNodeId !== edge.sourceNodeId ||
+              prior.targetNodeId !== edge.targetNodeId
+          : false
+      })
+      .map((edge) => edge.id)
+  }
+}
+
+function nodeContentChanged(
+  previous: RequirementNode,
+  current: RequirementNode
+): boolean {
+  const { order: _previousOrder, ...previousContent } = previous
+  const { order: _currentOrder, ...currentContent } = current
+  return JSON.stringify(previousContent) !== JSON.stringify(currentContent)
 }
 
 export function insertRequirementNode(
@@ -223,7 +527,14 @@ export function insertRequirementNode(
   if (workflow.nodes.some((node) => node.id === input.node.id)) {
     throw new Error(`Workflow node already exists: ${input.node.id}`)
   }
-  assertTopologyMutable(workflow, [input.afterNodeId, input.beforeNodeId])
+  if (input.node.status !== 'pending') {
+    throw new Error('Inserted workflow nodes must be pending')
+  }
+  for (const nodeId of [input.afterNodeId, input.beforeNodeId]) {
+    if (nodeId) {
+      assertNodeEditable(requireWorkflowNode(workflow, nodeId), 'edited')
+    }
+  }
 
   let edges = [...workflow.edges]
   if (input.afterNodeId && input.beforeNodeId) {
@@ -277,15 +588,16 @@ export function removeRequirementNode(
   workflow: RequirementWorkflow,
   nodeId: string
 ): RequirementWorkflow {
-  assertTopologyMutable(workflow, [nodeId])
+  const node = requireWorkflowNode(workflow, nodeId)
+  if (node.status !== 'pending') {
+    throw new Error('Only pending workflow nodes can be removed')
+  }
   const predecessors = workflow.edges
     .filter((edge) => edge.targetNodeId === nodeId)
     .map((edge) => edge.sourceNodeId)
   const successors = workflow.edges
     .filter((edge) => edge.sourceNodeId === nodeId)
     .map((edge) => edge.targetNodeId)
-  assertTopologyMutable(workflow, [...predecessors, ...successors])
-
   const retainedEdges = workflow.edges.filter(
     (edge) => edge.sourceNodeId !== nodeId && edge.targetNodeId !== nodeId
   )
@@ -313,6 +625,41 @@ export function removeRequirementNode(
   return updated
 }
 
+export function updateRequirementNode(
+  workflow: RequirementWorkflow,
+  nodeId: string,
+  changes: UpdateRequirementNodeInput
+): RequirementWorkflow {
+  const current = requireWorkflowNode(workflow, nodeId)
+  assertNodeEditable(current, 'updated')
+  const name = changes.name === undefined ? current.name : changes.name.trim()
+  if (!name) throw new Error('Workflow node name is required')
+
+  const updatedNode: RequirementNode = {
+    ...current,
+    ...changes,
+    name,
+    ...(changes.configuration
+      ? { configuration: cloneNodeConfiguration(changes.configuration) }
+      : {}),
+    ...(changes.executor
+      ? { executor: cloneNodeExecutor(changes.executor) }
+      : {}),
+    ...(changes.completionGate
+      ? { completionGate: { ...changes.completionGate } }
+      : {})
+  }
+  const updated = {
+    ...workflow,
+    revision: workflow.revision + 1,
+    nodes: workflow.nodes.map((node) =>
+      node.id === nodeId ? updatedNode : node
+    )
+  }
+  assertValidWorkflow(updated)
+  return updated
+}
+
 export function updateRequirementEdge(
   workflow: RequirementWorkflow,
   edgeIdToReplace: string,
@@ -320,6 +667,12 @@ export function updateRequirementEdge(
 ): RequirementWorkflow {
   const current = workflow.edges.find((item) => item.id === edgeIdToReplace)
   if (!current) throw new Error(`Workflow edge not found: ${edgeIdToReplace}`)
+  if (
+    current.sourceNodeId === edge.sourceNodeId &&
+    current.targetNodeId === edge.targetNodeId
+  ) {
+    return workflow
+  }
   assertTopologyMutable(workflow, [
     current.sourceNodeId,
     current.targetNodeId,
@@ -334,7 +687,7 @@ export function updateRequirementEdge(
     )
   }
   assertValidWorkflow(updated)
-  return updated
+  return recalculateEditableNodeStatuses(updated)
 }
 
 export function reorderRequirementNodes(
@@ -354,13 +707,20 @@ export function reorderRequirementNodes(
   const newOrder = new Map(orderedNodeIds.map((id, order) => [id, order]))
   for (const node of workflow.nodes) {
     if (
-      IMMUTABLE_TOPOLOGY_STATUSES.has(node.status) &&
+      !EDITABLE_NODE_STATUSES.has(node.status) &&
       oldOrder.get(node.id) !== newOrder.get(node.id)
     ) {
-      throw new Error('Completed workflow nodes are immutable')
+      throw new Error('Only pending or ready workflow nodes can edit topology')
     }
   }
-  return {
+  if (
+    workflow.nodes.every(
+      (node) => oldOrder.get(node.id) === newOrder.get(node.id)
+    )
+  ) {
+    return workflow
+  }
+  const updated = {
     ...workflow,
     revision: workflow.revision + 1,
     nodes: orderedNodeIds.map((id, order) => ({
@@ -368,6 +728,8 @@ export function reorderRequirementNodes(
       order
     }))
   }
+  assertValidWorkflow(updated)
+  return recalculateEditableNodeStatuses(updated)
 }
 
 export function getReadyNodeIds(workflow: RequirementWorkflow): string[] {
@@ -381,10 +743,7 @@ export function getReadyNodeIds(workflow: RequirementWorkflow): string[] {
   }
 
   return [...workflow.nodes]
-    .sort(
-      (left, right) =>
-        left.order - right.order || left.id.localeCompare(right.id)
-    )
+    .sort(compareWorkflowNodes)
     .filter((node) => {
       if (node.status !== 'pending' && node.status !== 'ready') return false
       return (predecessors.get(node.id) ?? []).every((predecessorId) => {
@@ -393,4 +752,121 @@ export function getReadyNodeIds(workflow: RequirementWorkflow): string[] {
       })
     })
     .map((node) => node.id)
+}
+
+export function getStableReadyNodeId(
+  workflow: RequirementWorkflow
+): string | undefined {
+  if (
+    workflow.nodes.some(
+      (node) => ACTIVE_NODE_STATUSES.has(node.status) && node.status !== 'ready'
+    )
+  ) {
+    return undefined
+  }
+
+  return getStableReadyNodeIds({
+    ...workflow,
+    maxParallelism: 1
+  })[0]
+}
+
+export function getStableReadyNodeIds(workflow: RequirementWorkflow): string[] {
+  const activeNodes = [...workflow.nodes]
+    .filter((node) => ACTIVE_NODE_STATUSES.has(node.status))
+    .sort(compareWorkflowNodes)
+  const availableSlots = Math.max(
+    0,
+    workflow.maxParallelism - activeNodes.length
+  )
+  if (availableSlots === 0) {
+    return activeNodes.map((node) => node.id)
+  }
+
+  const activeNodeIds = new Set(activeNodes.map((node) => node.id))
+  const candidates = getReadyNodeIds(workflow)
+    .filter((nodeId) => !activeNodeIds.has(nodeId))
+    .slice(0, availableSlots)
+
+  return [...activeNodes.map((node) => node.id), ...candidates]
+}
+
+export function setWorkflowParallelism(
+  workflow: RequirementWorkflow,
+  maxParallelism: number
+): RequirementWorkflow {
+  if (
+    !Number.isSafeInteger(maxParallelism) ||
+    maxParallelism < 1 ||
+    maxParallelism > 8
+  ) {
+    throw new Error('Workflow parallelism must be an integer from 1 to 8')
+  }
+  if (workflow.maxParallelism === maxParallelism) return workflow
+
+  return {
+    ...workflow,
+    revision: workflow.revision + 1,
+    maxParallelism
+  }
+}
+
+export type WorkflowExecutionProjection = {
+  activeNodeIds: string[]
+  focusedNodeId?: string
+  status: WorkflowExecutionStatus
+}
+
+export function getWorkflowExecutionProjection(
+  workflow: RequirementWorkflow
+): WorkflowExecutionProjection {
+  const orderedNodes = [...workflow.nodes].sort(compareWorkflowNodes)
+  const activeNodes = orderedNodes.filter((node) =>
+    ACTIVE_NODE_STATUSES.has(node.status)
+  )
+  const focusedNode =
+    activeNodes[0] ??
+    orderedNodes.find(
+      (node) => node.status !== 'completed' && node.status !== 'skipped'
+    )
+
+  let status: WorkflowExecutionStatus
+  if (
+    orderedNodes.every(
+      (node) => node.status === 'completed' || node.status === 'skipped'
+    )
+  ) {
+    status = 'completed'
+  } else if (
+    activeNodes.some(
+      (node) => node.status === 'ready' || node.status === 'running'
+    ) ||
+    getReadyNodeIds(workflow).some((nodeId) => {
+      const node = requireWorkflowNode(workflow, nodeId)
+      return node.status === 'pending'
+    })
+  ) {
+    status = 'running'
+  } else if (
+    activeNodes.some(
+      (node) => node.status === 'waiting_user' || node.status === 'blocked'
+    )
+  ) {
+    status = 'waiting_user'
+  } else if (
+    activeNodes.length > 0 &&
+    activeNodes.every((node) => node.status === 'paused')
+  ) {
+    status = 'paused'
+  } else if (activeNodes.some((node) => node.status === 'interrupted')) {
+    status = 'interrupted'
+  } else {
+    status = 'failed'
+  }
+
+  return {
+    activeNodeIds: activeNodes.map((node) => node.id),
+    ...(focusedNode ? { focusedNodeId: focusedNode.id } : {}),
+    status
+  }
 }

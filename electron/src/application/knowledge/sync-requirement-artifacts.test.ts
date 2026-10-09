@@ -1,179 +1,131 @@
+import { createHash } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
-import {
-  SyncRequirementArtifactsUseCase,
-  type KnowledgeDocument,
-  type KnowledgeSyncDependencies
-} from './sync-requirement-artifacts'
+import { SyncRequirementArtifactsUseCase } from './sync-requirement-artifacts'
 
-function createHarness(
-  overrides: Partial<KnowledgeSyncDependencies> = {}
-): {
-  documents: KnowledgeDocument[]
-  dependencies: KnowledgeSyncDependencies
-} {
-  const documents: KnowledgeDocument[] = []
-  return {
-    documents,
-    dependencies: {
+describe('SyncRequirementArtifactsUseCase', () => {
+  it('enqueues every current formal artifact through the shared coordinator', async () => {
+    const coordinator = {
+      enqueueSnapshot: vi.fn().mockResolvedValue({
+        status: 'enqueued',
+        job: { id: 'job-1', generationId: 'generation-1' }
+      })
+    }
+    const useCase = new SyncRequirementArtifactsUseCase({
       requirements: {
-        get: async () => ({
+        get: vi.fn().mockResolvedValue({
           id: 'requirement-1',
-          workspaceId: 'workspace-1',
+          workspaceId: 'space-1',
           status: 'completed',
           syncCompletedArtifactsToKnowledge: true
         })
       },
       artifacts: {
-        listByRequirement: async () => [
-          {
-            id: 'artifact-formal',
-            requirementId: 'requirement-1',
-            nodeId: 'node-design',
-            relativePath: 'artifacts/design.md',
-            checksum: 'sha256:v1',
-            version: 1,
-            formal: true
-          },
-          {
-            id: 'artifact-draft',
-            requirementId: 'requirement-1',
-            relativePath: '.drafts/design.md',
-            checksum: 'sha256:draft',
-            version: 1,
-            formal: false
-          }
-        ],
-        readContent: async ({ id }) =>
-          id === 'artifact-formal' ? '# Design\n\nStable content.' : '# Draft'
+        listByRequirement: vi.fn().mockResolvedValue([
+          artifact({ formal: true }),
+          artifact({ id: 'draft-1', formal: false })
+        ]),
+        readContent: vi.fn().mockResolvedValue('accepted design')
       },
-      knowledge: {
-        getBySource: async (requirementId, sourcePath) =>
-          documents.find(
-            (item) =>
-              item.sourceRequirementId === requirementId &&
-              item.sourcePath === sourcePath
-          ),
-        replaceDocument: async (document) => {
-          const index = documents.findIndex(
-            (item) =>
-              item.sourceRequirementId === document.sourceRequirementId &&
-              item.sourcePath === document.sourcePath
-          )
-          if (index === -1) documents.push(document)
-          else documents[index] = document
-        }
-      },
-      jobs: {
-        recordFailure: vi.fn()
-      },
-      now: () => 100,
-      createId: (kind, sourceId) => `${kind}-${sourceId}`,
-      ...overrides
-    }
-  }
-}
-
-describe('SyncRequirementArtifactsUseCase', () => {
-  it('syncs only formal artifacts after an opted-in requirement completes', async () => {
-    const harness = createHarness()
-    const useCase = new SyncRequirementArtifactsUseCase(harness.dependencies)
+      coordinator
+    })
 
     await expect(useCase.execute('requirement-1')).resolves.toEqual({
       synced: 1,
-      skipped: 0,
-      failed: 0
-    })
-    expect(harness.documents).toEqual([
-      expect.objectContaining({
-        id: 'document-artifact-formal',
-        workspaceId: 'workspace-1',
-        sourceRequirementId: 'requirement-1',
-        sourceNodeId: 'node-design',
-        sourceArtifactId: 'artifact-formal',
-        sourceVersion: 1,
-        checksum: 'sha256:v1',
-        content: '# Design\n\nStable content.'
-      })
-    ])
-  })
-
-  it('is checksum-idempotent and replaces chunks for a newer artifact version', async () => {
-    const harness = createHarness()
-    const useCase = new SyncRequirementArtifactsUseCase(harness.dependencies, {
-      chunkSize: 8
-    })
-
-    await useCase.execute('requirement-1')
-    await expect(useCase.execute('requirement-1')).resolves.toEqual({
-      synced: 0,
       skipped: 1,
       failed: 0
     })
-    expect(harness.documents).toHaveLength(1)
-
-    harness.dependencies.artifacts.listByRequirement = async () => [
+    expect(coordinator.enqueueSnapshot).toHaveBeenCalledWith(
       {
-        id: 'artifact-formal-v2',
-        requirementId: 'requirement-1',
-        nodeId: 'node-design',
-        relativePath: 'artifacts/design.md',
-        checksum: 'sha256:v2',
-        version: 2,
-        formal: true
-      }
-    ]
-    harness.dependencies.artifacts.readContent = async () =>
-      'Updated artifact content'
-
-    await expect(useCase.execute('requirement-1')).resolves.toEqual({
-      synced: 1,
-      skipped: 0,
-      failed: 0
-    })
-    expect(harness.documents).toHaveLength(1)
-    expect(harness.documents[0]).toMatchObject({
-      sourceVersion: 2,
-      checksum: 'sha256:v2',
-      chunks: [
-        { index: 0, content: 'Updated ' },
-        { index: 1, content: 'artifact' },
-        { index: 2, content: ' content' }
-      ]
-    })
+        scopeKind: 'workspace',
+        scopeId: 'space-1',
+        sourceKind: 'artifact',
+        sourceId: 'artifact-1',
+        sourceRevision: 2,
+        sourceVersion: 'artifact:2',
+        sourceChecksum: digest('accepted design'),
+        documents: [
+          {
+            documentKey: 'artifacts/design.md',
+            sourceEntityId: 'artifact-1',
+            title: 'artifacts/design.md',
+            content: 'accepted design'
+          }
+        ]
+      },
+      'source_event'
+    )
   })
 
-  it('records retryable failures without changing completed requirement state', async () => {
-    const requirement = {
-      id: 'requirement-1',
-      workspaceId: 'workspace-1',
-      status: 'completed' as const,
-      syncCompletedArtifactsToKnowledge: true
-    }
-    const harness = createHarness({
-      requirements: { get: async () => requirement },
-      knowledge: {
-        getBySource: async () => undefined,
-        replaceDocument: async () => {
-          throw new Error('index unavailable')
-        }
-      }
+  it('does not enqueue when the artifact changed before reading', async () => {
+    const coordinator = { enqueueSnapshot: vi.fn() }
+    const useCase = new SyncRequirementArtifactsUseCase({
+      requirements: {
+        get: vi.fn().mockResolvedValue({
+          id: 'requirement-1',
+          workspaceId: 'space-1',
+          status: 'completed',
+          syncCompletedArtifactsToKnowledge: true
+        })
+      },
+      artifacts: {
+        listByRequirement: vi.fn().mockResolvedValue([artifact()]),
+        readContent: vi.fn().mockResolvedValue('changed')
+      },
+      coordinator
     })
-    const useCase = new SyncRequirementArtifactsUseCase(harness.dependencies)
 
     await expect(useCase.execute('requirement-1')).resolves.toEqual({
       synced: 0,
       skipped: 0,
       failed: 1
     })
-    expect(harness.dependencies.jobs.recordFailure).toHaveBeenCalledWith(
-      expect.objectContaining({
-        requirementId: 'requirement-1',
-        artifactId: 'artifact-formal',
-        status: 'failed',
-        retryable: true,
-        error: 'index unavailable'
-      })
-    )
-    expect(requirement.status).toBe('completed')
+    expect(coordinator.enqueueSnapshot).not.toHaveBeenCalled()
+  })
+
+  it('skips requirements that did not opt into artifact knowledge', async () => {
+    const artifacts = {
+      listByRequirement: vi.fn(),
+      readContent: vi.fn()
+    }
+    const useCase = new SyncRequirementArtifactsUseCase({
+      requirements: {
+        get: vi.fn().mockResolvedValue({
+          id: 'requirement-1',
+          workspaceId: 'space-1',
+          status: 'completed',
+          syncCompletedArtifactsToKnowledge: false
+        })
+      },
+      artifacts,
+      coordinator: { enqueueSnapshot: vi.fn() }
+    })
+
+    await expect(useCase.execute('requirement-1')).resolves.toEqual({
+      synced: 0,
+      skipped: 0,
+      failed: 0
+    })
+    expect(artifacts.listByRequirement).not.toHaveBeenCalled()
   })
 })
+
+function artifact(
+  overrides: Partial<{
+    id: string
+    formal: boolean
+  }> = {}
+) {
+  return {
+    id: 'artifact-1',
+    requirementId: 'requirement-1',
+    relativePath: 'artifacts/design.md',
+    checksum: digest('accepted design'),
+    version: 2,
+    formal: true,
+    ...overrides
+  }
+}
+
+function digest(value: string): string {
+  return `sha256:${createHash('sha256').update(value).digest('hex')}`
+}

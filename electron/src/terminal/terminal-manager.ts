@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { homedir } from 'node:os'
+import { basename } from 'node:path'
 import { spawn as spawnPty } from 'node-pty'
 import { IPC_EVENT_CHANNELS } from '../../../shared/ipc-contract'
 import type {
@@ -40,6 +42,7 @@ type TerminalManagerDependencies = {
   spawn?: TerminalSpawner
   shell?: string
   env?: NodeJS.ProcessEnv
+  homeDirectory?: () => string
 }
 
 type ManagedTerminal = {
@@ -55,6 +58,7 @@ export class TerminalManager {
   private readonly spawn: TerminalSpawner
   private readonly shell: string
   private readonly env: Record<string, string>
+  private readonly homeDirectory: () => string
 
   constructor(private readonly dependencies: TerminalManagerDependencies) {
     this.spawn = dependencies.spawn ?? (spawnPty as TerminalSpawner)
@@ -67,6 +71,7 @@ export class TerminalManager {
         (entry): entry is [string, string] => typeof entry[1] === 'string'
       )
     )
+    this.homeDirectory = dependencies.homeDirectory ?? homedir
   }
 
   async create(
@@ -74,15 +79,42 @@ export class TerminalManager {
     workspaceId: string,
     dimensions: TerminalDimensions
   ): Promise<TerminalSession> {
-    this.assertDimensions(dimensions)
     const binding =
       await this.dependencies.workspace.resolveTerminalBinding(workspaceId)
+    return this.createAtDirectory(
+      sender,
+      binding.rootPath,
+      `终端 · ${binding.rootName}`,
+      dimensions
+    )
+  }
+
+  async createHome(
+    sender: TerminalSender,
+    dimensions: TerminalDimensions
+  ): Promise<TerminalSession> {
+    const rootPath = this.homeDirectory()
+    return this.createAtDirectory(
+      sender,
+      rootPath,
+      basename(rootPath) || rootPath,
+      dimensions
+    )
+  }
+
+  private createAtDirectory(
+    sender: TerminalSender,
+    rootPath: string,
+    title: string,
+    dimensions: TerminalDimensions
+  ): TerminalSession {
+    this.assertDimensions(dimensions)
     const id = `terminal-${randomUUID()}`
     const process = this.spawn(this.shell, [], {
       name: 'xterm-256color',
       cols: dimensions.cols,
       rows: dimensions.rows,
-      cwd: binding.rootPath,
+      cwd: rootPath,
       env: {
         ...this.env,
         TERM: 'xterm-256color'
@@ -113,8 +145,9 @@ export class TerminalManager {
     this.sessions.set(id, managed)
     return {
       id,
-      title: `终端 · ${binding.rootName}`,
-      cwd: binding.rootPath
+      title,
+      cwd: rootPath,
+      shell: basename(this.shell)
     }
   }
 

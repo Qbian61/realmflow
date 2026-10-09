@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3'
 import type { ContextAssemblerDependencies } from '../../application/context/context-assembler'
+import type { HybridKnowledgeSearchService } from '../../application/knowledge/hybrid-knowledge-search-service'
 import type { WorkspaceService } from '../../workspace/workspace-service'
 
 type ArtifactRow = {
@@ -7,12 +8,7 @@ type ArtifactRow = {
   relative_path: string
   version: number
   name: string
-}
-
-type KnowledgeRow = {
-  id: string
-  source_version: number
-  content: string
+  depth: number
 }
 
 type ArtifactContextSource = ContextAssemblerDependencies['artifacts']
@@ -23,30 +19,52 @@ export class SqliteContextSources
 {
   constructor(
     private readonly database: Database.Database,
-    private readonly workspace: Pick<WorkspaceService, 'readFile'>
+    private readonly workspace: Pick<WorkspaceService, 'readFile'>,
+    private readonly knowledgeSearch?: Pick<HybridKnowledgeSearchService, 'search'>
   ) {}
 
-  async listPredecessorArtifacts(requirementId: string, nodeId: string) {
+  async listPredecessorArtifacts(
+    requirementId: string,
+    nodeId: string,
+    scope: 'direct' | 'all'
+  ) {
     const rows = this.database
       .prepare(
-        `SELECT a.id, a.relative_path, a.version, source.name
-         FROM requirement_edges edge
+        `WITH RECURSIVE reachable(node_id, depth) AS (
+           SELECT source_node_id, 1
+           FROM requirement_edges
+           WHERE requirement_id = ? AND target_node_id = ?
+           UNION ALL
+           SELECT edge.source_node_id, reachable.depth + 1
+           FROM requirement_edges edge
+           JOIN reachable ON edge.target_node_id = reachable.node_id
+           WHERE edge.requirement_id = ?
+         ),
+         ancestors(node_id, depth) AS (
+           SELECT node_id, MIN(depth) FROM reachable GROUP BY node_id
+         )
+         SELECT a.id, a.relative_path, a.version, source.name, ancestors.depth
+         FROM ancestors
          JOIN requirement_nodes source
-           ON source.requirement_id = edge.requirement_id
-          AND source.id = edge.source_node_id
+           ON source.requirement_id = ?
+          AND source.id = ancestors.node_id
          JOIN artifacts a
-           ON a.requirement_id = edge.requirement_id
-          AND a.node_id = edge.source_node_id
+           ON a.requirement_id = source.requirement_id
+          AND a.node_id = source.id
           AND a.is_primary = 1
-         WHERE edge.requirement_id = ? AND edge.target_node_id = ?
-         ORDER BY source.sort_order, a.version, a.id`
+          AND a.is_valid = 1
+         WHERE (? = 'all' OR ancestors.depth = 1)
+         ORDER BY
+           CASE WHEN ancestors.depth = 1 THEN 0 ELSE 1 END,
+           ancestors.depth, source.sort_order, a.version, a.id`
       )
-      .all(requirementId, nodeId) as ArtifactRow[]
+      .all(requirementId, nodeId, requirementId, requirementId, scope) as ArtifactRow[]
     return Promise.all(
       rows.map(async (row) => ({
         id: row.id,
         version: row.version,
         name: row.name,
+        relationship: row.depth === 1 ? ('direct' as const) : ('ancestor' as const),
         content: (await this.workspace.readFile(requirementId, row.relative_path))
           .content
       }))
@@ -54,38 +72,40 @@ export class SqliteContextSources
   }
 
   async search(requirementId: string, query: string) {
-    const terms = new Set(
-      query
-        .toLocaleLowerCase()
-        .split(/\s+/u)
-        .map((term) => term.trim())
-        .filter((term) => term.length >= 2)
-    )
-    const rows = this.database
-      .prepare(
-        `SELECT chunk.id, document.source_version, chunk.content
-         FROM knowledge_chunks chunk
-         JOIN knowledge_documents document ON document.id = chunk.document_id
-         WHERE document.workspace_id = (
-           SELECT workspace_id FROM requirements WHERE id = ?
-         )
-         ORDER BY document.updated_at DESC, chunk.chunk_index, chunk.id
-         LIMIT 100`
-      )
-      .all(requirementId) as KnowledgeRow[]
-    return rows
-      .map((row) => {
-        const content = row.content.toLocaleLowerCase()
-        const matches = [...terms].filter((term) => content.includes(term)).length
-        return {
-          id: row.id,
-          version: row.source_version,
-          content: row.content,
-          score: terms.size === 0 ? 0 : matches / terms.size
-        }
+    const workspace = this.database
+      .prepare('SELECT workspace_id FROM requirements WHERE id = ?')
+      .get(requirementId) as { workspace_id: string } | undefined
+    if (!workspace) return []
+    return this.searchByWorkspace(workspace.workspace_id, query)
+  }
+
+  async searchByWorkspace(workspaceId: string, query: string) {
+    if (this.knowledgeSearch) {
+      const current = await this.knowledgeSearch.search({
+        scope: { kind: 'workspace', workspaceId },
+        query
       })
-      .filter(({ score }) => score > 0)
-      .sort((left, right) => right.score - left.score || left.id.localeCompare(right.id))
-      .slice(0, 8)
+      return current.map((chunk) => ({
+        id: chunk.id,
+        sourceId: chunk.sourceId,
+        documentKey: chunk.documentKey,
+        generationId: chunk.generationId,
+        sourceVersion: chunk.sourceVersion,
+        chunkId: chunk.chunkId,
+        chunkOrdinal: chunk.chunkOrdinal,
+        startOffset: chunk.startOffset,
+        endOffset: chunk.endOffset,
+        checksum: chunk.checksum,
+        version: chunk.createdAt,
+        content: chunk.content,
+        denseScore: chunk.denseScore,
+        denseRank: chunk.denseRank,
+        bm25Score: chunk.bm25Score,
+        bm25Rank: chunk.bm25Rank,
+        fusionScore: chunk.fusionScore,
+        fusionRank: chunk.fusionRank
+      }))
+    }
+    return []
   }
 }

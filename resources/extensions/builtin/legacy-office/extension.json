@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "packageId": "realmflow.builtin.legacy-office",
+  "version": "1.2.0",
+  "name": "Legacy Office Import",
+  "description": "Non-overwriting local import and safe-copy conversion for Office files.",
+  "publisher": {
+    "name": "RealmFlow",
+    "keyId": "realmflow-builtin-v1"
+  },
+  "compatibility": {
+    "realmflow": ">=0.1.0 <1.0.0",
+    "platforms": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
+  },
+  "tools": [
+    {
+      "path": "tools/builtin-office-inspect_original.json"
+    },
+    {
+      "path": "tools/builtin-office-create_safe_copy.json"
+    },
+    {
+      "path": "tools/builtin-office-import_legacy.json"
+    }
+  ],
+  "skills": [],
+  "assets": []
+}

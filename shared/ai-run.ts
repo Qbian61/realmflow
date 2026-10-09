@@ -30,6 +30,12 @@ export type ListAiRunEventsInput = {
   runId: string
 }
 
+export type AgentRunRecoveryAction = 'resume' | 'branch' | 'cancel'
+
+export type AgentRunRecoveryResult =
+  | { status: 'resumed' | 'cancelled' | 'blocked' }
+  | { status: 'branched'; runId: string }
+
 export interface AiRunApi {
   start: (input: StartAiRunInput) => Promise<{ runId: string }>
   cancel: (runId: string) => Promise<void>
@@ -38,6 +44,10 @@ export interface AiRunApi {
     runId: string
   ) => Promise<{ run: AiRun | undefined; events: AiRunEvent[] }>
   listEvents: (runId: string) => Promise<AiRunEvent[]>
+  recover: (
+    runId: string,
+    action: AgentRunRecoveryAction
+  ) => Promise<AgentRunRecoveryResult>
   onEvent: (listener: (event: AiRunEvent) => void) => () => void
 }
 

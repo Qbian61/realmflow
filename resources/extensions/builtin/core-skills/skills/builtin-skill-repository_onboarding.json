@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.skill.repository_onboarding",
+  "version": "1.0.0",
+  "name": "Repository onboarding",
+  "description": "Identify architecture, tooling, rules, and entry points.",
+  "instructionsPath": "instructions/repository_onboarding.md",
+  "runtime": {
+    "kind": "instruction"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "requiredTools": [
+    {
+      "toolId": "builtin.files.search",
+      "versionRange": "^1.0.0",
+      "required": true
+    },
+    {
+      "toolId": "builtin.files.read",
+      "versionRange": "^1.0.0",
+      "required": true
+    },
+    {
+      "toolId": "builtin.git.log",
+      "versionRange": "^1.0.0",
+      "required": true
+    },
+    {
+      "toolId": "builtin.process.discover",
+      "versionRange": "^1.0.0",
+      "required": true
+    }
+  ],
+  "activation": {
+    "intents": [
+      "repository onboarding"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  },
+  "limits": {
+    "maxToolCalls": 64,
+    "timeoutMs": 900000
+  }
+}

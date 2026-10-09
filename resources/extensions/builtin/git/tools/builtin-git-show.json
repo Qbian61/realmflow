@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.git.show",
+  "version": "1.0.1",
+  "name": "Git show",
+  "description": "Read a commit or object.",
+  "tags": [
+    "git"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "git.show",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "ref"
+    ],
+    "properties": {
+      "scopeRoot": {
+        "type": "string",
+        "minLength": 1
+      },
+      "ref": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "repository.read"
+  ],
+  "effects": [
+    "local_data.read"
+  ],
+  "risk": "low",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "git show"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.process.stop",
+  "version": "1.0.3",
+  "name": "Stop process",
+  "description": "Stop a RealmFlow-managed process.",
+  "tags": [
+    "process"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "process.stop",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "processId"
+    ],
+    "properties": {
+      "processId": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$"
+      }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "process.manage"
+  ],
+  "effects": [
+    "local_process.change"
+  ],
+  "risk": "high",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "stop process"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}
