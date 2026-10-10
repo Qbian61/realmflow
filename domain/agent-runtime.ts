@@ -1,5 +1,7 @@
 import type { ReasoningDecision } from './reasoning-router'
 import type { ResponseLanguageSnapshot } from './response-language'
+import type { ToolPolicySnapshot } from './tool-policy'
+import type { RunModelFacingSnapshot } from './tool-catalog'
 
 export const AGENT_RUN_SCENARIO_IDS = [
   'general',
@@ -142,6 +144,7 @@ export type AgentRunSnapshot = {
   delegationDepth: number
   delegationOrdinal: number
   sourceCheckpoint?: AgentRunSourceCheckpoint
+  delegationMode?: 'research'
   scenarioId: AgentRunScenarioId
   pipelineVersion: string
   agentProfileId: string
@@ -149,6 +152,8 @@ export type AgentRunSnapshot = {
   agentProfileDigest: string
   promptDigest: string
   policyDigest: string
+  toolPolicy?: ToolPolicySnapshot
+  modelFacing?: RunModelFacingSnapshot
   capabilityCatalogDigest: string
   capabilityBindingDigest: string
   permissionSnapshotDigest: string
@@ -300,6 +305,8 @@ export function createAgentRunSnapshot(
     agentProfileDigest: string
     promptDigest: string
     policyDigest: string
+    toolPolicy?: ToolPolicySnapshot
+    modelFacing?: RunModelFacingSnapshot
     capabilityCatalogDigest: string
     capabilityBindingDigest: string
     permissionSnapshotDigest: string
@@ -312,6 +319,7 @@ export function createAgentRunSnapshot(
     pipelineVersion?: string
     lineage?: AgentRunLineage
     sourceCheckpoint?: AgentRunSourceCheckpoint
+    delegationMode?: 'research'
     createdAt?: number
   }
 ): AgentRunSnapshot {
@@ -357,6 +365,7 @@ export function createAgentRunSnapshot(
     ...(input.sourceCheckpoint
       ? { sourceCheckpoint: { ...input.sourceCheckpoint } }
       : {}),
+    ...(input.delegationMode ? { delegationMode: input.delegationMode } : {}),
     scenarioId: scenario.id,
     pipelineVersion: input.pipelineVersion ?? scenario.pipelineVersion,
     agentProfileId: input.agentProfileId,
@@ -364,6 +373,8 @@ export function createAgentRunSnapshot(
     agentProfileDigest: input.agentProfileDigest,
     promptDigest: input.promptDigest,
     policyDigest: input.policyDigest,
+    ...(input.toolPolicy ? { toolPolicy: structuredClone(input.toolPolicy) } : {}),
+    ...(input.modelFacing ? { modelFacing: structuredClone(input.modelFacing) } : {}),
     capabilityCatalogDigest: input.capabilityCatalogDigest,
     capabilityBindingDigest: input.capabilityBindingDigest,
     permissionSnapshotDigest: input.permissionSnapshotDigest,

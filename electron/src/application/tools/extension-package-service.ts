@@ -28,6 +28,17 @@ import {
   type ExtensionPackageManifest,
   type ExtensionPackagePlatform,
 } from '../../../../domain/extension-package'
+import type {
+  PluginDescriptorContract,
+  PluginHookContract,
+  PluginMediaProviderContract,
+  PluginPackageManifest,
+  PluginPackageCatalogMetadata,
+  PluginPermissionContract,
+  PluginSandboxContract,
+  PluginContributionKind,
+  PluginContributionSummary,
+} from '../../../../domain/plugin-package'
 import {
   normalizeSkillDefinition,
   type SkillDefinition,
@@ -91,8 +102,16 @@ export type PreparedExtensionPackage = {
   byteSize: number
   fileCount: number
   managedRelativePath: string
+  plugin?: PreparedPluginMetadata
+  pluginSkillRegistrations?: Array<{
+    definition: SkillDefinition
+    instructions: string
+  }>
   pending: PendingManagedDirectory
 }
+
+export type PreparedPluginContribution = PluginContributionSummary
+export type PreparedPluginMetadata = PluginPackageCatalogMetadata
 
 export class ExtensionPackageService {
   private readonly extensionsRoot: string
@@ -165,6 +184,30 @@ export class ExtensionPackageService {
         snapshot.packageDigest,
       )
       this.assertReferencedFiles(stagingPath, manifest, tools, skills)
+      const plugin =
+        manifest.schemaVersion === 2
+          ? await this.readPluginMetadata(
+              stagingPath,
+              manifest,
+              tools,
+              skills,
+            )
+          : undefined
+      const pluginSkillRegistrations =
+        manifest.schemaVersion === 2
+          ? await Promise.all(
+              skills.map(async (definition) => ({
+                definition,
+                instructions: await readFile(
+                  resolvePackagePath(
+                    stagingPath,
+                    definition.instructionsPath,
+                  ),
+                  'utf8',
+                ),
+              })),
+            )
+          : undefined
       const finalPath = join(
         this.extensionsRoot,
         'packages',
@@ -182,6 +225,10 @@ export class ExtensionPackageService {
         byteSize: snapshot.byteSize,
         fileCount: snapshot.files.length,
         managedRelativePath: `extensions/packages/${snapshot.packageDigest}`,
+        ...(plugin ? { plugin } : {}),
+        ...(pluginSkillRegistrations
+          ? { pluginSkillRegistrations }
+          : {}),
         pending: createPendingDirectory(
           stagingPath,
           finalPath,
@@ -444,7 +491,9 @@ export class ExtensionPackageService {
     if (
       !satisfiesVersion(
         this.options.realmFlowVersion,
-        manifest.compatibility.realmflow,
+        manifest.schemaVersion === 1
+          ? manifest.compatibility.realmflow
+          : manifest.compatibility.realmflowVersionRange,
       )
     ) {
       throw new Error('Extension package RealmFlow version is incompatible')
@@ -462,7 +511,7 @@ export class ExtensionPackageService {
       packageDigest,
     }
     const tools = await Promise.all(
-      manifest.tools.map(async ({ path }) => {
+      manifestToolEntries(manifest).map(async ({ path }) => {
         const source = asJsonObject(
           await readJson(
             resolvePackagePath(rootPath, path),
@@ -490,7 +539,7 @@ export class ExtensionPackageService {
       }),
     )
     const skills = await Promise.all(
-      manifest.skills.map(async ({ path }) => {
+      manifestSkillEntries(manifest).map(async ({ path }) => {
         const source = asJsonObject(
           await readJson(
             resolvePackagePath(rootPath, path),
@@ -547,9 +596,233 @@ export class ExtensionPackageService {
         )
       }
     }
-    for (const path of manifest.assets) {
+    for (const path of manifestAssetPaths(manifest)) {
       assertRegularFile(rootPath, path, 'Extension package resource is missing')
     }
+  }
+
+  private async readPluginMetadata(
+    rootPath: string,
+    manifest: PluginPackageManifest,
+    tools: ToolDefinition[],
+    skills: SkillDefinition[],
+  ): Promise<PreparedPluginMetadata> {
+    const contributions: PreparedPluginContribution[] = []
+    const sandboxById = new Map(
+      manifest.sandboxes.map((sandbox) => [sandbox.id, sandbox]),
+    )
+    for (const entry of manifest.contributions.tools) {
+      const definition = tools.find(({ id }) => id === entry.id)
+      if (!definition) {
+        throw new Error(
+          'Plugin Tool definition identity does not match manifest',
+        )
+      }
+      if (entry.executable) {
+        const sandbox = sandboxById.get(entry.sandbox ?? '')
+        const expectedRuntime =
+          sandbox?.runtime === 'node'
+            ? 'process'
+            : sandbox?.runtime === 'python'
+              ? 'python'
+              : undefined
+        if (
+          definition.executor.kind !== 'sandbox' ||
+          definition.executor.runtime !== expectedRuntime
+        ) {
+          throw new Error(
+            'Plugin Tool sandbox runtime does not match manifest',
+          )
+        }
+        assertToolWithinPluginBoundary(
+          definition,
+          manifest.permissions,
+          sandbox,
+        )
+      }
+      contributions.push({
+        kind: 'tool',
+        id: entry.id,
+        definitionDigest: definition.definitionDigest,
+      })
+    }
+    for (const entry of manifest.contributions.skills) {
+      const definition = skills.find(({ id }) => id === entry.id)
+      if (!definition) {
+        throw new Error(
+          'Plugin Skill definition identity does not match manifest',
+        )
+      }
+      contributions.push({
+        kind: 'skill',
+        id: entry.id,
+        definitionDigest: definition.definitionDigest,
+      })
+    }
+    await this.readPluginDescriptors(
+      rootPath,
+      manifest.contributions.connectors,
+      'Connector',
+      'connector',
+      contributions,
+    )
+    await this.readPluginDescriptors(
+      rootPath,
+      manifest.contributions.modelProviders,
+      'Model Provider',
+      'model_provider',
+      contributions,
+    )
+    await this.readPluginDescriptors(
+      rootPath,
+      manifest.contributions.webProviders,
+      'Web Provider',
+      'web_provider',
+      contributions,
+    )
+    await this.readPluginDescriptors(
+      rootPath,
+      manifest.contributions.browserProviders,
+      'Browser Provider',
+      'browser_provider',
+      contributions,
+    )
+    await this.readPluginDescriptors(
+      rootPath,
+      manifest.contributions.mediaProviders,
+      'Media Provider',
+      'media_provider',
+      contributions,
+    )
+    for (const hook of manifest.contributions.hooks) {
+      const digest = await this.validateHook(rootPath, hook)
+      contributions.push({
+        kind: 'hook',
+        id: hook.id,
+        definitionDigest: digest,
+        targetToolId: hook.targetToolId,
+        event: hook.event,
+      })
+    }
+    return {
+      permissions: structuredClone(manifest.permissions),
+      sandboxes: structuredClone(manifest.sandboxes),
+      dependencies: structuredClone(manifest.dependencies),
+      contributions,
+    }
+  }
+
+  private async readPluginDescriptors(
+    rootPath: string,
+    entries: PluginDescriptorContract[],
+    label: string,
+    kind: PluginContributionKind,
+    target: PreparedPluginContribution[],
+  ): Promise<void> {
+    for (const entry of entries) {
+      const value = asJsonObject(
+        await readJson(
+          resolvePackagePath(rootPath, entry.path),
+          `Plugin ${label} definition is missing`,
+          `Plugin ${label} definition is invalid`,
+        ),
+        `Plugin ${label}`,
+      )
+      assertExactObjectKeys(
+        value,
+        new Set([
+          'schemaVersion',
+          'id',
+          'name',
+          'description',
+          'credentialRefs',
+          'configurationSchema',
+          ...(kind === 'media_provider' ? ['operations'] : []),
+        ]),
+        `Plugin ${label}`,
+      )
+      if (
+        value.schemaVersion !== 1 ||
+        value.id !== entry.id ||
+        typeof value.name !== 'string' ||
+        typeof value.description !== 'string'
+      ) {
+        throw new Error(`Plugin ${label} definition is invalid`)
+      }
+      const credentialRefs = requireStringArray(
+        value.credentialRefs,
+        `Plugin ${label} credential references`,
+      )
+      if (
+        JSON.stringify(credentialRefs) !==
+        JSON.stringify([...entry.credentialRefs].sort())
+      ) {
+        throw new Error(
+          `Plugin ${label} credential references do not match manifest`,
+        )
+      }
+      const configurationSchema = asJsonObject(
+        value.configurationSchema,
+        `Plugin ${label} configuration schema`,
+      )
+      compileSchema(
+        configurationSchema,
+        `Plugin ${label} configuration`,
+      )
+      const descriptorMediaOperations =
+        kind === 'media_provider'
+          ? requireStringArray(
+              value.operations,
+              'Plugin Media Provider operations',
+            )
+          : undefined
+      if (
+        kind === 'media_provider' &&
+        JSON.stringify(descriptorMediaOperations) !==
+          JSON.stringify(
+            [
+              ...(entry as PluginMediaProviderContract).operations,
+            ].sort(),
+          )
+      ) {
+        throw new Error(
+          'Plugin Media Provider operations do not match manifest',
+        )
+      }
+      const mediaOperations =
+        kind === 'media_provider'
+          ? (entry as PluginMediaProviderContract).operations
+          : undefined
+      target.push({
+        kind,
+        id: entry.id,
+        definitionDigest: digestDefinition(value),
+        credentialRefs,
+        ...(mediaOperations ? { mediaOperations } : {}),
+      })
+    }
+  }
+
+  private async validateHook(
+    rootPath: string,
+    hook: PluginHookContract,
+  ): Promise<string> {
+    if (!hook.filterSchemaPath) {
+      return digestDefinition(hook as unknown as JsonObject)
+    }
+    const schema = asJsonObject(
+      await readJson(
+        resolvePackagePath(rootPath, hook.filterSchemaPath),
+        'Plugin Hook filter schema is missing',
+        'Plugin Hook filter schema is invalid',
+      ),
+      'Plugin Hook filter schema',
+    )
+    compileSchema(schema, 'Plugin Hook filter')
+    return digestDefinition({
+      ...hook,
+      filterSchema: schema,
+    } as unknown as JsonObject)
   }
 }
 
@@ -581,6 +854,77 @@ function createPendingDirectory(
       })
     },
   }
+}
+
+function manifestToolEntries(
+  manifest: ExtensionPackageManifest,
+): Array<{ path: string }> {
+  return manifest.schemaVersion === 1
+    ? manifest.tools
+    : manifest.contributions.tools.map(({ path }) => ({ path }))
+}
+
+function manifestSkillEntries(
+  manifest: ExtensionPackageManifest,
+): Array<{ path: string }> {
+  return manifest.schemaVersion === 1
+    ? manifest.skills
+    : manifest.contributions.skills.map(({ path }) => ({ path }))
+}
+
+function manifestAssetPaths(manifest: ExtensionPackageManifest): string[] {
+  return manifest.schemaVersion === 1 ? manifest.assets : []
+}
+
+function assertToolWithinPluginBoundary(
+  definition: ToolDefinition,
+  permissions: PluginPermissionContract,
+  sandbox: PluginSandboxContract | undefined,
+): void {
+  if (!sandbox) {
+    throw new Error('Plugin Tool sandbox is unavailable')
+  }
+  const riskRank = { low: 0, medium: 1, high: 2, critical: 3 } as const
+  if (
+    definition.capabilities.some(
+      (capability) => !permissions.capabilities.includes(capability),
+    ) ||
+    riskRank[definition.risk] > riskRank[permissions.maximumRisk] ||
+    definition.resources.timeoutMs > sandbox.maximumDurationMs ||
+    (definition.resources.maxMemoryMb ?? 0) > sandbox.maximumMemoryMb
+  ) {
+    throw new Error('Plugin Tool exceeds package permissions or sandbox')
+  }
+}
+
+function assertExactObjectKeys(
+  value: JsonObject,
+  keys: ReadonlySet<string>,
+  label: string,
+): void {
+  if (
+    Object.keys(value).some((key) => !keys.has(key)) ||
+    [...keys].some((key) => !Object.hasOwn(value, key))
+  ) {
+    throw new Error(`${label} fields are invalid`)
+  }
+}
+
+function requireStringArray(value: unknown, label: string): string[] {
+  if (
+    !Array.isArray(value) ||
+    value.some(
+      (item) =>
+        typeof item !== 'string' ||
+        !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(item),
+    )
+  ) {
+    throw new Error(`${label} are invalid`)
+  }
+  if (new Set(value).size !== value.length) {
+    throw new Error(`${label} are invalid`)
+  }
+  return [...value].sort()
 }
 
 function createLegacyPythonToolSource(

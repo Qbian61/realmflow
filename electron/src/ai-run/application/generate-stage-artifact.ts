@@ -388,6 +388,7 @@ export class GenerateStageArtifactUseCase {
       case 'run.started':
         return transitionAiRun(next, 'running')
       case 'run.progress':
+      case 'run.turn_ready':
       case 'execution.summary.delta':
       case 'reference.added':
       case 'tool.call.requested':

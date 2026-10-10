@@ -127,6 +127,7 @@ function createApi(): RealmFlowApi {
       destroy: vi.fn(),
       openExternal: vi.fn(),
       onStateChange: vi.fn().mockReturnValue(() => undefined),
+      onAgentBrowserSurface: vi.fn().mockReturnValue(() => undefined),
     },
     terminal: {
       create: vi.fn(),

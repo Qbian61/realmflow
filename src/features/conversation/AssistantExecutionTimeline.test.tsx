@@ -5,6 +5,7 @@ import {
 } from '@testing-library/react'
 import { afterEach, vi } from 'vitest'
 import type { AssistantTurnProjection } from '../../../domain/assistant-turn'
+import type { AgentRuntimeApi } from '../../../shared/agent-runtime-state'
 import { LocalizationProvider } from '../../localization/LocalizationProvider'
 import { LOCALE_PREFERENCE_KEY } from '../../localization/locale-preference'
 import { AssistantExecutionTimeline } from './AssistantExecutionTimeline'
@@ -21,6 +22,10 @@ describe('AssistantExecutionTimeline', () => {
   afterEach(() => {
     vi.useRealTimers()
     window.localStorage.removeItem(LOCALE_PREFERENCE_KEY)
+    Object.defineProperty(window, 'realmflow', {
+      configurable: true,
+      value: undefined
+    })
   })
 
   it('localizes the task disclosure and status from the application locale', () => {
@@ -43,6 +48,28 @@ describe('AssistantExecutionTimeline', () => {
     })
     fireEvent.click(task)
     expect(screen.getByText('Task completed')).toBeInTheDocument()
+  })
+
+  it('does not expose editable Agent Runtime controls in standard conversations', () => {
+    Object.defineProperty(window, 'realmflow', {
+      configurable: true,
+      value: { agentRuntime: {} as AgentRuntimeApi }
+    })
+    render(
+      <AssistantExecutionTimeline
+        execution={projection({
+          status: 'completed',
+          completedAt: 2_600
+        })}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '任务耗时 2.5 秒' }))
+
+    expect(screen.getByText('任务完成')).toBeVisible()
+    expect(
+      screen.queryByRole('button', { name: '运行详情' })
+    ).not.toBeInTheDocument()
   })
 
   it('uses compact English units for long task duration parts', () => {

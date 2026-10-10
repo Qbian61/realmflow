@@ -767,11 +767,9 @@ function inferIntent(
 }
 
 function inferCapabilityIntent(text: string): string | undefined {
-  const capability =
-    /(?:能力|工具|技能|智能体|连接器|capabilit(?:y|ies)|tool|skill|agent|connector)/iu.test(
-      text
-    )
-  if (!capability) return undefined
+  const capabilityNoun =
+    '(?:能力|工具|技能|智能体|连接器|capabilit(?:y|ies)|tool|skill|agent|connector)'
+  if (!new RegExp(capabilityNoun, 'iu').test(text)) return undefined
   if (
     /(?:每天|每周|每月|何时|什么时候|定时|触发|(?:上午|下午)?[一二三四五六七八九十\d]+点运行|when to run|schedule|every (?:day|week|month))/iu.test(
       text
@@ -779,17 +777,74 @@ function inferCapabilityIntent(text: string): string | undefined {
   ) {
     return 'configure_capability_trigger'
   }
-  if (/(?:回滚|恢复到上一版本|rollback)/iu.test(text)) {
+  if (
+    capabilityActionTargetsObject(
+      text,
+      /(?:回滚|恢复到上一版本)/iu,
+      /(?:rollback)/iu
+    ) ||
+    new RegExp(`${capabilityNoun}[^。！？!?\\n]{0,20}(?:回滚到|rollback to)`, 'iu')
+      .test(text)
+  ) {
     return 'capability_rollback'
   }
-  if (/(?:升级|更新版本|upgrade)/iu.test(text)) {
+  if (
+    capabilityActionTargetsObject(
+      text,
+      /(?:升级|更新版本)/iu,
+      /(?:upgrade)/iu
+    ) ||
+    new RegExp(`${capabilityNoun}[^。！？!?\\n]{0,20}(?:升级到|upgrade to)`, 'iu')
+      .test(text)
+  ) {
     return 'capability_upgrade'
   }
-  if (/(?:安装|install)/iu.test(text)) return 'capability_install'
-  if (/(?:创建|新增|生成|制作|create|generate|build)/iu.test(text)) {
+  if (
+    capabilityActionTargetsObject(
+      text,
+      /(?:安装)/iu,
+      /(?:install)/iu
+    ) ||
+    new RegExp(`${capabilityNoun}[^。！？!?\\n]{0,20}(?:安装到|安装至|install (?:to|into))`, 'iu')
+      .test(text)
+  ) {
+    return 'capability_install'
+  }
+  if (
+    capabilityActionTargetsObject(
+      text,
+      /(?:创建|新增|生成|制作)/iu,
+      /(?:create|generate|build)/iu
+    )
+  ) {
     return 'capability_create'
   }
   return undefined
+}
+
+function capabilityActionTargetsObject(
+  text: string,
+  chineseAction: RegExp,
+  englishAction: RegExp
+): boolean {
+  const chinese = text.match(
+    new RegExp(
+      `${chineseAction.source}([^。！？!?\\n]{0,40})(能力|工具|技能|智能体|连接器)`,
+      'iu'
+    )
+  )
+  if (
+    chinese &&
+    !/(?:使用|调用|通过|利用)/u.test(chinese[1] ?? '')
+  ) {
+    return true
+  }
+  return new RegExp(
+    `${englishAction.source}\\s+` +
+      `(?:(?!\\b(?:using|with|via|to)\\b)[\\w-]+\\s+){0,6}` +
+      '(?:capabilit(?:y|ies)|tool|skill|agent|connector)\\b',
+    'iu'
+  ).test(text)
 }
 
 function inferExpectedOutput(text: string): string | undefined {

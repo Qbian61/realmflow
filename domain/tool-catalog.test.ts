@@ -60,7 +60,119 @@ describe('Tool Catalog projection', () => {
     expect(catalog.tools.map(({ version }) => version)).toEqual(['1.0.0'])
     expect(catalog.skills.map(({ version }) => version)).toEqual(['1.0.0'])
   })
+
+  it('keeps Plugin contributions blocked until required packages are enabled', () => {
+    const plugin = event(1, 'extension', 'extension.package_imported', {
+      packageId: 'com.example.research',
+      packageVersion: '1.0.0',
+      packageDigest: 'd'.repeat(64),
+      origin: 'local_upload',
+      name: 'Research',
+      description: 'Research Plugin.',
+      plugin: pluginMetadata('com.example.foundation'),
+    })
+
+    expect(reduceToolCatalogEvents([plugin]).packages[0]).toMatchObject({
+      status: 'dependency_disabled',
+      dependencyIssues: ['com.example.foundation'],
+    })
+
+    const catalog = reduceToolCatalogEvents([
+      plugin,
+      event(2, 'extension', 'extension.package_imported', {
+        packageId: 'com.example.foundation',
+        packageVersion: '1.2.0',
+        packageDigest: 'e'.repeat(64),
+        origin: 'local_upload',
+        name: 'Foundation',
+        description: 'Foundation Plugin.',
+      }),
+    ])
+    expect(
+      catalog.packages.find(
+        ({ packageId }) => packageId === 'com.example.research',
+      ),
+    ).toMatchObject({ status: 'enabled', dependencyIssues: [] })
+  })
+
+  it('selects one immutable package version for upgrade and rollback', () => {
+    const version1 = event(
+      1,
+      'extension',
+      'extension.package_imported',
+      {
+        packageId: 'com.example.research',
+        packageVersion: '1.0.0',
+        packageDigest: 'd'.repeat(64),
+        origin: 'local_upload',
+        name: 'Research',
+        description: 'Research Plugin.'
+      }
+    )
+    const version2 = event(
+      2,
+      'extension',
+      'extension.package_imported',
+      {
+        packageId: 'com.example.research',
+        packageVersion: '2.0.0',
+        packageDigest: 'e'.repeat(64),
+        origin: 'local_upload',
+        name: 'Research',
+        description: 'Research Plugin.'
+      }
+    )
+    const latest = reduceToolCatalogEvents([version1, version2])
+    expect(latest.packages).toMatchObject([
+      { version: '1.0.0', status: 'superseded' },
+      { version: '2.0.0', status: 'enabled' }
+    ])
+
+    const rolledBack = reduceToolCatalogEvents([
+      version1,
+      version2,
+      event(
+        3,
+        'extension',
+        'extension.package_version_selected',
+        {
+          packageId: 'com.example.research',
+          packageVersion: '1.0.0',
+          packageDigest: 'd'.repeat(64),
+          operation: 'rollback'
+        }
+      )
+    ])
+    expect(rolledBack.packages).toMatchObject([
+      { version: '1.0.0', status: 'enabled' },
+      { version: '2.0.0', status: 'superseded' }
+    ])
+  })
 })
+
+function pluginMetadata(dependencyPackageId: string) {
+  return {
+    permissions: {
+      capabilities: [],
+      maximumRisk: 'low',
+      pathPrefixes: [],
+      networkTargets: [],
+    },
+    sandboxes: [],
+    dependencies: [{
+      packageId: dependencyPackageId,
+      versionRange: '>=1.0.0 <2.0.0',
+      required: true,
+      toolIds: [],
+    }],
+    contributions: [{
+      kind: 'web_provider',
+      id: 'research.web',
+      definitionDigest: 'f'.repeat(64),
+      credentialRefs: [],
+    }],
+  }
+}
 
 function baseEvents(): ToolDomainEvent[] {
   return [

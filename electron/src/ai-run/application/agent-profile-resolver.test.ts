@@ -6,6 +6,51 @@ import {
 import { CatalogAgentProfileResolver } from './agent-profile-resolver'
 
 describe('CatalogAgentProfileResolver', () => {
+  it('preserves normalized independent tool policy ceilings from user and workspace publications', async () => {
+    const user = layer('user.tools', 'user', 4)
+    const workspace = layer('workspace.tools', 'workspace', 2)
+    const layers = [
+      createAgentProfile({
+        ...user,
+        capabilityPolicy: {
+          ...user.capabilityPolicy,
+          toolPolicies: [{ allow: ['group:fs', 'group:fs'], byProvider: { remote: { deny: ['builtin.files.write'] } } }],
+        },
+      }),
+      createAgentProfile({
+        ...workspace,
+        capabilityPolicy: { ...workspace.capabilityPolicy, toolPolicies: [{ profile: 'full', allow: [] }] },
+      }),
+    ]
+    const resolver = new CatalogAgentProfileResolver({ listLayers: async () => layers })
+    const resolved = await resolver.resolve({
+      scenarioId: 'space',
+      scope: { kind: 'workspace', workspaceId: 'workspace-1' },
+      capabilities: [],
+    })
+    expect(resolved.policy).toMatchObject({
+      toolPolicies: [
+        { allow: ['group:fs'], byProvider: { remote: { deny: ['builtin.files.write'] } } },
+        { profile: 'full', allow: [] },
+      ],
+    })
+  })
+
+  it('includes tool policy changes in immutable profile and effective policy digests', async () => {
+    const user = layer('user.tools', 'user', 4)
+    const restricted = createAgentProfile({
+      ...user,
+      capabilityPolicy: { ...user.capabilityPolicy, toolPolicies: [{ allow: [] }] },
+    })
+    expect(restricted.profileDigest).not.toBe(user.profileDigest)
+    const resolve = (profile: AgentProfile) => new CatalogAgentProfileResolver({
+      listLayers: async () => [profile],
+    }).resolve({
+      scenarioId: 'general', scope: { kind: 'global' }, capabilities: [],
+    })
+    expect((await resolve(restricted)).policyDigest).not.toBe((await resolve(user)).policyDigest)
+  })
+
   it('merges persisted user and workspace layers over the Scenario builtin without expanding policy', async () => {
     const user = layer('user.general', 'user', 4)
     const workspace = layer('workspace.general', 'workspace', 2)

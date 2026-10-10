@@ -10,14 +10,15 @@ describe('Capability Catalog IPC', () => {
     >()
     const definition = {
       schemaVersion: 1,
-      id: 'builtin.documents.read',
+      id: 'legacy.tool.builtin.browser.attach',
       kind: 'tool',
+      runtime: { kind: 'tool', definitionId: 'builtin.browser.attach' },
       version: '1.0.0',
       source: 'builtin',
       manifestDigest: 'a'.repeat(64),
       definitionDigest: 'b'.repeat(64),
-      name: 'Read document',
-      description: 'Extract text from a local document'
+      name: 'Attach browser profile',
+      description: 'Attach an owned browser profile'
     }
     registerCapabilityCatalogIpc({
       catalog: {
@@ -58,14 +59,14 @@ describe('Capability Catalog IPC', () => {
     expect(result).toMatchObject({
       definitions: [
         {
-          id: 'builtin.documents.read',
-          name: 'Read document',
+          id: 'legacy.tool.builtin.browser.attach',
+          name: 'Attach browser profile',
           definitionDigest: 'b'.repeat(64)
         }
       ],
       displayByDefinitionKey: {
-        'builtin.documents.read@1.0.0': {
-          name: '读取文档',
+        'legacy.tool.builtin.browser.attach@1.0.0': {
+          name: '恢复浏览器配置',
           resolvedLocale: 'zh-CN'
         }
       }

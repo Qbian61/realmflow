@@ -17,7 +17,11 @@ describe('Tool Catalog IPC', () => {
       setActivation: vi.fn().mockResolvedValue({
         targetType: 'tool',
         item: { id: 'builtin.files.read', status: 'disabled' }
-      })
+      }),
+      changePackageVersion: vi.fn().mockResolvedValue({
+        packageId: 'com.example.files',
+        version: '1.0.0',
+      }),
     }
     const importer = {
       importFromPath: vi.fn().mockResolvedValue({
@@ -102,6 +106,21 @@ describe('Tool Catalog IPC', () => {
       enabled: false,
       idempotencyKey: 'disable-1'
     })
+    await handlers.get('tool-catalog:change-package-version')!(
+      {} as IpcMainInvokeEvent,
+      {
+        packageId: 'com.example.files',
+        targetVersion: '1.0.0',
+        operation: 'rollback',
+        idempotencyKey: 'rollback-1'
+      }
+    )
+    expect(catalog.changePackageVersion).toHaveBeenCalledWith({
+      packageId: 'com.example.files',
+      targetVersion: '1.0.0',
+      operation: 'rollback',
+      idempotencyKey: 'rollback-1'
+    })
 
     await handlers.get('mcp-server:list')!({} as IpcMainInvokeEvent)
     await handlers.get('mcp-server:save')!({} as IpcMainInvokeEvent, {
@@ -158,7 +177,8 @@ describe('Tool Catalog IPC', () => {
     registerToolCatalogIpc({
       catalog: {
         list: vi.fn(),
-        setActivation: vi.fn()
+        setActivation: vi.fn(),
+        changePackageVersion: vi.fn()
       },
       importer: { importFromPath: vi.fn() },
       mcpServers: {
@@ -226,7 +246,8 @@ describe('Tool Catalog IPC', () => {
           ],
           skills: []
         }),
-        setActivation: vi.fn()
+        setActivation: vi.fn(),
+        changePackageVersion: vi.fn()
       },
       importer: { importFromPath: vi.fn() },
       mcpServers: {

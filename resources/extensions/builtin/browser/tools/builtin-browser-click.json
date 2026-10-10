@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.browser.click",
+  "version": "1.0.0",
+  "name": "Click browser element",
+  "description": "Click a visible unobstructed element using a current snapshot ref. May submit data.",
+  "tags": [
+    "browser"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "browser.click",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sessionId": {
+        "type": "string",
+        "pattern": "^browser-[A-Za-z0-9-]+$",
+        "maxLength": 120
+      },
+      "ref": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 16000
+      }
+    },
+    "required": [
+      "sessionId",
+      "ref"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "computer.control",
+    "network.connect"
+  ],
+  "effects": [
+    "user_interface.change",
+    "external.read"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "required",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "click browser element"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

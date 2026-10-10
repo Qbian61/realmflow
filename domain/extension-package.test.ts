@@ -54,7 +54,7 @@ describe('ExtensionPackage manifest', () => {
   })
 
   it.each([
-    { label: 'schema version', changes: { schemaVersion: 2 } },
+    { label: 'schema version', changes: { schemaVersion: 3 } },
     { label: 'package ID', changes: { packageId: '../delivery' } },
     { label: 'version', changes: { version: 'v1.2' } },
     { label: 'name', changes: { name: '   ' } },

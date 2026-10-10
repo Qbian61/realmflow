@@ -1,6 +1,11 @@
 import type { ExtensionPackageManifest } from './extension-package'
 import {
+  normalizePluginPackageCatalogMetadata,
+  type PluginPackageCatalogMetadata
+} from './plugin-package'
+import {
   normalizeSkillDefinition,
+  isToolVersionInRange,
   type SkillDefinition
 } from './skill-definition'
 import {
@@ -18,12 +23,38 @@ import {
   requireText
 } from './tool-protocol-validation'
 import type { ToolRisk } from './tool-definition'
+import type { JsonObject } from './tool-protocol-validation'
+import type {
+  SkillActivationPreference,
+  SkillReview,
+  SkillSource,
+} from './skill-registry'
+
+export type ToolDirectorySnapshot = {
+  catalogDigest: string
+  policyDigest: string
+  digest: string
+  entries: JsonObject[]
+  totalEntries: number
+  truncated: boolean
+  renderedPromptDirectory: string
+  renderedByteLength: number
+}
+
+export type RunModelFacingSnapshot = {
+  mode: ToolModelFacingMode
+  directory?: ToolDirectorySnapshot
+}
 
 export type ToolCatalogStatus =
   | 'enabled'
   | 'disabled'
+  | 'superseded'
   | 'dependency_disabled'
   | 'corrupted'
+  | 'pending_review'
+  | 'rejected'
+  | 'unavailable'
 
 export type ToolModelFacingMode = 'direct' | 'facade' | 'directory'
 
@@ -56,10 +87,16 @@ export type ExtensionPackageCatalogItem = {
   name: string
   description: string
   enabledPreference: boolean
-  status: Extract<ToolCatalogStatus, 'enabled' | 'disabled' | 'corrupted'>
+  status: Extract<
+    ToolCatalogStatus,
+    'enabled' | 'disabled' | 'dependency_disabled' | 'corrupted'
+    | 'superseded'
+  >
+  dependencyIssues: string[]
   revision: number
   updatedAt: number
   manifest?: ExtensionPackageManifest
+  plugin?: PluginPackageCatalogMetadata
 }
 
 export type ToolCatalogItem = {
@@ -87,6 +124,15 @@ export type SkillCatalogItem = {
   dependencyIssues: string[]
   revision: number
   updatedAt: number
+  registry?: {
+    source: SkillSource
+    review: SkillReview
+    activation: SkillActivationPreference
+    risk: ToolRisk
+    instructionsDigest: string
+    boundaryNotes: string
+    present: boolean
+  }
 }
 
 export type ToolCatalogState = {
@@ -102,6 +148,10 @@ export function reduceToolCatalogEvents(
   const tools = new Map<string, ToolCatalogItem>()
   const skills = new Map<string, SkillCatalogItem>()
   const preferences = new Map<string, boolean>()
+  const selectedPackageVersions = new Map<
+    string,
+    { version: string; packageDigest: string }
+  >()
 
   for (const event of [...events].sort(compareEvents)) {
     switch (event.eventType) {
@@ -117,6 +167,9 @@ export function reduceToolCatalogEvents(
         break
       case 'extension.activation_changed':
         changeActivation(preferences, event)
+        break
+      case 'extension.package_version_selected':
+        selectPackageVersion(selectedPackageVersions, event)
         break
       case 'extension.integrity_failed':
         failPackageIntegrity(packages, event)
@@ -138,8 +191,15 @@ export function reduceToolCatalogEvents(
             : 'disabled' as const
     }
   })
+  const versionSelectedPackages = resolveSelectedPackageVersions(
+    packageItems,
+    selectedPackageVersions
+  )
+  const resolvedPackages = resolvePackageDependencies(
+    versionSelectedPackages
+  )
   const packageByVersion = new Map(
-    packageItems.map((item) => [packageVersionKey(item), item])
+    resolvedPackages.map((item) => [packageVersionKey(item), item])
   )
   const toolItems = [...tools.values()].map((item) =>
     resolveDefinitionStatus(item, packageByVersion, preferences)
@@ -172,7 +232,7 @@ export function reduceToolCatalogEvents(
   })
 
   return {
-    packages: packageItems.sort(comparePackages),
+    packages: resolvedPackages.sort(comparePackages),
     tools: toolItems.sort(compareDefinitions),
     skills: skillItems.sort(compareDefinitions)
   }
@@ -207,8 +267,12 @@ function publishPackage(
     ),
     enabledPreference: true,
     status: 'enabled',
+    dependencyIssues: [],
     revision: event.sequence,
-    updatedAt: event.metadata.occurredAt
+    updatedAt: event.metadata.occurredAt,
+    ...(payload.plugin === undefined
+      ? {}
+      : { plugin: normalizePluginPackageCatalogMetadata(payload.plugin) })
   }
   publishImmutable(
     packages,
@@ -313,6 +377,7 @@ function failPackageIntegrity(
       packages.set(key, {
         ...item,
         status: 'corrupted',
+        dependencyIssues: [],
         revision: event.sequence,
         updatedAt: event.metadata.occurredAt
       })
@@ -335,15 +400,150 @@ function resolveDefinitionStatus<
   const status: ToolCatalogStatus =
     packageItem?.status === 'corrupted'
       ? 'corrupted'
-      : !packageItem || packageItem.status === 'disabled' || !enabledPreference
+      : !enabledPreference || !packageItem || packageItem.status === 'disabled'
         ? 'disabled'
+      : packageItem?.status === 'dependency_disabled'
+        ? 'dependency_disabled'
+      : packageItem?.status === 'superseded'
+        ? 'superseded'
         : 'enabled'
   return {
     ...item,
     enabledPreference,
     status,
-    dependencyIssues: []
+    dependencyIssues:
+      packageItem?.status === 'dependency_disabled'
+        ? packageItem.dependencyIssues
+        : []
   }
+}
+
+function selectPackageVersion(
+  selected: Map<string, { version: string; packageDigest: string }>,
+  event: ToolDomainEvent
+): void {
+  const payload = requireObject(event.payload, 'package version event')
+  selected.set(
+    requireIdentifier(payload.packageId, 'package ID'),
+    {
+      version: requireSemver(payload.packageVersion, 'package version'),
+      packageDigest: requireDigest(
+        payload.packageDigest,
+        'package digest'
+      )
+    }
+  )
+}
+
+function resolveSelectedPackageVersions(
+  packages: ExtensionPackageCatalogItem[],
+  selected: ReadonlyMap<
+    string,
+    { version: string; packageDigest: string }
+  >
+): ExtensionPackageCatalogItem[] {
+  const groups = new Map<string, ExtensionPackageCatalogItem[]>()
+  for (const item of packages) {
+    const values = groups.get(item.packageId) ?? []
+    values.push(item)
+    groups.set(item.packageId, values)
+  }
+  return packages.map((item) => {
+    if (item.status === 'disabled' || item.status === 'corrupted') {
+      return item
+    }
+    const explicit = selected.get(item.packageId)
+    const selectedItem = explicit
+      ? groups
+          .get(item.packageId)
+          ?.find(
+            (candidate) =>
+              candidate.version === explicit.version &&
+              candidate.packageDigest === explicit.packageDigest
+          )
+      : groups
+          .get(item.packageId)
+          ?.sort((left, right) =>
+            compareSemanticVersions(right.version, left.version)
+          )[0]
+    if (!selectedItem) {
+      return {
+        ...item,
+        status: 'corrupted' as const,
+        dependencyIssues: []
+      }
+    }
+    return item.version === selectedItem.version &&
+      item.packageDigest === selectedItem.packageDigest
+      ? item
+      : {
+          ...item,
+          status: 'superseded' as const,
+          dependencyIssues: []
+        }
+  })
+}
+
+function resolvePackageDependencies(
+  packages: ExtensionPackageCatalogItem[]
+): ExtensionPackageCatalogItem[] {
+  let resolved = packages.map((item) => ({
+    ...item,
+    dependencyIssues: [] as string[]
+  }))
+  for (let iteration = 0; iteration < resolved.length; iteration += 1) {
+    let changed = false
+    const next = resolved.map((item) => {
+      if (
+        item.status === 'disabled' ||
+        item.status === 'corrupted' ||
+        item.status === 'superseded' ||
+        !item.plugin
+      ) {
+        return item
+      }
+      const dependencyIssues = item.plugin.dependencies
+        .filter(({ required }) => required)
+        .filter(
+          (dependency) =>
+            !resolved.some(
+              (candidate) =>
+                candidate.packageId === dependency.packageId &&
+                candidate.status === 'enabled' &&
+                isToolVersionInRange(
+                  candidate.version,
+                  dependency.versionRange
+                )
+            )
+        )
+        .map(({ packageId }) => packageId)
+        .sort()
+      const status =
+        dependencyIssues.length > 0
+          ? 'dependency_disabled' as const
+          : 'enabled' as const
+      if (
+        status !== item.status ||
+        dependencyIssues.join('\0') !== item.dependencyIssues.join('\0')
+      ) {
+        changed = true
+      }
+      return { ...item, status, dependencyIssues }
+    })
+    resolved = next
+    if (!changed) break
+  }
+  return resolved
+}
+
+function compareSemanticVersions(left: string, right: string): number {
+  const leftParts = left.split('.').map(Number)
+  const rightParts = right.split('.').map(Number)
+  for (let index = 0; index < 3; index += 1) {
+    const difference = leftParts[index] - rightParts[index]
+    if (difference !== 0) return difference
+  }
+  return 0
 }
 
 function publishImmutable<T>(

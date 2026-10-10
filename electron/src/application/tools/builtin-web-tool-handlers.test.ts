@@ -1,9 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { JsonObject } from '../../../../domain/tool-protocol-validation'
-import {
-  createWebToolHandlers,
-  type WebSearchCacheEntry
-} from './builtin-web-tool-handlers'
+import { createWebToolHandlers } from './builtin-web-tool-handlers'
+import { WebProviderRuntime } from '../web/web-provider-runtime'
+import { DEFAULT_WEB_PROVIDER_CONFIGURATION } from '../../../../shared/web-provider'
 
 describe('builtin web Tool handlers', () => {
   it('fetches public HTML and returns deterministic readable text', async () => {
@@ -145,7 +144,7 @@ describe('builtin web Tool handlers', () => {
         failing
       )
     ).rejects.toMatchObject({
-      message: 'Failed https://[redacted]@example.com/start?token=[redacted]'
+      message: 'web_fetch_failed'
     })
   })
 
@@ -158,9 +157,9 @@ describe('builtin web Tool handlers', () => {
       status: 'failed',
       error: {
         code: 'provider_unconfigured',
-        message: 'Configure a SearXNG search provider to use web search.'
+        message: 'provider_unconfigured'
       },
-      provider: 'searxng',
+      provider: 'disabled',
       results: [],
       cached: false
     })
@@ -282,7 +281,7 @@ describe('builtin web Tool handlers', () => {
       status: 'failed',
       error: {
         code: 'provider_error',
-        message: 'GET https://[redacted]@search.example.com/search failed'
+        message: 'provider_error'
       },
       provider: 'searxng',
       results: [],
@@ -294,7 +293,7 @@ describe('builtin web Tool handlers', () => {
     arguments_: JsonObject,
     request: typeof fetch
   ): Promise<JsonObject> {
-    const handler = createWebToolHandlers({ fetch: request }).find(
+    const handler = createWebToolHandlers(new WebProviderRuntime({ fetch: request })).find(
       (candidate) => candidate.name === 'web.fetch'
     )
     if (!handler) throw new Error('Missing handler')
@@ -312,26 +311,30 @@ describe('builtin web Tool handlers', () => {
     })
   }
 
+  const runtimes = new WeakMap<Map<string, unknown>, WebProviderRuntime>()
   async function runSearch(
     arguments_: JsonObject,
     request: typeof fetch,
     options: {
       searxngBaseUrl?: string
-      cache?: Map<string, WebSearchCacheEntry>
+      cache?: Map<string, unknown>
       now?: () => number
     } = {}
   ): Promise<JsonObject> {
-    const handler = createWebToolHandlers({
-      fetch: request,
-      search: {
-        searxngBaseUrl: options.searxngBaseUrl,
-        cache: options.cache,
-        now: options.now
-      }
-    }).find((candidate) => candidate.name === 'web.search')
+    let runtime = options.cache ? runtimes.get(options.cache) : undefined
+    if (!runtime) {
+      runtime = new WebProviderRuntime({ fetch: request, now: options.now })
+      if (options.cache) runtimes.set(options.cache, runtime)
+    }
+    const handler = createWebToolHandlers(runtime).find((candidate) => candidate.name === 'web.search')
     if (!handler) throw new Error('Missing handler')
     return handler.execute({
       arguments: arguments_,
+      webConfiguration: {
+        ...DEFAULT_WEB_PROVIDER_CONFIGURATION,
+        searchProvider: options.searxngBaseUrl ? 'searxng' : 'disabled',
+        searxngBaseUrl: options.searxngBaseUrl ?? ''
+      },
       requestedBy: { type: 'model', id: 'model-1' },
       context: {
         owner: { type: 'application', id: 'realmflow' },

@@ -10,6 +10,24 @@ import { CronScheduleScheduler } from './cron-schedule-scheduler'
 const MAX_TIMER_DELAY = 2_147_483_647
 
 describe('CronScheduleScheduler', () => {
+  it('exposes a sanitized lifecycle snapshot for runtime diagnostics', async () => {
+    const harness = createHarness({
+      nextTrigger: cursor('schedule-1', 150)
+    })
+
+    expect(harness.scheduler.status()).toEqual({ running: false })
+
+    await harness.scheduler.start()
+    expect(harness.scheduler.status()).toEqual({
+      running: true,
+      nextDueAt: 150,
+      nextScheduleId: 'schedule-1'
+    })
+
+    harness.scheduler.stop()
+    expect(harness.scheduler.status()).toEqual({ running: false })
+  })
+
   it('reconciles active schedules on start and arms only the earliest cursor', async () => {
     const harness = createHarness({
       schedules: [schedule('schedule-2'), schedule('schedule-1')],

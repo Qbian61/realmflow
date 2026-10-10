@@ -1,5 +1,6 @@
 export const IPC_QUERY_CHANNELS = {
   sidecarGetStatus: 'sidecar:get-status',
+  agentRuntimeGet: 'agent-runtime:get',
   workbenchLayoutGet: 'workbench-layout:get',
   workbenchDashboardGet: 'workbench-dashboard:get',
   workbenchSystemGet: 'workbench-system:get',
@@ -48,6 +49,10 @@ export const IPC_QUERY_CHANNELS = {
   modelProviderDiscover: 'model-provider:discover',
   connectorList: 'connector:list',
   toolCatalogList: 'tool-catalog:list',
+  skillRegistryList: 'skill-registry:list',
+  toolPolicyGet: 'tool-policy:get',
+  webProviderGet: 'web-provider:get',
+  toolPolicyPreview: 'tool-policy:preview',
   toolPermissionListPending: 'tool-permission:list-pending',
   capabilityCatalogList: 'capability-catalog:list',
   capabilityBuilderGet: 'capability-builder:get',
@@ -72,6 +77,9 @@ export const IPC_QUERY_CHANNELS = {
 } as const
 
 export const IPC_COMMAND_CHANNELS = {
+  agentRuntimeUpdateGoal: 'agent-runtime:update-goal',
+  agentRuntimeSteer: 'agent-runtime:steer',
+  agentRuntimeCancel: 'agent-runtime:cancel',
   workbenchLayoutUpdate: 'workbench-layout:update',
   workbenchAttachmentPick: 'workbench-attachment:pick',
   workbenchAttachmentOpen: 'workbench-attachment:open',
@@ -200,6 +208,13 @@ export const IPC_COMMAND_CHANNELS = {
   connectorValidate: 'connector:validate',
   toolCatalogChooseAndImport: 'tool-catalog:choose-and-import',
   toolCatalogSetActivation: 'tool-catalog:set-activation',
+  toolCatalogChangePackageVersion:
+    'tool-catalog:change-package-version',
+  skillRegistrySynchronize: 'skill-registry:synchronize',
+  skillRegistryReview: 'skill-registry:review',
+  skillRegistrySetActivation: 'skill-registry:set-activation',
+  toolPolicySave: 'tool-policy:save',
+  webProviderSave: 'web-provider:save',
   toolPermissionResolve: 'tool-permission:resolve',
   capabilityPackageChooseAndPrepare:
     'capability-package:choose-and-prepare',
@@ -279,6 +294,7 @@ export const IPC_EVENT_CHANNELS = {
   persistenceChanged: 'persistence:changed',
   nativeOverlayEvent: 'native-overlay:event',
   webWorkbenchStateChanged: 'web-workbench:state-changed',
+  agentBrowserSurface: 'web-workbench:agent-browser-surface',
   terminalEvent: 'terminal:event',
   toolPermissionChanged: 'tool-permission:changed'
 } as const

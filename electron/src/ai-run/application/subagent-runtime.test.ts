@@ -3,6 +3,26 @@ import type { DelegationPolicy, DelegationRequest } from '../../../../domain/sub
 import { SubagentRuntime } from './subagent-runtime'
 
 describe('SubagentRuntime', () => {
+  it('does not start or charge tasks when the parent signal is already cancelled', async () => {
+    const runTask = vi.fn(async (task) => ({
+      taskId: task.id, status: 'completed' as const, summary: 'Done',
+      evidence: [], unresolved: [], artifactIds: []
+    }))
+    const runtime = new SubagentRuntime({ runTask })
+    const controller = new AbortController()
+    controller.abort()
+    const bounded = policy({
+      rootBudgets: { maxToolCalls: 1, maxSubagents: 1, timeoutMs: 900_000, maxRetries: 2 }
+    })
+    expect(await runtime.execute({
+      rootRunId: 'root-1', request: request('one'), policy: bounded, signal: controller.signal
+    })).toMatchObject({ status: 'cancelled', tasks: [{ taskId: 'one', status: 'cancelled' }] })
+    expect(runTask).not.toHaveBeenCalled()
+    expect(await runtime.execute({
+      rootRunId: 'root-1', request: request('two'), policy: bounded, signal: new AbortController().signal
+    })).toMatchObject({ status: 'completed' })
+  })
+
   it('runs independent tasks with bounded concurrency and preserves request order', async () => {
     let active = 0
     let peak = 0

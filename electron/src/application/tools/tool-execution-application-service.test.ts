@@ -19,6 +19,8 @@ import { SqliteToolProjectionStore } from '../../infrastructure/sqlite/tool-proj
 import { SqliteToolSnapshotStore } from '../../infrastructure/sqlite/tool-snapshot-store'
 import { CredentialVault } from '../../models/credential-vault'
 import { EncryptedPendingToolInvocationCheckpointStore } from './pending-tool-invocation-checkpoint-store'
+import { ToolPolicyEngine } from './tool-policy-engine'
+import type { ToolPolicySnapshot } from '../../../../domain/tool-policy'
 
 let directory: string
 let database: RealmFlowDatabase
@@ -36,7 +38,14 @@ let requestUserInput: ReturnType<typeof vi.fn>
 let resolveCredential: ReturnType<typeof vi.fn>
 let runSessionCommand: ReturnType<typeof vi.fn>
 let updateProgressCard: ReturnType<typeof vi.fn>
+let runAgentCommand: ReturnType<typeof vi.fn>
 let runCapabilityCommand: ReturnType<typeof vi.fn>
+let runGatewayCommand: ReturnType<typeof vi.fn>
+let runAutomationCommand: ReturnType<typeof vi.fn>
+let runMediaCommand: ReturnType<typeof vi.fn>
+let dispatchPluginHook: ReturnType<typeof vi.fn>
+let registerGeneratedArtifact: ReturnType<typeof vi.fn>
+let runPolicy: ToolPolicySnapshot | undefined
 
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), 'realmflow-tool-execution-'))
@@ -51,6 +60,7 @@ beforeEach(async () => {
   await seedCatalog(events)
   await projectionRunner.rebuildCatalogProjection()
   externalDefinition = undefined
+  runPolicy = undefined
   suspendToolCall = vi.fn().mockResolvedValue(undefined)
   submitToolResult = vi.fn().mockResolvedValue(undefined)
   requestUserInput = vi.fn().mockResolvedValue({
@@ -81,12 +91,53 @@ beforeEach(async () => {
     message: 'Reading files',
     revision: 1
   })
+  runAgentCommand = vi.fn(async (id, input, context) => id === 'sessions'
+    ? runSessionCommand(input, context)
+    : id === 'progress_card' ? updateProgressCard(input, context) : { runId: 'run-status' })
   runCapabilityCommand = vi.fn().mockResolvedValue({
     action: 'enable',
     installationId: 'capability-installation-1',
     status: 'enabled',
     revision: 2
   })
+  runGatewayCommand = vi.fn().mockResolvedValue({
+    status: 'degraded',
+    components: {
+      sidecar: 'ready',
+      builtin: 'ready',
+      sandbox: 'ready',
+      mcp: 'degraded',
+      computer: 'ready',
+      connector: 'ready'
+    }
+  })
+  runAutomationCommand = vi.fn().mockResolvedValue({
+    status: 'alive',
+    observedAt: 200,
+    schedulerRunning: true,
+    background: { running: 0, pending: 0 }
+  })
+  runMediaCommand = vi.fn().mockResolvedValue({
+    output: {
+      path: '/workspace/generated.png',
+      mediaType: 'image/png',
+      sizeBytes: 3
+    },
+    artifact: {
+      path: '/workspace/generated.png',
+      name: 'generated.png',
+      mediaType: 'image/png',
+      sizeBytes: 3,
+      kind: 'image'
+    },
+    provenance: {
+      operation: 'image_generate',
+      providerId: 'alpha.media',
+      definitionDigest: mediaDefinition.definitionDigest
+    }
+  })
+  registerGeneratedArtifact = vi.fn().mockResolvedValue(undefined)
+  dispatchPluginHook = vi.fn().mockResolvedValue([])
 
   adapter = {
     kind: 'builtin',
@@ -170,6 +221,7 @@ beforeEach(async () => {
       submitToolResult
     },
     now: () => 200,
+    resolveRunPolicy: async () => runPolicy,
     createId: idFactory(),
     resolveDefinition: async (reference) =>
       externalDefinition?.id === reference.id &&
@@ -180,9 +232,21 @@ beforeEach(async () => {
     assistantRuntime: {
       requestUserInput,
       resolveCredential,
-      runSessionCommand,
-      updateProgressCard,
-      runCapabilityCommand
+      runAgentCommand,
+      runCapabilityCommand,
+      runGatewayCommand,
+      runAutomationCommand,
+      runMediaCommand
+    },
+    mediaRuntime: {
+      definitions: vi.fn().mockResolvedValue([mediaDefinition])
+    },
+    generatedArtifacts: {
+      beforeToolExecution: vi.fn().mockResolvedValue(undefined),
+      afterToolExecution: registerGeneratedArtifact
+    },
+    pluginHooks: {
+      dispatch: dispatchPluginHook
     },
     resolveScopeRoots: async () => ['/workspace'],
     resolveBoundScopes: async () => [
@@ -209,6 +273,262 @@ afterEach(async () => {
 })
 
 describe('ToolExecutionApplicationService', () => {
+  it('publishes successful primitive completion to the persisted Plugin Hook outbox only once', async () => {
+    const result = await service.execute({
+      definition: reference(definition),
+      triggerSource: 'model',
+      context: {
+        scope: {
+          kind: 'conversation',
+          conversationId: 'conversation-1'
+        },
+        conversationId: 'conversation-1'
+      },
+      input: { path: 'README.md' },
+      idempotencyKey: 'plugin-hook-source'
+    })
+
+    expect(result).toMatchObject({
+      outcome: 'executed',
+      execution: { status: 'succeeded' }
+    })
+    expect(dispatchPluginHook).toHaveBeenCalledWith(
+      {
+        id: expect.stringMatching(/^tool-completed:/),
+        event: 'tool.completed',
+        payload: {
+          executionId: expect.any(String),
+          toolId: 'builtin.files.read',
+          output: { content: 'RealmFlow' }
+        }
+      },
+      expect.objectContaining({
+        conversationId: 'conversation-1'
+      })
+    )
+
+    dispatchPluginHook.mockClear()
+    await service.execute({
+      definition: reference(definition),
+      triggerSource: 'hook',
+      context: {
+        scope: {
+          kind: 'conversation',
+          conversationId: 'conversation-1'
+        },
+        conversationId: 'conversation-1'
+      },
+      input: { path: 'README.md' },
+      idempotencyKey: 'plugin-hook-recursion'
+    })
+    expect(dispatchPluginHook).not.toHaveBeenCalled()
+  })
+
+  it.each(['primitive', 'facade', 'directory'] as const)(
+    'rejects malformed declared output through %s before publishing success',
+    async (route) => {
+      const contract = {
+        ...definition, id: 'builtin.documents.read', definitionDigest: 'f'.repeat(64),
+        outputSchema: { type: 'object', required: ['content'], properties: { content: { type: 'string' } } },
+      }
+      await seedToolDefinition(events, contract, 'contract-output')
+      await projectionRunner.rebuildCatalogProjection()
+      vi.mocked(adapter.resolve).mockResolvedValueOnce({
+        definitionId: contract.id, definitionVersion: contract.version,
+        definitionDigest: contract.definitionDigest, adapterKind: 'builtin',
+        bindingId: 'contract-output', opaqueRuntimeHandle: {},
+      })
+      vi.mocked(adapter.execute).mockResolvedValueOnce({
+        outcome: 'succeeded', output: { content: 42, secret: 'MUST_NOT_PUBLISH' },
+        metrics: { durationMs: 1, outputBytes: 40 },
+      })
+      const control = route === 'primitive' ? contract
+        : route === 'facade' ? await facadeDefinition('filesystem_read')
+        : await directoryDefinition('tool_call')
+      const result = await service.execute({
+        definition: reference(control), triggerSource: 'model',
+        context: {
+          scope: { kind: 'conversation', conversationId: 'conversation-1' },
+          conversationId: 'conversation-1', parentExecutionId: 'run-contract', toolCallId: 'call-contract',
+        },
+        input: route === 'primitive' ? { path: 'README.md' }
+          : route === 'facade' ? { action: 'read_document', arguments: { path: 'README.md' } }
+          : { id: contract.id, args: { path: 'README.md' } },
+        idempotencyKey: `output-contract-${route}`,
+      })
+      expect(result).toMatchObject({
+        execution: { status: 'failed', error: { code: 'tool_output_invalid' } },
+      })
+      // Synchronous executions return the terminal result to the coordinator;
+      // only suspended calls publish a second-turn notification through outbox.
+      expect(JSON.stringify(result)).not.toContain('MUST_NOT_PUBLISH')
+      const stream = await events.loadStream(result.outcome === 'executed' ? result.execution.id : 'missing')
+      expect(stream.some((event) => event.eventType === 'tool.attempt_succeeded')).toBe(false)
+      expect(JSON.stringify(stream)).not.toContain('MUST_NOT_PUBLISH')
+    },
+  )
+
+  it('publishes one failed outbox result when an approved invocation violates its output contract', async () => {
+    const contract = {
+      ...definition, id: 'builtin.contract.read', definitionDigest: 'f'.repeat(64),
+      outputSchema: { type: 'object', required: ['content'], properties: { content: { type: 'string' } } },
+    }
+    await seedToolDefinition(events, contract, 'approved-contract')
+    await projectionRunner.rebuildCatalogProjection()
+    vi.mocked(adapter.resolve).mockResolvedValue({
+      definitionId: contract.id, definitionVersion: contract.version,
+      definitionDigest: contract.definitionDigest, adapterKind: 'builtin',
+      bindingId: 'approved-contract', opaqueRuntimeHandle: {},
+    })
+    vi.mocked(adapter.planEffects!).mockResolvedValue({
+      outcome: 'planned', effects: [{ kind: 'filesystem.write', path: '/outside/result.txt' }],
+    })
+    vi.mocked(adapter.execute).mockResolvedValue({
+      outcome: 'succeeded', output: { content: 42, secret: 'PRIVATE_INVALID_RESULT' },
+      metrics: { durationMs: 1, outputBytes: 42 },
+    })
+    const pending = await service.execute({
+      definition: reference(contract), triggerSource: 'model',
+      context: {
+        scope: { kind: 'conversation', conversationId: 'conversation-1' },
+        conversationId: 'conversation-1', parentExecutionId: 'approved-run', toolCallId: 'approved-call',
+      },
+      input: { path: 'README.md' }, idempotencyKey: 'approved-contract',
+    })
+    if (pending.outcome !== 'permission_required') throw new Error('Expected approval')
+    await service.resolvePermission({
+      requestId: String(pending.permissionRequests[0].id), expectedRevision: 1, decision: 'allow_once',
+    })
+    expect(submitToolResult).toHaveBeenCalledOnce()
+    expect(submitToolResult).toHaveBeenCalledWith('approved-run', expect.objectContaining({
+      callId: 'approved-call', status: 'failed',
+    }))
+    const stream = await events.loadStream(pending.executionId)
+    expect(stream.some((item) => item.eventType === 'tool.attempt_succeeded')).toBe(false)
+    expect(JSON.stringify(stream)).not.toContain('PRIVATE_INVALID_RESULT')
+    expect(JSON.stringify(submitToolResult.mock.calls)).not.toContain('PRIVATE_INVALID_RESULT')
+    await expect(checkpoints.load(pending.executionId)).resolves.toBeUndefined()
+  })
+
+  it.each(['approval', 'restart'] as const)(
+    'rejects a changed run policy during %s before preparing or executing the pending tool',
+    async (phase) => {
+      runPolicy = new ToolPolicyEngine().resolve([definition])
+      vi.mocked(adapter.planEffects!).mockResolvedValue({
+        outcome: 'planned',
+        effects: [{ kind: 'filesystem.write', path: '/outside/result.txt' }],
+      })
+      const pending = await service.execute({
+        definition: reference(definition), triggerSource: 'model',
+        context: {
+          scope: { kind: 'conversation', conversationId: 'conversation-1' },
+          conversationId: 'conversation-1', parentExecutionId: 'run-policy',
+          toolCallId: 'pending-policy',
+        },
+        input: { path: 'README.md' },
+        idempotencyKey: 'pending-policy',
+      })
+      expect(pending.outcome).toBe('permission_required')
+      if (pending.outcome !== 'permission_required') return
+      runPolicy = new ToolPolicyEngine().resolve([definition], { layers: [{ allow: [] }] })
+      vi.mocked(adapter.prepare).mockClear()
+      vi.mocked(adapter.planEffects!).mockClear()
+      if (phase === 'approval') {
+        await expect(service.resolvePermission({
+          requestId: String(pending.permissionRequests[0].id),
+          expectedRevision: 1, decision: 'allow_once',
+        })).rejects.toThrow('tool_policy_changed')
+      } else {
+        const restarted = new ToolExecutionApplicationService({
+          events, projections, projectionRunner, adapters,
+          pendingCheckpoints: checkpoints,
+          dispatcher: { dispatchBatch: async () => ({ claimed: 0, published: 0, failed: 0 }) },
+          resolveRunPolicy: async () => runPolicy,
+          resolveScopeRoots: async () => ['/workspace'],
+          now: () => 200,
+        })
+        await expect(restarted.restorePendingPermissions()).resolves.toBe(0)
+      }
+      expect(adapter.prepare).not.toHaveBeenCalled()
+      expect(adapter.planEffects).not.toHaveBeenCalled()
+      expect(adapter.execute).not.toHaveBeenCalled()
+      const notifications = database.prepare(
+        "SELECT payload_json FROM tool_outbox WHERE topic = 'ai_run.submit_tool_result'",
+      ).all() as Array<{ payload_json: string }>
+      expect(notifications.map((row) => JSON.parse(row.payload_json))).toContainEqual(
+        expect.objectContaining({
+          runId: 'run-policy', callId: 'pending-policy', status: 'failed', errorCode: 'tool_policy_changed',
+        }),
+      )
+    },
+  )
+
+  it.each(['primitive', 'facade', 'directory'] as const)(
+    'blocks denied primitive access through %s before any adapter runs and audits the denial',
+    async (route) => {
+      const control = route === 'primitive' ? definition
+        : route === 'facade' ? await facadeDefinition('filesystem_read')
+        : await directoryDefinition('tool_call')
+      runPolicy = new ToolPolicyEngine().resolve([definition, control], {
+        layers: [{ deny: [definition.id] }],
+      })
+      const result = await service.execute({
+        definition: reference(control), triggerSource: 'model',
+        context: {
+          scope: { kind: 'conversation', conversationId: 'conversation-1' },
+          conversationId: 'conversation-1', parentExecutionId: 'run-policy',
+        },
+        input: route === 'primitive' ? { path: 'README.md' }
+          : route === 'facade' ? { action: 'read', arguments: { path: 'README.md' } }
+          : { id: definition.id, args: { path: 'README.md' } },
+        idempotencyKey: `policy-denied-${route}`,
+      })
+      expect(result).toMatchObject({
+        outcome: 'executed',
+        execution: { status: 'failed', error: { code: 'tool_policy_denied' } },
+      })
+      expect(adapter.prepare).not.toHaveBeenCalled()
+      expect(adapter.execute).not.toHaveBeenCalled()
+      const stream = await events.loadStream(result.outcome === 'executed' ? result.execution.id : 'missing')
+      expect(stream.some((event) => event.eventType === 'tool.authorization_auto_granted')).toBe(false)
+      expect(stream[0].payload).toMatchObject({ toolPolicyDigest: runPolicy.digest })
+    },
+  )
+
+  it('does not reveal denied tools in directory search or description', async () => {
+    const search = await directoryDefinition('tool_search')
+    const describe = await directoryDefinition('tool_describe')
+    runPolicy = new ToolPolicyEngine().resolve([definition, search, describe], {
+      layers: [{ deny: [definition.id] }],
+    })
+    const context = {
+      scope: { kind: 'conversation' as const, conversationId: 'conversation-1' },
+      conversationId: 'conversation-1', parentExecutionId: 'run-policy',
+    }
+    await expect(service.execute({
+      definition: reference(search), triggerSource: 'model', context,
+      input: { query: 'read file' }, idempotencyKey: 'policy-search',
+    })).resolves.toMatchObject({ execution: { output: { candidates: [] } } })
+    const result = await service.execute({
+      definition: reference(describe), triggerSource: 'model', context,
+      input: { id: definition.id }, idempotencyKey: 'policy-describe',
+    })
+    expect(result).toMatchObject({
+      execution: { output: { error: { code: 'directory_tool_not_found' } } },
+    })
+    expect(JSON.stringify(result)).not.toContain('inputSchema')
+  })
+
+  it('rejects a changed definition digest instead of reusing its old run grant', async () => {
+    runPolicy = new ToolPolicyEngine().resolve([{ ...definition, definitionDigest: 'c'.repeat(64) }])
+    await expect(service.execute({
+      definition: reference(definition), triggerSource: 'model',
+      context: { scope: { kind: 'conversation', conversationId: 'conversation-1' } },
+      input: { path: 'README.md' }, idempotencyKey: 'policy-changed-digest',
+    })).resolves.toMatchObject({ execution: { error: { code: 'tool_policy_denied' } } })
+    expect(adapter.prepare).not.toHaveBeenCalled()
+  })
+
   it('dispatches a model-facing filesystem read facade through the primitive file read Tool', async () => {
     const facade = await facadeDefinition('filesystem_read')
 
@@ -502,6 +822,29 @@ describe('ToolExecutionApplicationService', () => {
     )
   })
 
+  it('searches ordered batches without exposing denied candidates', async () => {
+    const control = await directoryDefinition('tool_search')
+    runPolicy = new ToolPolicyEngine().resolve([definition, control])
+    const result = await service.execute({
+      triggerSource: 'model', definition: reference(control),
+      context: {
+        scope: { kind: 'conversation', conversationId: 'conversation-1' },
+        conversationId: 'conversation-1', toolCallId: 'batch-search',
+      },
+      input: { query: ['read file', 'not-present', 'read'], limit: 1 },
+      idempotencyKey: 'batch-search',
+    })
+    expect(result).toMatchObject({
+      outcome: 'executed',
+      execution: { status: 'succeeded', output: { results: [
+        { query: 'read file', candidates: [expect.objectContaining({ id: definition.id })] },
+        { query: 'not-present', candidates: [] },
+        { query: 'read', candidates: [expect.objectContaining({ id: definition.id })] },
+      ] } },
+    })
+    expect(adapter.execute).not.toHaveBeenCalled()
+  })
+
   it('searches hidden directory tools with compact catalog results only', async () => {
     const control = await directoryDefinition('tool_search')
 
@@ -529,7 +872,8 @@ describe('ToolExecutionApplicationService', () => {
               name: 'Read file',
               source: 'builtin',
               risk: 'low',
-              inputHint: 'path'
+              inputHint: 'path!:string',
+              outputHint: 'object'
             })
           ]
         }
@@ -541,17 +885,7 @@ describe('ToolExecutionApplicationService', () => {
       )
     ).not.toContain('inputSchema')
     expect(adapter.execute).not.toHaveBeenCalled()
-    expect(submitToolResult).toHaveBeenCalledWith('run-directory', {
-      callId: 'call-tool-search',
-      status: 'completed',
-      output: expect.objectContaining({
-        candidates: expect.arrayContaining([
-          expect.objectContaining({ id: 'builtin.files.read' })
-        ])
-      }),
-      toolExecutionId: expect.any(String),
-      resultSummary: 'Tool directory control completed'
-    })
+    expect(submitToolResult).not.toHaveBeenCalled()
   })
 
   it('describes a hidden directory tool with exact schemas and risk metadata', async () => {
@@ -671,6 +1005,7 @@ describe('ToolExecutionApplicationService', () => {
 
   it('suspends ask_user once without invoking an adapter', async () => {
     const control = await runtimeDefinition('ask_user')
+    runPolicy = new ToolPolicyEngine().resolve([control])
     const command = {
       definition: reference(control),
       triggerSource: 'model' as const,
@@ -703,6 +1038,8 @@ describe('ToolExecutionApplicationService', () => {
       ]
     })
     expect(second).toEqual(first)
+    const stream = await events.loadStream(first.outcome === 'permission_required' ? first.executionId : 'missing')
+    expect(stream[0].payload).toMatchObject({ toolPolicyDigest: runPolicy.digest })
     expect(requestUserInput).toHaveBeenCalledOnce()
     expect(suspendToolCall).toHaveBeenCalledOnce()
     expect(suspendToolCall).toHaveBeenCalledWith('run-ask-user', {
@@ -805,6 +1142,7 @@ describe('ToolExecutionApplicationService', () => {
         cardId: 'card-1',
         status: 'running',
         message: 'Reading files',
+        expectedRevision: 0,
         completed: 1,
         total: 3
       },
@@ -824,6 +1162,32 @@ describe('ToolExecutionApplicationService', () => {
       }
     })
     expect(updateProgressCard).toHaveBeenCalledOnce()
+    expect(adapter.execute).not.toHaveBeenCalled()
+  })
+
+  it('dispatches new runtime controls with the trusted context and stable request identity', async () => {
+    const control = await runtimeDefinition('session_status')
+    const command = {
+      definition: reference(control), triggerSource: 'model' as const,
+      context: {
+        scope: { kind: 'conversation' as const, conversationId: 'conversation-1' },
+        conversationId: 'conversation-1', parentExecutionId: 'run-status', toolCallId: 'call-status'
+      },
+      input: {}, idempotencyKey: 'status-request'
+    }
+    const controller = new AbortController()
+    const result = await service.execute(command, controller.signal)
+    expect(result).toMatchObject({ outcome: 'executed', execution: {
+      status: 'succeeded', output: { runId: 'run-status' }
+    } })
+    expect(result).not.toHaveProperty('resultDelivery')
+    const replay = await service.execute(command, controller.signal)
+    expect(replay).toEqual(result)
+    expect(submitToolResult).not.toHaveBeenCalled()
+    expect(database.prepare(
+      "SELECT count(*) AS count FROM tool_outbox WHERE topic = 'ai_run.submit_tool_result'"
+    ).get()).toEqual({ count: 0 })
+    expect(runAgentCommand).toHaveBeenCalledWith('session_status', {}, command.context, 'status-request', controller.signal)
     expect(adapter.execute).not.toHaveBeenCalled()
   })
 
@@ -863,7 +1227,146 @@ describe('ToolExecutionApplicationService', () => {
       action: 'enable',
       installationId: 'capability-installation-1',
       expectedRevision: 1
-    }, expect.objectContaining({ conversationId: 'conversation-1' }))
+    }, expect.objectContaining({ conversationId: 'conversation-1' }), 'capabilities-enable')
+    expect(adapter.execute).not.toHaveBeenCalled()
+  })
+
+  it('audits an idempotent Gateway Runtime command without invoking an adapter', async () => {
+    const control = await runtimeDefinition('gateway')
+    const command = {
+      definition: reference(control),
+      triggerSource: 'model' as const,
+      context: {
+        scope: {
+          kind: 'conversation' as const,
+          conversationId: 'conversation-1'
+        },
+        conversationId: 'conversation-1',
+        parentExecutionId: 'run-gateway',
+        toolCallId: 'call-gateway'
+      },
+      input: { action: 'health' },
+      idempotencyKey: 'gateway-health'
+    }
+
+    const first = await service.execute(command)
+    const replay = await service.execute(command)
+
+    expect(first).toMatchObject({
+      outcome: 'executed',
+      execution: {
+        status: 'succeeded',
+        output: {
+          status: 'degraded',
+          components: { sidecar: 'ready', mcp: 'degraded' }
+        }
+      }
+    })
+    expect(replay).toEqual(first)
+    expect(runGatewayCommand).toHaveBeenCalledTimes(2)
+    expect(runGatewayCommand).toHaveBeenNthCalledWith(
+      1,
+      { action: 'health' },
+      expect.objectContaining({
+        conversationId: 'conversation-1',
+        parentExecutionId: 'run-gateway'
+      }),
+      'gateway-health'
+    )
+    expect(adapter.execute).not.toHaveBeenCalled()
+  })
+
+  it('audits an Automation Runtime command without invoking an adapter', async () => {
+    const control = await runtimeDefinition('automation')
+    const command = {
+      definition: reference(control),
+      triggerSource: 'model' as const,
+      context: {
+        scope: {
+          kind: 'conversation' as const,
+          conversationId: 'conversation-1'
+        },
+        conversationId: 'conversation-1',
+        parentExecutionId: 'run-automation',
+        toolCallId: 'call-automation'
+      },
+      input: { action: 'heartbeat' },
+      idempotencyKey: 'automation-heartbeat'
+    }
+
+    const result = await service.execute(command)
+
+    expect(result).toMatchObject({
+      outcome: 'executed',
+      execution: {
+        status: 'succeeded',
+        output: {
+          status: 'alive',
+          observedAt: 200,
+          schedulerRunning: true
+        }
+      }
+    })
+    expect(runAutomationCommand).toHaveBeenCalledWith(
+      { action: 'heartbeat' },
+      expect.objectContaining({
+        conversationId: 'conversation-1',
+        parentExecutionId: 'run-automation'
+      }),
+      'automation-heartbeat'
+    )
+    expect(adapter.execute).not.toHaveBeenCalled()
+  })
+
+  it('audits an exact media definition and registers its successful artifact', async () => {
+    const result = await service.execute({
+      definition: reference(mediaDefinition),
+      triggerSource: 'model',
+      context: {
+        scope: {
+          kind: 'conversation',
+          conversationId: 'conversation-1'
+        },
+        conversationId: 'conversation-1',
+        parentExecutionId: 'run-media',
+        toolCallId: 'call-media'
+      },
+      input: { prompt: 'local image' },
+      idempotencyKey: 'media-image'
+    })
+
+    expect(result).toMatchObject({
+      outcome: 'executed',
+      execution: {
+        status: 'succeeded',
+        output: {
+          path: '/workspace/generated.png',
+          mediaType: 'image/png'
+        }
+      }
+    })
+    expect(runMediaCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        definition: reference(mediaDefinition),
+        input: { prompt: 'local image' },
+        scopeRoots: ['/workspace']
+      }),
+      expect.objectContaining({
+        parentExecutionId: 'run-media',
+        conversationId: 'conversation-1'
+      }),
+      'media-image',
+      expect.any(AbortSignal)
+    )
+    expect(registerGeneratedArtifact).toHaveBeenCalledWith({
+      runId: 'run-media',
+      toolName: 'image_generate',
+      arguments: { prompt: 'local image' },
+      scopeRoots: ['/workspace'],
+      output: expect.objectContaining({
+        path: '/workspace/generated.png'
+      })
+    })
     expect(adapter.execute).not.toHaveBeenCalled()
   })
 
@@ -928,6 +1431,43 @@ describe('ToolExecutionApplicationService', () => {
     })
     expect(adapter.execute).not.toHaveBeenCalled()
   })
+
+  it.each(['tool_search', 'tool_describe', 'tool_call'])(
+    'uses the authorized external registry for %s',
+    async (id) => {
+      externalDefinition = {
+        ...definition, id: 'com.example.docs.search', definitionDigest: 'f'.repeat(64),
+        executor: {
+          kind: 'connector', capabilityId: 'com.example.docs', capabilityVersion: '1.0.0',
+          capabilityDigest: 'e'.repeat(64), actionId: 'search',
+        },
+      }
+      const control = await directoryDefinition(id)
+      runPolicy = new ToolPolicyEngine().resolve([externalDefinition, control])
+      const result = await service.execute({
+        definition: reference(control), triggerSource: 'model',
+        context: { scope: { kind: 'conversation', conversationId: 'conversation-1' } },
+        input: id === 'tool_search' ? { query: 'com.example.docs.search' }
+          : id === 'tool_describe' ? { id: externalDefinition.id }
+          : { id: externalDefinition.id, args: { path: 'README.md' } },
+        idempotencyKey: `external-${id}`,
+      })
+      expect(result).toMatchObject({
+        execution: { status: 'succeeded', output: id === 'tool_search'
+          ? { candidates: [expect.objectContaining({ id: externalDefinition.id, source: 'connector' })] }
+          : id === 'tool_describe' ? { definition: { id: externalDefinition.id, definitionDigest: externalDefinition.definitionDigest } }
+          : { content: 'RealmFlow' } },
+      })
+      if (id === 'tool_call') {
+        expect(adapter.execute).toHaveBeenCalled()
+        const stream = await events.loadStream(result.outcome === 'executed' ? result.execution.id : 'missing')
+        expect(stream[0].payload).toMatchObject({
+          definition: { id: externalDefinition.id },
+          modelFacingDirectory: { resolvedToolId: externalDefinition.id },
+        })
+      }
+    },
+  )
 
   it('resolves a scoped Connector Tool outside the legacy Tool Catalog', async () => {
     externalDefinition = {
@@ -1113,6 +1653,136 @@ describe('ToolExecutionApplicationService', () => {
       })
     ])
   })
+
+  it.each(['allow_session', 'allow_always'] as const)(
+    'reuses %s only for matching operations and session boundaries', async decision => {
+      vi.mocked(adapter.planEffects!).mockResolvedValue({
+        outcome: 'planned',
+        effects: [{ kind: 'filesystem.write', path: '/outside/result.txt' }]
+      })
+      const execute = (key: string, conversationId = 'conversation-1') => service.execute({
+        definition: { kind: 'tool' as const, id: definition.id,
+          version: definition.version, digest: definition.definitionDigest },
+        triggerSource: 'model' as const,
+        context: { scope: { kind: 'conversation' as const, conversationId },
+          conversationId, parentExecutionId: 'run-1', toolCallId: key },
+        input: { path: 'README.md' }, idempotencyKey: key
+      })
+      const first = await execute('grant-first')
+      if (first.outcome !== 'permission_required') throw new Error('Expected permission')
+      const command = { requestId: String(first.permissionRequests[0].id),
+        expectedRevision: 1, decision }
+      await expect(service.resolvePermission(command)).resolves.toMatchObject({
+        status: 'approved', decision
+      })
+      await service.resolvePermission(command)
+      expect(adapter.execute).toHaveBeenCalledOnce()
+      expect((await execute('grant-repeat')).outcome).toBe('executed')
+      expect((await execute('grant-other-session', 'conversation-2')).outcome)
+        .toBe(decision === 'allow_session' ? 'permission_required' : 'executed')
+      const changedArguments = await service.prepare({
+        definition: { kind: 'tool', id: definition.id,
+          version: definition.version, digest: definition.definitionDigest },
+        triggerSource: 'model',
+        context: { scope: { kind: 'conversation', conversationId: 'conversation-1' },
+          conversationId: 'conversation-1' },
+        input: { path: 'OTHER.md' }
+      })
+      expect(changedArguments.outcome).toBe('permission_required')
+      vi.mocked(adapter.planEffects!).mockResolvedValue({
+        outcome: 'planned',
+        effects: [{ kind: 'filesystem.write', path: '/outside/other.txt' }]
+      })
+      expect((await execute('grant-other-path')).outcome).toBe('permission_required')
+    }
+  )
+
+  it('rolls back reusable authorization when outbox insertion fails', async () => {
+    vi.mocked(adapter.planEffects!).mockResolvedValue({
+      outcome: 'planned', effects: [{ kind: 'filesystem.write', path: '/outside/result.txt' }]
+    })
+    const command = {
+      definition: { kind: 'tool' as const, id: definition.id,
+        version: definition.version, digest: definition.definitionDigest },
+      triggerSource: 'model' as const,
+      context: { scope: { kind: 'conversation' as const, conversationId: 'conversation-1' },
+        conversationId: 'conversation-1', parentExecutionId: 'run-1', toolCallId: 'rollback-call' },
+      input: { path: 'README.md' }
+    }
+    const first = await service.execute({ ...command, idempotencyKey: 'rollback-first' })
+    if (first.outcome !== 'permission_required') throw new Error('Expected permission')
+    database.exec(`CREATE TRIGGER fail_permission_outbox BEFORE INSERT ON tool_outbox
+      WHEN NEW.topic = 'tool.dispatch' BEGIN SELECT RAISE(ABORT, 'outbox failed'); END;`)
+    await expect(service.resolvePermission({
+      requestId: String(first.permissionRequests[0].id), expectedRevision: 1,
+      decision: 'allow_always'
+    })).rejects.toThrow('outbox failed')
+    expect((await events.loadStream(first.executionId)).some(event =>
+      event.eventType === 'tool.permission_decided')).toBe(false)
+    expect(adapter.execute).not.toHaveBeenCalled()
+    expect((await service.prepare(command)).outcome).toBe('permission_required')
+    expect((await projections.listPendingPermissions())[0].status).toBe('requested')
+  })
+
+  it.each(['allow_once', 'deny'] as const)('does not reuse %s', async decision => {
+    vi.mocked(adapter.planEffects!).mockResolvedValue({
+      outcome: 'planned', effects: [{ kind: 'filesystem.write', path: '/outside/result.txt' }]
+    })
+    const command = {
+      definition: { kind: 'tool' as const, id: definition.id,
+        version: definition.version, digest: definition.definitionDigest },
+      triggerSource: 'model' as const,
+      context: { scope: { kind: 'conversation' as const, conversationId: 'conversation-1' },
+        conversationId: 'conversation-1', parentExecutionId: 'run-1', toolCallId: 'once-call' },
+      input: { path: 'README.md' }
+    }
+    const first = await service.execute({ ...command, idempotencyKey: 'once-first' })
+    if (first.outcome !== 'permission_required') throw new Error('Expected permission')
+    await service.resolvePermission({ requestId: String(first.permissionRequests[0].id),
+      expectedRevision: 1, decision })
+    expect((await service.execute({ ...command, idempotencyKey: 'once-repeat' })).outcome)
+      .toBe('permission_required')
+  })
+
+  it.each(['allow_session', 'allow_always'] as const)(
+    'restores only persistent approvals after service/database restart: %s', async decision => {
+      vi.mocked(adapter.planEffects!).mockResolvedValue({
+        outcome: 'planned', effects: [{ kind: 'filesystem.write', path: '/outside/result.txt' }]
+      })
+      const command = {
+        definition: { kind: 'tool' as const, id: definition.id,
+          version: definition.version, digest: definition.definitionDigest },
+        triggerSource: 'model' as const,
+        context: { scope: { kind: 'conversation' as const, conversationId: 'conversation-1' },
+          conversationId: 'conversation-1', parentExecutionId: 'run-1', toolCallId: 'restart-call' },
+        input: { path: 'README.md' }
+      }
+      const first = await service.execute({ ...command, idempotencyKey: 'restart-first' })
+      if (first.outcome !== 'permission_required') throw new Error('Expected permission')
+      await service.resolvePermission({ requestId: String(first.permissionRequests[0].id),
+        expectedRevision: 1, decision })
+      database.close()
+      database = openRealmFlowDatabase(join(directory, 'realmflow.db'))
+      const restartedEvents = new SqliteToolEventStore(database)
+      const restartedProjections = new SqliteToolProjectionStore(database)
+      const restarted = new ToolExecutionApplicationService({
+        events: restartedEvents, projections: restartedProjections,
+        projectionRunner: new ToolProjectionRunner(restartedEvents, restartedProjections),
+        adapters, pendingCheckpoints: checkpoints,
+        dispatcher: { dispatchBatch: async () => ({ claimed: 0, published: 0, failed: 0 }) }, now: () => 200,
+        createId: () => `restart-${crypto.randomUUID()}`,
+        resolveScopeRoots: async () => ['/workspace'],
+        resolveBoundScopes: async () => [{
+          authorizationId: 'bound-scope-1',
+          source: { kind: 'requirement', requirementId: 'requirement-1', workspaceId: 'workspace-1' },
+          roots: [{ canonicalPath: '/workspace', access: 'read-write' }],
+          bindingRevision: 1, status: 'active', createdAt: 100
+        }]
+      })
+      expect((await restarted.prepare(command)).outcome)
+        .toBe(decision === 'allow_always' ? 'ready' : 'permission_required')
+    }
+  )
 
   it('allows a pending invocation once without changing its identity', async () => {
     vi.mocked(adapter.planEffects!).mockResolvedValue({
@@ -1495,6 +2165,39 @@ const definition: ToolDefinition = {
     intents: ['read file'],
     contexts: ['workflow']
   }
+}
+
+const mediaDefinition: ToolDefinition = {
+  ...definition,
+  id: 'image_generate',
+  definitionDigest: '9'.repeat(64),
+  package: {
+    packageId: 'com.example.media',
+    packageVersion: '1.0.0',
+    packageDigest: '8'.repeat(64)
+  },
+  origin: 'local_upload',
+  name: 'Generate image',
+  description: 'Generate a local image.',
+  tags: ['media'],
+  executor: {
+    kind: 'builtin',
+    handler: 'media-provider-runtime',
+    handlerVersion: '1.0.0'
+  },
+  inputSchema: {
+    type: 'object',
+    required: ['prompt'],
+    properties: { prompt: { type: 'string' } },
+    additionalProperties: false
+  },
+  capabilities: [
+    'credential.use',
+    'filesystem.write',
+    'network.connect'
+  ],
+  effects: ['external.write', 'filesystem.write', 'media.generate'],
+  risk: 'medium'
 }
 
 const deleteDefinition: ToolDefinition = {

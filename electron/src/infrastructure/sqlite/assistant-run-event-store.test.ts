@@ -7,6 +7,10 @@ import {
 } from '../../../../domain/assistant-turn'
 import { applyMigrations } from './migrations'
 import { SqliteAssistantRunEventStore } from './assistant-run-event-store'
+import { SqliteAgentRuntimeRunRepository } from './agent-runtime-run-repository'
+import { SqliteAgentRunCheckpointRepository } from './agent-run-checkpoint-repository'
+import { createAgentRunSnapshot } from '../../../../domain/agent-runtime'
+import { createRunCheckpoint } from '../../../../domain/agent-run-recovery'
 
 describe('SqliteAssistantRunEventStore', () => {
   let database: Database.Database
@@ -19,6 +23,218 @@ describe('SqliteAssistantRunEventStore', () => {
   })
 
   afterEach(() => database.close())
+
+  async function completedRuntime() {
+    const snapshot = createAgentRunSnapshot({ conversationId: 'session-1' }, {
+      runId: 'run-1', agentProfileId: 'builtin.general', agentProfileVersion: '1.0.0',
+      agentProfileDigest: 'a'.repeat(64), promptDigest: 'b'.repeat(64), policyDigest: 'c'.repeat(64),
+      capabilityCatalogDigest: 'd'.repeat(64), capabilityBindingDigest: 'e'.repeat(64),
+      permissionSnapshotDigest: 'f'.repeat(64)
+    })
+    await new SqliteAgentRuntimeRunRepository(database).create({
+      id: 'run-1', snapshot, status: 'completed', createdAt: 100, updatedAt: 200
+    })
+    await new SqliteAgentRunCheckpointRepository(database).save(createRunCheckpoint({
+      runId: 'run-1', ordinal: 1, reason: 'terminal', snapshotDigest: 'a'.repeat(64),
+      configurationDigests: { agentProfile: 'a'.repeat(64), prompt: 'b'.repeat(64),
+        policy: 'c'.repeat(64), capabilityCatalog: 'd'.repeat(64), capabilityBinding: 'e'.repeat(64) },
+      messageWindow: [{ id: 'answer:run-1', role: 'assistant', content: 'Durable answer' }],
+      pendingCalls: [], remainingBudgets: { toolCalls: 1, subagents: 0, retries: 0, timeoutMs: 10, tokens: 10 },
+      projectionCursor: 3, createdAt: 200
+    }))
+  }
+
+  it('reconciles a terminal run whose projection failed, without restarting the provider or duplicating the answer', async () => {
+    await completedRuntime()
+    const store = new SqliteAssistantRunEventStore(database)
+    const initial = createAssistantTurnProjection({
+      runId: 'run-1', assistantMessageId: 'assistant-1', startedAt: 100
+    })
+    const delta = event(1, 'answer.delta', { delta: 'Durable ' })
+    await store.appendAndProject(delta, projectAssistantTurn(initial, delta))
+    expect(store.reconcileTerminalConversations).toBeTypeOf('function')
+    await store.reconcileTerminalConversations()
+    await store.reconcileTerminalConversations()
+    expect(database.prepare('SELECT status, content FROM chat_messages').get())
+      .toEqual({ status: 'completed', content: 'Durable answer' })
+    expect(database.prepare('SELECT revision FROM chat_sessions').get()).toEqual({ revision: 1 })
+    expect(await store.rebuildProjection('run-1')).toEqual(await store.getSnapshot('run-1'))
+  })
+
+  it('repairs pending message delivery when the timeline projection is already terminal', async () => {
+    await completedRuntime()
+    const store = new SqliteAssistantRunEventStore(database)
+    const initial = createAssistantTurnProjection({
+      runId: 'run-1', assistantMessageId: 'assistant-1', startedAt: 100
+    })
+    const terminal = event(1, 'run.completed', { recoveredAnswer: 'Durable answer' })
+    await store.appendAndProject(terminal, projectAssistantTurn(initial, terminal))
+
+    await store.reconcileTerminalConversations()
+    await store.reconcileTerminalConversations()
+
+    expect(database.prepare('SELECT status, content FROM chat_messages').get())
+      .toEqual({ status: 'completed', content: 'Durable answer' })
+    expect(database.prepare('SELECT revision FROM chat_sessions').get())
+      .toEqual({ revision: 1 })
+    expect(await store.listAfter('run-1', 0)).toHaveLength(1)
+  })
+
+  it('uses the durable runtime terminal state when an older timeline terminal differs', async () => {
+    await completedRuntime()
+    const store = new SqliteAssistantRunEventStore(database)
+    const initial = createAssistantTurnProjection({
+      runId: 'run-1', assistantMessageId: 'assistant-1', startedAt: 100
+    })
+    const failed = event(1, 'run.failed', { message: 'Earlier transport failure' })
+    await store.appendAndProject(failed, projectAssistantTurn(initial, failed))
+
+    await store.reconcileTerminalConversations()
+    await store.reconcileTerminalConversations()
+
+    expect(database.prepare('SELECT status, content, error FROM chat_messages').get())
+      .toEqual({ status: 'completed', content: 'Durable answer', error: null })
+    expect(database.prepare('SELECT revision FROM chat_sessions').get())
+      .toEqual({ revision: 1 })
+    expect(await store.listAfter('run-1', 0)).toEqual([failed])
+    expect((await store.getSnapshot('run-1'))?.status).toBe('failed')
+  })
+
+  it('can retry terminal reconciliation after its message transaction fails', async () => {
+    await completedRuntime()
+    const store = new SqliteAssistantRunEventStore(database)
+    database.exec(`CREATE TRIGGER reject_reconcile BEFORE UPDATE ON chat_messages
+      BEGIN SELECT RAISE(ABORT, 'message unavailable'); END`)
+    expect(store.reconcileTerminalConversations).toBeTypeOf('function')
+    await expect(store.reconcileTerminalConversations()).rejects.toThrow('message unavailable')
+    expect((await store.listAfter('run-1', 0)).some((e) => e.type === 'run.completed')).toBe(false)
+    database.exec('DROP TRIGGER reject_reconcile')
+    await store.reconcileTerminalConversations()
+    expect(database.prepare('SELECT status, content FROM chat_messages').get())
+      .toEqual({ status: 'completed', content: 'Durable answer' })
+  })
+
+  it('excludes rebound conversations from terminal reconciliation', async () => {
+    await completedRuntime()
+    database.prepare("UPDATE chat_messages SET run_id = 'replacement'").run()
+    const store = new SqliteAssistantRunEventStore(database)
+    expect(store.reconcileTerminalConversations).toBeTypeOf('function')
+    await store.reconcileTerminalConversations()
+    expect(database.prepare('SELECT status, content FROM chat_messages').get())
+      .toEqual({ status: 'pending', content: '' })
+  })
+
+  it('retries artifact finalization before completing a reconciled conversation', async () => {
+    await completedRuntime()
+    const store = new SqliteAssistantRunEventStore(database)
+    const source = { schemaVersion: 1 as const, generatedArtifacts: [{
+      path: '/workspace/report.pdf', name: 'report.pdf', mediaType: 'application/pdf', sizeBytes: 10, kind: 'pdf'
+    }] }
+    const finalizeRun = vi.fn().mockRejectedValueOnce(new Error('artifact unavailable')).mockResolvedValue(source)
+    await expect(store.reconcileTerminalConversations({ finalizeRun })).rejects.toThrow('artifact unavailable')
+    expect(database.prepare('SELECT status FROM chat_messages').get()).toEqual({ status: 'pending' })
+    await store.reconcileTerminalConversations({ finalizeRun })
+    expect(finalizeRun).toHaveBeenLastCalledWith({
+      runId: 'run-1', conversationId: 'session-1', assistantMessageId: 'assistant-1', status: 'completed'
+    })
+    expect(JSON.parse((database.prepare('SELECT source_json FROM chat_messages').get() as { source_json: string }).source_json))
+      .toEqual(source)
+  })
+
+  it.each(['run.completed', 'run.failed', 'run.cancelled'] as const)(
+    'finishes the recovered conversation atomically with %s and ignores replay', async (type) => {
+      const store = new SqliteAssistantRunEventStore(database)
+      const initial = createAssistantTurnProjection({
+        runId: 'run-1', assistantMessageId: 'assistant-1', startedAt: 100
+      })
+      const delta = event(1, 'answer.delta', { delta: 'Recovered answer' })
+      const answer = projectAssistantTurn(initial, delta)
+      await store.appendAndProject(delta, answer)
+      const terminal = event(2, type, type === 'run.failed' ? { message: 'Failed safely' } : {})
+      const completed = projectAssistantTurn(answer, terminal)
+      expect(store.appendRecoveredAndProject).toBeTypeOf('function')
+      await store.appendRecoveredAndProject(terminal, completed)
+      await store.appendRecoveredAndProject(terminal, completed)
+      expect(database.prepare('SELECT status, content FROM chat_messages WHERE id = ?').get('assistant-1'))
+        .toEqual({ status: type === 'run.completed' ? 'completed' : 'failed', content: 'Recovered answer' })
+      expect(database.prepare('SELECT revision FROM chat_sessions WHERE id = ?').get('session-1'))
+        .toEqual({ revision: 1 })
+      expect(await store.getSnapshot('run-1')).toEqual(completed)
+    }
+  )
+
+  it('rolls back a recovered terminal fact when updating the conversation fails', async () => {
+    const store = new SqliteAssistantRunEventStore(database)
+    const initial = createAssistantTurnProjection({
+      runId: 'run-1', assistantMessageId: 'assistant-1', startedAt: 100
+    })
+    const terminal = event(1, 'run.completed', {})
+    database.exec(`CREATE TRIGGER reject_recovered_message BEFORE UPDATE ON chat_messages
+      BEGIN SELECT RAISE(ABORT, 'message unavailable'); END`)
+    expect(store.appendRecoveredAndProject).toBeTypeOf('function')
+    await expect(store.appendRecoveredAndProject(terminal, projectAssistantTurn(initial, terminal)))
+      .rejects.toThrow('message unavailable')
+    expect(await store.listAfter('run-1', 0)).toEqual([])
+    expect(await store.getSnapshot('run-1')).toBeUndefined()
+    expect(database.prepare('SELECT revision FROM chat_sessions').get()).toEqual({ revision: 0 })
+  })
+
+  it('commits recovered artifact cards with the final answer, retaining provenance on replay', async () => {
+    const store = new SqliteAssistantRunEventStore(database)
+    const initial = createAssistantTurnProjection({
+      runId: 'run-1', assistantMessageId: 'assistant-1', startedAt: 100
+    })
+    const terminal = event(1, 'run.completed', { recoveredAnswer: 'Created report' })
+    const source = { schemaVersion: 1 as const, generatedArtifacts: [{
+      path: '/workspace/report.pdf', name: 'report.pdf', mediaType: 'application/pdf', sizeBytes: 10, kind: 'pdf'
+    }] }
+    await store.appendRecoveredAndProject(terminal, projectAssistantTurn(initial, terminal), source)
+    await store.appendRecoveredAndProject(terminal, projectAssistantTurn(initial, terminal))
+    const row = database.prepare('SELECT source_json, content FROM chat_messages').get() as { source_json: string; content: string }
+    expect(JSON.parse(row.source_json)).toEqual(source)
+    expect(row.content).toBe('Created report')
+  })
+
+  it.each(['failed', 'completed'])('replaces a %s transport or suspension result when the bound run actually completes', async (status) => {
+    database.prepare('UPDATE chat_messages SET status = ?, error = ?')
+      .run(status, status === 'failed' ? 'Sidecar event stream disconnected' : null)
+    const store = new SqliteAssistantRunEventStore(database)
+    const initial = createAssistantTurnProjection({
+      runId: 'run-1', assistantMessageId: 'assistant-1', startedAt: 100
+    })
+    const delta = event(1, 'answer.delta', { delta: 'Recovered actual answer' })
+    const answer = projectAssistantTurn(initial, delta)
+    await store.appendAndProject(delta, answer)
+    const terminal = event(2, 'run.completed', {})
+    await store.appendRecoveredAndProject(terminal, projectAssistantTurn(answer, terminal))
+    expect(database.prepare('SELECT status, content, error FROM chat_messages').get())
+      .toEqual({ status: 'completed', content: 'Recovered actual answer', error: null })
+  })
+
+  it('marks a resumed answer pending again so another turn cannot start while recovery is running', async () => {
+    database.prepare("UPDATE chat_messages SET status = 'failed', error = 'disconnected', completed_at = 101").run()
+    const store = new SqliteAssistantRunEventStore(database)
+    const initial = createAssistantTurnProjection({
+      runId: 'run-1', assistantMessageId: 'assistant-1', startedAt: 100
+    })
+    const resumed = event(1, 'run.resumed', {})
+    await store.appendRecoveredAndProject(resumed, projectAssistantTurn(initial, resumed))
+    expect(database.prepare('SELECT status, error, completed_at FROM chat_messages').get())
+      .toEqual({ status: 'pending', error: null, completed_at: null })
+  })
+
+  it('does not overwrite a message rebound to a newer run during recovery', async () => {
+    const store = new SqliteAssistantRunEventStore(database)
+    database.prepare("UPDATE chat_messages SET run_id = 'new-run'").run()
+    const terminal = event(1, 'run.completed', {})
+    const initial = createAssistantTurnProjection({
+      runId: 'run-1', assistantMessageId: 'assistant-1', startedAt: 100
+    })
+    expect(store.appendRecoveredAndProject).toBeTypeOf('function')
+    await store.appendRecoveredAndProject(terminal, projectAssistantTurn(initial, terminal))
+    expect(database.prepare('SELECT status, content, run_id FROM chat_messages').get())
+      .toEqual({ status: 'pending', content: '', run_id: 'new-run' })
+  })
 
   it('atomically appends unique facts and updates a rebuildable projection', async () => {
     const store = new SqliteAssistantRunEventStore(database)

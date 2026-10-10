@@ -180,6 +180,7 @@ function applyEvent(run: AiRunView, event: AiRunEvent): AiRunView {
     case 'run.cancelled':
       return { ...next, status: 'cancelled' }
     case 'artifact.ready':
+    case 'run.turn_ready':
     case 'execution.summary.delta':
     case 'reference.added':
     case 'tool.call.requested':

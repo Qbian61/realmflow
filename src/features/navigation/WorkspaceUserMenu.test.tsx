@@ -91,7 +91,7 @@ describe("WorkspaceUserMenu", () => {
     const settingsLinks = screen
       .getAllByRole("menuitem")
       .filter((item) => item.tagName === "A")
-      .slice(0, 3);
+      .slice(0, 4);
     expect(
       settingsLinks.map((item) => ({
         label: item.textContent?.trim(),
@@ -100,6 +100,7 @@ describe("WorkspaceUserMenu", () => {
     ).toEqual([
       { label: "通用", href: "/settings?section=general" },
       { label: "模型配置", href: "/settings?section=models" },
+      { label: "网页与搜索", href: "/settings?section=web" },
       { label: "数据备份", href: "/settings?section=backup" },
     ]);
   });

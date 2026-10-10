@@ -115,7 +115,7 @@ describe('RealmFlow navigation', () => {
     render(<App />)
 
     expect(
-      await screen.findByRole('dialog', { name: '需要你的授权' })
+      await screen.findByRole('region', { name: '是否允许运行这个命令？' })
     ).toBeVisible()
     window.location.hash = '#/'
   })
@@ -1404,6 +1404,7 @@ describe('RealmFlow navigation', () => {
       '主题跟随系统',
       '通用',
       '模型配置',
+      '网页与搜索',
       '数据备份',
       'RealmFlow 官网',
       '检查更新',

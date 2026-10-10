@@ -121,6 +121,7 @@ export type RunContext =
   | ConversationContext
 
 export type RunToolConfiguration = {
+  turnGate?: boolean
   tools: Array<{
     type: 'function'
     function: {
@@ -165,6 +166,7 @@ export interface RunRepository {
 }
 
 export interface AgentRuntimeRunRepository {
+  getById?: (runId: string) => AgentRuntimeRun | undefined | Promise<AgentRuntimeRun | undefined>
   create: (run: AgentRuntimeRun) => Promise<void>
   bindProviderRun: (
     runId: string,

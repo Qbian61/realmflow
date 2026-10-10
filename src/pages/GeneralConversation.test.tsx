@@ -85,6 +85,24 @@ describe("general conversation pages", () => {
     expect(textarea).not.toBeDisabled();
   });
 
+  it("does not advertise unsupported voice input", () => {
+    render(<NewChatPage onCreateSession={vi.fn()} />);
+
+    expect(
+      screen.queryByRole("button", { name: "语音输入" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "发送消息" }),
+    ).toBeInTheDocument();
+  });
+
+  it("uses an upward arrow icon for the submit action", () => {
+    render(<NewChatPage onCreateSession={vi.fn()} />);
+
+    const submit = screen.getByRole("button", { name: "发送消息" });
+    expect(submit.querySelector("svg")).toHaveClass("lucide-arrow-up");
+  });
+
   it("registers image attachments in Main and requires explicit model egress consent", async () => {
     const pick = vi.fn().mockResolvedValue({
       accepted: [

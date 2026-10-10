@@ -10,6 +10,8 @@ import {
 } from './database'
 import { SqliteAgentRunCheckpointRepository } from './agent-run-checkpoint-repository'
 import { SqliteAgentRuntimeRunRepository } from './agent-runtime-run-repository'
+import { SqliteAgentRuntimeStateRepository } from './agent-runtime-state-repository'
+import { RuntimeStateService } from '../../application/agent-runtime/runtime-state-service'
 
 let database: RealmFlowDatabase
 let directory: string
@@ -49,6 +51,47 @@ afterEach(async () => {
 })
 
 describe('SqliteAgentRunCheckpointRepository', () => {
+  it('commits instruction application and checkpoint together, including restart and replay', async () => {
+    const state = new RuntimeStateService(new SqliteAgentRuntimeStateRepository(database))
+    state.steer('run-1', 'adjust-1', { sourceRunId: 'run-1', message: 'Revised objective' })
+    const value = createRunCheckpoint({
+      ...checkpoint(1, 1),
+      messageWindow: [{ id: 'instruction:adjust-1', role: 'user', content: 'Revised objective' }]
+    })
+    expect(() => checkpoints.saveWithInstructions(value, ['adjust-1'])).not.toThrow()
+    expect(state.read('run-1').instructions[0]).toMatchObject({ status: 'applied', checkpointOrdinal: 1 })
+    expect(() => checkpoints.saveWithInstructions(value, ['adjust-1'])).not.toThrow()
+    database.close()
+    database = openRealmFlowDatabase(join(directory, 'realmflow.db'))
+    await expect(new SqliteAgentRunCheckpointRepository(database).getLatest('run-1')).resolves.toEqual(value)
+    expect(new SqliteAgentRuntimeStateRepository(database).read('run-1').instructions[0].status).toBe('applied')
+    expect(database.prepare('SELECT COUNT(*) FROM agent_runtime_state_events').pluck().get()).toBe(2)
+  })
+
+  it('rolls back checkpoint and instruction status if audit persistence fails', async () => {
+    const state = new RuntimeStateService(new SqliteAgentRuntimeStateRepository(database))
+    state.steer('run-1', 'adjust-1', { sourceRunId: 'run-1', message: 'Revised objective' })
+    const value = createRunCheckpoint({
+      ...checkpoint(1, 1),
+      messageWindow: [{ id: 'instruction:adjust-1', role: 'user', content: 'Revised objective' }]
+    })
+    database.exec(`CREATE TRIGGER fail_applied BEFORE INSERT ON agent_runtime_state_events
+      WHEN NEW.kind = 'instructions_applied' BEGIN SELECT RAISE(ABORT, 'audit failed'); END`)
+    expect(() => checkpoints.saveWithInstructions(value, ['adjust-1'])).toThrow('audit failed')
+    await expect(checkpoints.getLatest('run-1')).resolves.toBeUndefined()
+    expect(state.read('run-1').instructions[0].status).toBe('queued')
+    expect(database.prepare('SELECT current_checkpoint_ordinal FROM agent_runtime_runs').pluck().get()).toBe(0)
+  })
+
+  it('rejects applied instructions that are absent or changed in the checkpoint', async () => {
+    const state = new RuntimeStateService(new SqliteAgentRuntimeStateRepository(database))
+    state.steer('run-1', 'adjust-1', { sourceRunId: 'run-1', message: 'Revised objective' })
+    expect(() => checkpoints.saveWithInstructions(checkpoint(1, 1), ['adjust-1']))
+      .toThrow('runtime_instruction_checkpoint_mismatch')
+    await expect(checkpoints.getLatest('run-1')).resolves.toBeUndefined()
+    expect(state.read('run-1').instructions[0].status).toBe('queued')
+  })
+
   it('atomically advances the current immutable checkpoint ordinal', async () => {
     const first = checkpoint(1, 4)
     const second = checkpoint(2, 9)

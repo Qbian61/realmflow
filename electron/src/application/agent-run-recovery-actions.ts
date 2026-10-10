@@ -7,6 +7,7 @@ import type {
   AgentRunCheckpointRepository,
   AgentRuntimeRunRepository
 } from '../ai-run/application/ports'
+import type { RecoveredRunActivation } from './recover-agent-runtime-runs'
 
 type RecoveryConfiguration = {
   profileAvailable: boolean
@@ -32,12 +33,13 @@ type RecoveryActionDependencies = {
       outcome: 'completed' | 'not_started' | 'unknown'
     }>
   >
-  resume(run: AgentRuntimeRun, checkpoint: RunCheckpoint): Promise<void>
+  resume(run: AgentRuntimeRun, checkpoint: RunCheckpoint): Promise<void | RecoveredRunActivation>
   branch(
     run: AgentRuntimeRun,
     checkpoint: RunCheckpoint
   ): Promise<{ runId: string }>
   cancelProvider(providerRunId: string): Promise<void>
+  cancelDelegations?(runId: string): void
 }
 
 export type AgentRunRecoveryActionResult =
@@ -93,11 +95,14 @@ export class AgentRunRecoveryActions {
     ) {
       return { status: 'blocked' }
     }
+    let activation: void | RecoveredRunActivation = undefined
     try {
-      await this.dependencies.resume(run, checkpoint)
+      activation = await this.dependencies.resume(run, checkpoint)
       await this.dependencies.runs.transition(run.id, 'running', this.now())
+      activation?.start()
       return { status: 'resumed' }
     } catch {
+      activation?.cancel?.()
       return { status: 'blocked' }
     }
   }
@@ -105,6 +110,7 @@ export class AgentRunRecoveryActions {
   private async cancel(
     run: AgentRuntimeRun
   ): Promise<AgentRunRecoveryActionResult> {
+    this.dependencies.cancelDelegations?.(run.id)
     if (run.providerRunId) {
       await this.dependencies
         .cancelProvider(run.providerRunId)

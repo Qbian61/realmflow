@@ -30,13 +30,23 @@ describe('projectModelFacingToolCatalog', () => {
 
     const projected = projectModelFacingToolCatalog(catalog, 'facade')
 
-    expect(projected.tools.map(({ id }) => id).slice(0, 20)).toEqual([
+    expect(projected.tools.map(({ id }) => id).slice(0, 30)).toEqual([
       'ask_user',
       'secrets',
       'sessions',
       'subagents',
       'progress_card',
       'capabilities',
+      'gateway',
+      'automation',
+      'session_status',
+      'sessions_history',
+      'sessions_send',
+      'goal',
+      'steer',
+      'sessions_spawn',
+      'sessions_yield',
+      'agents_list',
       'filesystem_read',
       'filesystem_write',
       'filesystem_delete',
@@ -90,7 +100,7 @@ describe('projectModelFacingToolCatalog', () => {
         properties: {
           action: {
             type: 'string',
-            enum: ['list', 'search', 'send', 'spawn', 'yield']
+            enum: ['list', 'search']
           }
         }
       })
@@ -103,7 +113,7 @@ describe('projectModelFacingToolCatalog', () => {
       })
     expect(projected.tools.find(({ id }) => id === 'progress_card')?.definition.inputSchema)
       .toMatchObject({
-        required: ['cardId', 'status', 'message'],
+        required: ['cardId', 'status', 'message', 'expectedRevision'],
         properties: {
           cardId: { type: 'string', minLength: 1 },
           status: {
@@ -220,12 +230,27 @@ describe('projectModelFacingToolCatalog', () => {
       })
   })
 
+  it('exposes strict orchestration commands in facade and directory views with no client identity fields', async () => {
+    const catalog = await catalogFixture()
+    for (const mode of ['facade', 'directory'] as const) {
+      const tools = projectModelFacingToolCatalog(catalog, mode).tools
+      for (const id of ['session_status', 'sessions_history', 'sessions_send', 'goal', 'steer', 'sessions_spawn', 'sessions_yield', 'agents_list']) {
+        const tool = tools.find((item) => item.id === id)
+        expect(tool?.status).toBe('enabled')
+        expect(tool?.modelFacing?.visibility).toBe('direct')
+        expect(JSON.stringify(tool?.definition.inputSchema)).not.toMatch(/sourceRunId|rootRunId|parentRunId/)
+      }
+      expect(tools.find(({ id }) => id === 'sessions_send')?.definition.inputSchema)
+        .toMatchObject({ additionalProperties: false, required: ['sessionId', 'message'] })
+    }
+  })
+
   it('projects directory mode as catalog controls plus directory-only primitives', async () => {
     const catalog = await catalogFixture()
 
     const projected = projectModelFacingToolCatalog(catalog, 'directory')
 
-    expect(projected.tools.map(({ id }) => id).slice(0, 9)).toEqual([
+    expect(projected.tools.map(({ id }) => id).slice(0, 10)).toEqual([
       'tool_search',
       'tool_describe',
       'tool_call',
@@ -234,7 +259,8 @@ describe('projectModelFacingToolCatalog', () => {
       'sessions',
       'subagents',
       'progress_card',
-      'capabilities'
+      'capabilities',
+      'gateway'
     ])
     expect(projected.tools.find(({ id }) => id === 'progress_card'))
       .toMatchObject({
@@ -256,7 +282,11 @@ describe('projectModelFacingToolCatalog', () => {
       .toMatchObject({
         required: ['query'],
         properties: {
-          query: { type: 'string', minLength: 1 },
+          query: { oneOf: [
+            { type: 'string', minLength: 1, maxLength: 500 },
+            { type: 'array', minItems: 1, maxItems: 8,
+              items: { type: 'string', minLength: 1, maxLength: 500 } },
+          ] },
           limit: { type: 'integer', minimum: 1, maximum: 50 }
         }
       })
@@ -275,6 +305,89 @@ describe('projectModelFacingToolCatalog', () => {
           args: { type: 'object', additionalProperties: true }
         }
       })
+  })
+
+  it('projects the proposal-only Gateway Runtime control', async () => {
+    const projected = projectModelFacingToolCatalog(
+      await catalogFixture(),
+      'facade'
+    )
+
+    expect(projected.tools.find(({ id }) => id === 'gateway')).toMatchObject({
+      status: 'enabled',
+      definition: {
+        capabilities: ['realmflow.read'],
+        effects: ['runtime.gateway'],
+        risk: 'medium',
+        inputSchema: {
+          additionalProperties: false,
+          required: ['action'],
+          properties: {
+            action: {
+              enum: [
+                'health',
+                'config_schema_lookup',
+                'config_get',
+                'config_patch_proposal',
+                'restart_proposal',
+                'update_check'
+              ]
+            },
+            patches: {
+              type: 'array',
+              maxItems: 20
+            }
+          }
+        }
+      },
+      modelFacing: {
+        mode: 'facade',
+        kind: 'facade',
+        visibility: 'direct'
+      }
+    })
+  })
+
+  it('projects the read and proposal-only Automation Runtime control', async () => {
+    const projected = projectModelFacingToolCatalog(
+      await catalogFixture(),
+      'facade'
+    )
+
+    expect(projected.tools.find(({ id }) => id === 'automation')).toMatchObject({
+      status: 'enabled',
+      definition: {
+        capabilities: ['realmflow.read'],
+        effects: ['runtime.automation'],
+        risk: 'medium',
+        inputSchema: {
+          additionalProperties: false,
+          required: ['action'],
+          properties: {
+            action: {
+              enum: [
+                'status',
+                'list',
+                'runs',
+                'heartbeat',
+                'create_proposal',
+                'update_proposal',
+                'pause_proposal',
+                'resume_proposal'
+              ]
+            }
+          }
+        }
+      }
+    })
+  })
+
+  it('keeps destructive and explicit-selection tools direct in directory mode', async () => {
+    const projected = projectModelFacingToolCatalog(await catalogFixture(), 'directory')
+    expect(projected.tools.find(({ id }) => id === 'builtin.files.delete_permanently'))
+      .toMatchObject({ modelFacing: { visibility: 'direct' } })
+    expect(projected.tools.filter(({ definition }) => definition.risk === 'high')
+      .every((tool) => tool.modelFacing?.visibility === 'direct')).toBe(true)
   })
 })
 

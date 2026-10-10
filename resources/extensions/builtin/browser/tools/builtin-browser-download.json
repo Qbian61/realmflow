@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.browser.download",
+  "version": "1.0.0",
+  "name": "Download browser file",
+  "description": "Download up to 32 MiB using the owned profile into authorized roots without overwrite. Redirects are rejected. Also writes a .realmflow-browser.json provenance sidecar.",
+  "tags": [
+    "browser"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "browser.download",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sessionId": {
+        "type": "string",
+        "pattern": "^browser-[A-Za-z0-9-]+$",
+        "maxLength": 120
+      },
+      "url": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096,
+        "pattern": "^https?://"
+      },
+      "path": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 16000
+      },
+      "expectedAbsent": {
+        "type": "boolean",
+        "const": true
+      }
+    },
+    "required": [
+      "sessionId",
+      "url",
+      "path",
+      "expectedAbsent"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "computer.observe",
+    "network.connect",
+    "filesystem.write"
+  ],
+  "effects": [
+    "local_data.read",
+    "external.read",
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "required",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "download browser file"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

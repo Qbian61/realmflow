@@ -213,15 +213,15 @@ export type AssistantRunEvent =
     >
   | AssistantEventBase<
       'run.completed',
-      { durationMs?: number }
+      { durationMs?: number; recoveredAnswer?: string }
     >
   | AssistantEventBase<
       'run.failed',
-      { message: string; errorCode?: string; durationMs?: number }
+      { message: string; errorCode?: string; durationMs?: number; recoveredAnswer?: string }
     >
   | AssistantEventBase<
       'run.cancelled',
-      { message?: string; durationMs?: number }
+      { message?: string; durationMs?: number; recoveredAnswer?: string }
     >
 
 export type AssistantTurnProjection = {
@@ -513,15 +513,18 @@ function applyEvent(
         status: 'running'
       }
     case 'run.completed':
-      return terminal(current, 'completed', event.timestamp)
+      return { ...terminal(current, 'completed', event.timestamp),
+        answer: event.data.recoveredAnswer ?? current.answer }
     case 'run.failed':
       return {
         ...terminal(current, 'failed', event.timestamp),
+        answer: event.data.recoveredAnswer ?? current.answer,
         error: event.data.message
       }
     case 'run.cancelled':
       return {
         ...terminal(current, 'cancelled', event.timestamp),
+        answer: event.data.recoveredAnswer ?? current.answer,
         ...(event.data.message ? { error: event.data.message } : {})
       }
   }

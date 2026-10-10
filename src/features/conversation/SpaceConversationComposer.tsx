@@ -25,8 +25,6 @@ export function SpaceConversationComposer({
   const toast = useToast();
   const [prompt, setPrompt] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [reasoningMode, setReasoningMode] =
-    useState<ReasoningPreference>("auto");
   const models = useModelProfiles();
 
   const submit = async (): Promise<void> => {
@@ -38,7 +36,7 @@ export function SpaceConversationComposer({
         spacePath,
         value,
         models.selectedId || undefined,
-        reasoningMode,
+        "auto",
       );
       setPrompt("");
     } catch {
@@ -73,13 +71,10 @@ export function SpaceConversationComposer({
         modelGroups={models.groups}
         modelProfileId={models.selectedId}
         effectiveModelProfileId={models.effectiveId}
-        reasoningMode={reasoningMode}
-        reasoningSupported={models.reasoningSupported}
         showContext={false}
         disabled={submitting}
         onModelProfileChange={models.select}
         onModelPickerOpen={() => void models.refresh()}
-        onReasoningModeChange={setReasoningMode}
         onChange={setPrompt}
         onSubmit={() => void submit()}
       />

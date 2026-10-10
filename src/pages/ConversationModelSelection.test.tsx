@@ -53,6 +53,9 @@ describe("conversation model selection", () => {
     render(<NewChatPage onCreateSession={onCreateSession} />);
 
     fireEvent.click(await screen.findByRole("combobox", { name: "对话模型" }));
+    expect(
+      screen.queryByRole("combobox", { name: "推理模式" }),
+    ).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("option", { name: "Fast Model" }));
     fireEvent.change(screen.getByLabelText("对话内容"), {
       target: { value: "Plan the rollout" },
@@ -97,6 +100,9 @@ describe("conversation model selection", () => {
     );
 
     fireEvent.click(await screen.findByRole("combobox", { name: "对话模型" }));
+    expect(
+      screen.queryByRole("combobox", { name: "推理模式" }),
+    ).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("option", { name: "Fast Model" }));
     fireEvent.change(screen.getByLabelText("继续对话"), {
       target: { value: "Use a canary release" },
@@ -111,6 +117,42 @@ describe("conversation model selection", () => {
         "auto",
       ),
     );
+  });
+
+  it("shows a stop control for an active conversation run and cancels its trusted run", async () => {
+    const cancel = vi.fn().mockResolvedValue(undefined);
+    window.realmflow = {
+      agentRuntime: { get: vi.fn(), updateGoal: vi.fn(), steer: vi.fn(), cancel },
+    } as never;
+    render(
+      <MemoryRouter initialEntries={["/sessions/session-1"]}>
+        <Routes>
+          <Route
+            path="/sessions/:sessionId"
+            element={
+              <ChatSessionPage
+                sessions={[{
+                  id: "session-1", title: "Active", spacePath: "", messages: [{
+                    id: "assistant-1", role: "assistant", status: "pending",
+                    content: "", runId: "run-1", createdAt: 1,
+                  }], createdAt: 1, updatedAt: 1,
+                }]}
+                spaces={[]}
+                onAppendMessage={vi.fn()}
+              />
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+    const stop = screen.getByRole("button", { name: "停止生成" });
+    expect(stop.querySelector("svg")).toHaveClass("lucide-square");
+    expect(stop.querySelector("svg")).toHaveAttribute("fill", "currentColor");
+    fireEvent.click(stop);
+    await waitFor(() => expect(cancel).toHaveBeenCalledWith({
+      runId: "run-1", sessionId: "session-1",
+    }));
+    expect(screen.getByRole("button", { name: "正在停止" })).toBeDisabled();
   });
 
   it("hides profiles whose provider is disabled", async () => {
@@ -143,14 +185,14 @@ describe("conversation model selection", () => {
     );
   });
 
-  it("lets the user select deep reasoning for a new conversation", async () => {
+  it("keeps reasoning automatic without exposing a new-conversation control", async () => {
     installModelPool();
     const onCreateSession = vi.fn();
     render(<NewChatPage onCreateSession={onCreateSession} />);
 
-    const reasoning = screen.getByRole("combobox", { name: "推理模式" });
-    expect(reasoning).toHaveValue("auto");
-    fireEvent.change(reasoning, { target: { value: "high" } });
+    expect(
+      screen.queryByRole("combobox", { name: "推理模式" }),
+    ).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("对话内容"), {
       target: { value: "Verify all affected files" },
     });
@@ -160,20 +202,20 @@ describe("conversation model selection", () => {
       "none",
       "Verify all affected files",
       undefined,
-      "high",
+      "auto",
     );
   });
 
-  it("shows an explainable downgrade when the effective model lacks reasoning", async () => {
+  it("does not expose provider reasoning support in the composer", async () => {
     installModelPool();
     render(<NewChatPage onCreateSession={vi.fn()} />);
 
     expect(
-      await screen.findByText("当前模型不支持推理，将使用快速回答"),
-    ).toBeVisible();
+      screen.queryByText("当前模型不支持推理，将使用快速回答"),
+    ).not.toBeInTheDocument();
   });
 
-  it("uses automatic routing by default in a space and passes an explicit selection", async () => {
+  it("uses automatic routing in a space without exposing a reasoning control", async () => {
     installModelPool();
     const onCreateSession = vi.fn();
     render(
@@ -188,6 +230,9 @@ describe("conversation model selection", () => {
       name: "空间对话模型",
     });
     expect(selector).toHaveTextContent("自动选择");
+    expect(
+      screen.queryByRole("combobox", { name: "推理模式" }),
+    ).not.toBeInTheDocument();
 
     fireEvent.click(selector);
     fireEvent.click(

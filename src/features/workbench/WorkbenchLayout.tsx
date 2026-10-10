@@ -420,8 +420,10 @@ function WebPane({
   onOpenExternal: (url: string) => void;
 }): JSX.Element {
   const { t } = useLocalization();
+  const agentManaged = tab.managed === "agent";
   const submit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
+    if (agentManaged) return;
     const data = new FormData(event.currentTarget);
     onNavigate(tab, String(data.get("url") ?? ""));
   };
@@ -432,7 +434,7 @@ function WebPane({
           type="button"
           aria-label={t("workbench.web.back")}
           title={t("workbench.web.back")}
-          disabled={!tab.page.canGoBack}
+          disabled={agentManaged || !tab.page.canGoBack}
           onClick={() => onGoBack(tab.id)}
         >
           <ArrowLeft size={15} />
@@ -441,7 +443,7 @@ function WebPane({
           type="button"
           aria-label={t("workbench.web.forward")}
           title={t("workbench.web.forward")}
-          disabled={!tab.page.canGoForward}
+          disabled={agentManaged || !tab.page.canGoForward}
           onClick={() => onGoForward(tab.id)}
         >
           <ArrowRight size={15} />
@@ -450,6 +452,7 @@ function WebPane({
           type="button"
           aria-label={t("workbench.web.reload")}
           title={t("workbench.web.reload")}
+          disabled={agentManaged}
           onClick={() => onReload(tab.id)}
         >
           <RefreshCw size={15} />
@@ -459,11 +462,13 @@ function WebPane({
           name="url"
           aria-label={t("workbench.web.address")}
           defaultValue={tab.page.url}
+          readOnly={agentManaged}
         />
         <button
           type="button"
           aria-label={t("workbench.web.openExternal")}
           title={t("workbench.web.openExternal")}
+          disabled={agentManaged}
           onClick={() => onOpenExternal(tab.page.url)}
         >
           <ExternalLink size={15} />

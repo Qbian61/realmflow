@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ToolDefinition } from '../../../../domain/tool-definition'
+import { DEFAULT_WEB_PROVIDER_CONFIGURATION } from '../../../../shared/web-provider'
 import {
   BuiltinToolAdapter,
   type BuiltinToolHandler
@@ -27,6 +28,49 @@ const invocation: PreparedToolInvocation = {
 }
 
 describe('BuiltinToolAdapter', () => {
+  it('binds Web approval effects and execution to the same Main configuration snapshot', async () => {
+    const configuration = {
+      ...DEFAULT_WEB_PROVIDER_CONFIGURATION, revision: 5, searchProvider: 'brave' as const,
+      hasBraveCredential: true, braveCredentialHandle: 'web-credential-brave'
+    }
+    const execute = vi.fn(async (input) => ({ revision: input.webConfiguration?.revision }))
+    const adapter = new BuiltinToolAdapter([handler('web.search', '1.0.0', execute)], {
+      webConfiguration: { get: () => configuration }
+    })
+    const definition = { ...definitionFor('web.search', '1.0.0'),
+      capabilities: ['network.connect', 'credential.use'] } satisfies ToolDefinition
+    const binding = await adapter.resolve(definition, context)
+    const request = { ...invocation, arguments: { query: 'guide' } }
+    expect(await adapter.planEffects(binding, request)).toEqual({
+      outcome: 'planned', effects: [
+        { kind: 'external', capability: 'network.connect', resourceKey: 'https://api.search.brave.com' },
+        { kind: 'external', capability: 'credential.use', resourceKey: 'web-credential-brave' }
+      ]
+    })
+    expect(await adapter.execute(binding, request, { emit: vi.fn() }, new AbortController().signal))
+      .toMatchObject({ outcome: 'succeeded', output: { revision: 5 } })
+  })
+
+  it('invalidates a pending Web approval when provider configuration changes', async () => {
+    let configuration = {
+      ...DEFAULT_WEB_PROVIDER_CONFIGURATION, revision: 1, searchProvider: 'searxng' as const,
+      searxngBaseUrl: 'http://127.0.0.1:8080/search'
+    }
+    const execute = vi.fn(async () => ({ ok: true }))
+    const adapter = new BuiltinToolAdapter([handler('web.search', '1.0.0', execute)], {
+      webConfiguration: { get: () => configuration }
+    })
+    const definition = { ...definitionFor('web.search', '1.0.0'),
+      capabilities: ['network.connect'] } satisfies ToolDefinition
+    const binding = await adapter.resolve(definition, context)
+    configuration = { ...configuration, revision: 2, searxngBaseUrl: 'https://changed.example' }
+    const refreshed = await adapter.resolve(definition, context)
+    expect(refreshed.bindingId).not.toBe(binding.bindingId)
+    expect(await adapter.execute(binding, invocation, { emit: vi.fn() }, new AbortController().signal))
+      .toMatchObject({ outcome: 'failed', error: { code: 'web_configuration_changed' } })
+    expect(execute).not.toHaveBeenCalled()
+  })
+
   it('plans effects from the resolved immutable handler binding', async () => {
     const planEffects = vi.fn().mockResolvedValue({
       outcome: 'planned',

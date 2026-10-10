@@ -6,6 +6,7 @@ import type {
   ToolCatalogState
 } from '../../../../domain/tool-catalog'
 import { isToolVersionInRange } from '../../../../domain/skill-definition'
+import type { ToolRisk } from '../../../../domain/tool-definition'
 import type { JsonObject } from '../../../../domain/tool-protocol-validation'
 import type { UnitOfWork } from '../ports/business-repositories'
 import type {
@@ -33,6 +34,17 @@ type ExtensionCatalogImportServiceDependencies = {
   projections: ToolProjectionStore
   projectionRunner: ToolProjectionRunner
   unitOfWork: UnitOfWork
+  skillRegistry?: {
+    synchronizePluginPackage(input: {
+      packageId: string
+      packageDigest: string
+      displayName: string
+      risk: ToolRisk
+      skills: NonNullable<
+        PreparedExtensionPackage['pluginSkillRegistrations']
+      >
+    }): unknown
+  }
   now?: () => number
   createId?: () => string
 }
@@ -87,6 +99,15 @@ export class ExtensionCatalogImportService {
         if (result.status === 'idempotency_conflict') {
           throw new Error('Extension package idempotency key conflicts')
         }
+        if (prepared.plugin) {
+          this.dependencies.skillRegistry?.synchronizePluginPackage({
+            packageId: prepared.manifest.packageId,
+            packageDigest: prepared.packageDigest,
+            displayName: prepared.manifest.name,
+            risk: prepared.plugin.permissions.maximumRisk,
+            skills: prepared.pluginSkillRegistrations ?? [],
+          })
+        }
       })
     } catch (error) {
       await prepared.pending.rollback()
@@ -130,7 +151,10 @@ export class ExtensionCatalogImportService {
       packageDigest: prepared.packageDigest,
       origin: 'local_upload',
       name: prepared.manifest.name,
-      description: prepared.manifest.description
+      description: prepared.manifest.description,
+      ...(prepared.plugin
+        ? { plugin: prepared.plugin as unknown as JsonObject }
+        : {})
     })
     addEvent('extension.package_verified', {
       packageId: prepared.manifest.packageId,
@@ -148,7 +172,7 @@ export class ExtensionCatalogImportService {
     addEvent('extension.activation_changed', {
       targetType: 'package',
       targetId: prepared.manifest.packageId,
-      enabled: true,
+      enabled: prepared.manifest.schemaVersion === 1,
       scope: 'global'
     })
 

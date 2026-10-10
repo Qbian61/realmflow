@@ -355,12 +355,11 @@ describe('planBuiltinToolEffects', () => {
           arguments: {
             query: 'realmflow'
           },
-          scopeRoots: [root]
-        },
-        {
-          webSearch: {
-            searxngBaseUrl:
-              'https://user:pass@search.example.com/search?token=secret'
+          scopeRoots: [root],
+          webConfiguration: {
+            revision: 1, searchProvider: 'searxng', browserContinuation: false,
+            hasBraveCredential: false,
+            searxngBaseUrl: 'https://search.example.com/search'
           }
         }
       )
@@ -389,8 +388,8 @@ describe('planBuiltinToolEffects', () => {
     ).resolves.toEqual({
       outcome: 'unresolved',
       error: {
-        code: 'tool_effects_unresolved',
-        message: 'Tool effects could not be resolved',
+        code: 'provider_unconfigured',
+        message: 'Web search is disabled. Configure a search provider in Settings before using web search.',
         retryable: false
       }
     })

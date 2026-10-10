@@ -834,6 +834,33 @@ describe('useWorkspaceController persistence', () => {
     expect(business.listRecentConversations).toHaveBeenLastCalledWith({})
   })
 
+  it('loads a linked child conversation that is absent from the recent list before ending route loading', async () => {
+    const response = deferred<ConversationDto>()
+    const business = {
+      listSpaces: vi.fn(async () => []),
+      listRequirements: vi.fn(async () => []),
+      listRecentConversations: vi.fn(async () => ({ conversations: [], folderPaths: [] })),
+      getConversation: vi.fn(() => response.promise)
+    } as unknown as BusinessApi
+    function Harness() {
+      const controller = useWorkspaceController({
+        navigationRepository: createNavigationRepository(initialNavigation), sessionRepository,
+        business, activeSessionId: 'child-session'
+      })
+      return <div>{controller.sessionsLoading ? 'Loading child' :
+        controller.sessions.find(({ id }) => id === 'child-session')?.title ?? 'Missing child'}</div>
+    }
+    render(<Harness />)
+    await waitFor(() => expect(business.listRecentConversations).toHaveBeenCalledOnce())
+    expect(screen.getByText('Loading child')).toBeVisible()
+    expect(business.getConversation).toHaveBeenCalledWith({ sessionId: 'child-session' })
+    await act(async () => response.resolve({
+      id: 'child-session', kind: 'general', title: 'Recovered child', sortOrder: 0,
+      messages: [], revision: 1, createdAt: 1, updatedAt: 1
+    }))
+    expect(await screen.findByText('Recovered child')).toBeVisible()
+  })
+
   it('projects streamed conversation snapshots before the append command settles', async () => {
     const conversation: ConversationDto = {
       id: 'conversation-stream',

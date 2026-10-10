@@ -3,6 +3,7 @@ import {
   createHashRouter,
   RouterProvider,
   useLocation,
+  useMatch,
   useNavigate,
 } from "react-router-dom";
 import type { RendererRepositories } from "./application/ports/repositories";
@@ -40,6 +41,7 @@ function AppShell({
 }): JSX.Element {
   const navigate = useNavigate();
   const location = useLocation();
+  const sessionRoute = useMatch("/sessions/:sessionId");
   const { locale, t } = useLocalization();
   const toast = useToast();
   const handleWorkspaceOperationNotice = useCallback(
@@ -79,6 +81,7 @@ function AppShell({
     navigationRepository: repositories.workspaceNavigation,
     sessionRepository: repositories.chatSessions,
     business: window.realmflow?.business,
+    activeSessionId: sessionRoute?.params.sessionId,
     applicationLocale: locale,
     onOperationNotice: handleWorkspaceOperationNotice,
   });

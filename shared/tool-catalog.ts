@@ -57,6 +57,13 @@ export type ToolCatalogActivationResult =
       item: ToolCatalogSkillDto
     }
 
+export type ChangeExtensionPackageVersionCommand = {
+  packageId: string
+  targetVersion: string
+  operation: 'upgrade' | 'rollback'
+  idempotencyKey: string
+}
+
 export type ChooseExtensionPackageCommand = {
   sourceType: ToolCatalogSourceType
   idempotencyKey: string
@@ -120,6 +127,9 @@ export interface ToolCatalogApi {
   setActivation: (
     command: ToolCatalogActivationCommand
   ) => Promise<ToolCatalogActivationResult>
+  changePackageVersion: (
+    command: ChangeExtensionPackageVersionCommand
+  ) => Promise<ToolCatalogPackageDto>
   listMcpServers: () => Promise<McpServerDto[]>
   saveMcpServer: (command: SaveMcpServerCommandDto) => Promise<McpServerDto>
   deleteMcpServer: (

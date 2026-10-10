@@ -165,6 +165,7 @@ describe('Gateway run adapter', () => {
         }
       ],
       toolConfiguration: {
+        turnGate: true,
         maxAgentTurns: 180,
         maxParallelToolsPerTurn: 16,
         tools: []
@@ -195,6 +196,7 @@ describe('Gateway run adapter', () => {
       workspaceId: 'workspace-1'
     })
     expect(sidecar.resumeRun).toHaveBeenCalledWith({
+      turnGate: true,
       resumeToken: 'a'.repeat(64),
       conversationId: 'runtime-run',
       workspaceId: 'workspace-1',

@@ -1,3 +1,5 @@
+import { browserCapabilityDisplay } from './browser-capability-localization'
+
 export type CapabilityLocale = 'zh-CN' | 'en' | 'ja'
 
 export type CapabilityDisplayText = {
@@ -55,6 +57,8 @@ export function localizeBuiltinCapability(
       resolvedLocale: 'en'
     }
   }
+  const browser = browserCapabilityDisplay(id, locale)
+  if (browser) return { ...browser, requestedLocale: locale, resolvedLocale: locale }
   const name = localizedName(id, canonical.name, locale)
   return {
     name,

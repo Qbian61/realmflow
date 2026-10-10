@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "packageId": "realmflow.builtin.web",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "name": "Web",
   "description": "Permissioned public web retrieval.",
   "publisher": {

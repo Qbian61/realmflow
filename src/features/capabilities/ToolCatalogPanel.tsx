@@ -6,9 +6,10 @@ import {
   Sparkles,
   Wrench,
 } from "lucide-react";
-import { Fragment, useEffect, useMemo } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import type {
   ToolCatalogActivationCommand,
+  ChangeExtensionPackageVersionCommand,
   ToolCatalogDto,
   ToolCatalogPackageDto,
   ToolCatalogSkillDto,
@@ -28,6 +29,7 @@ import {
   createEnumQueryCodec,
   useUrlQueryState,
 } from "../../navigation/url-query-state";
+import { pluginPackageDetails } from "./plugin-package-display";
 
 type CatalogOriginFilter = "all" | "builtin" | "local_upload" | "mcp";
 type ToolCatalogView = "primitive" | "model-facing" | "directory";
@@ -45,6 +47,9 @@ type ToolCatalogPanelProps = {
   importing?: ToolCatalogSourceType;
   onCatalogViewChange: (view: ToolCatalogView) => void;
   onToggle: (command: ToolCatalogActivationCommand) => void;
+  onChangePackageVersion: (
+    command: ChangeExtensionPackageVersionCommand,
+  ) => void;
   onImport: (sourceType: ToolCatalogSourceType) => void;
 };
 
@@ -57,6 +62,7 @@ export function ToolCatalogPanel({
   importing,
   onCatalogViewChange,
   onToggle,
+  onChangePackageVersion,
   onImport,
 }: ToolCatalogPanelProps): JSX.Element {
   const { locale, t } = useLocalization();
@@ -83,7 +89,9 @@ export function ToolCatalogPanel({
     const definitions =
       activeTab === "tools"
         ? latestDefinitions(catalog.tools)
-        : latestDefinitions(catalog.skills);
+        : latestDefinitions(
+            catalog.skills.filter((item) => !item.registry),
+          );
     return definitions
       .filter((item) =>
         origin === "all" ? true : item.definition.origin === origin,
@@ -192,6 +200,30 @@ export function ToolCatalogPanel({
               enabled={item.enabledPreference}
               busy={busyTarget === targetKey("package", item.packageId)}
               details={item.packageId}
+              extraDetails={pluginPackageDetails(item, t)}
+              dependencyIssues={item.dependencyIssues}
+              versionOptions={catalog.packages
+                .filter(
+                  (candidate) => candidate.packageId === item.packageId,
+                )
+                .map(({ version }) => version)}
+              onChangeVersion={(targetVersion, operation) =>
+                onChangePackageVersion({
+                  packageId: item.packageId,
+                  targetVersion,
+                  operation,
+                  idempotencyKey: requestId(
+                    `package-${operation}`,
+                  ),
+                })
+              }
+              toggleLabel={
+                item.plugin && !item.enabledPreference
+                  ? t("capabilities.plugin.reviewAndEnable", {
+                      name: item.display?.name ?? item.name,
+                    })
+                  : undefined
+              }
               onToggle={() =>
                 onToggle({
                   targetType: "package",
@@ -356,6 +388,9 @@ function CatalogRow({
   details,
   extraDetails = [],
   dependencyIssues = [],
+  toggleLabel,
+  versionOptions = [],
+  onChangeVersion,
   onToggle,
 }: {
   icon: React.ReactNode;
@@ -369,9 +404,21 @@ function CatalogRow({
   details: string;
   extraDetails?: string[];
   dependencyIssues?: string[];
+  toggleLabel?: string;
+  versionOptions?: string[];
+  onChangeVersion?: (
+    targetVersion: string,
+    operation: "upgrade" | "rollback",
+  ) => void;
   onToggle?: () => void;
 }): JSX.Element {
   const { t } = useLocalization();
+  const [targetVersion, setTargetVersion] = useState(version);
+  useEffect(() => setTargetVersion(version), [version]);
+  const operation =
+    compareVersions(targetVersion, version) > 0
+      ? "upgrade"
+      : "rollback";
   return (
     <div className="tool-catalog-row">
       <div className="tool-catalog-icon">{icon}</div>
@@ -401,21 +448,62 @@ function CatalogRow({
           ))}
         </div>
       </div>
-      {onToggle ? (
+      {onToggle || (versionOptions.length > 1 && onChangeVersion) ? (
+        <div className="tool-catalog-row-actions">
+          {versionOptions.length > 1 && onChangeVersion ? (
+            <div className="capability-version-control">
+              <select
+                name={`extension-package-${name}-version`}
+                autoComplete="off"
+                aria-label={t("capabilities.version.label", { name })}
+                value={targetVersion}
+                disabled={busy}
+                onChange={(event) => setTargetVersion(event.target.value)}
+              >
+                {[...versionOptions]
+                  .sort((left, right) =>
+                    compareVersions(right, left),
+                  )
+                  .map((candidate) => (
+                    <option key={candidate} value={candidate}>
+                      v{candidate}
+                    </option>
+                  ))}
+              </select>
+              {targetVersion !== version ? (
+                <button
+                  type="button"
+                  disabled={busy}
+                  aria-label={t(`capabilities.${operation}`, { name })}
+                  onClick={() =>
+                    onChangeVersion(targetVersion, operation)
+                  }
+                >
+                  {t(`capabilities.${operation}.short`)}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          {onToggle ? (
         <button
           className="model-provider-switch"
           type="button"
           role="switch"
           aria-checked={enabled}
-          aria-label={t("capabilities.toggle", {
-            action: enabled ? t("common.disable") : t("common.enable"),
-            name,
-          })}
+          aria-label={
+            toggleLabel ??
+            t("capabilities.toggle", {
+              action: enabled ? t("common.disable") : t("common.enable"),
+              name,
+            })
+          }
           disabled={busy || status === "corrupted"}
           onClick={onToggle}
         >
           <span />
         </button>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );
@@ -570,6 +658,9 @@ function statusLabel(
   if (status === "disabled") return t("capabilities.status.disabled");
   if (status === "dependency_disabled") {
     return t("capabilities.status.dependencyDisabled");
+  }
+  if (status === "superseded") {
+    return t("capabilities.status.superseded");
   }
   return t("capabilities.status.corrupted");
 }

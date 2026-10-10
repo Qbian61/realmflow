@@ -4,7 +4,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path'
 import {
   calculateExtensionPackageDigest,
   normalizeExtensionPackageManifest,
-  type ExtensionPackageManifest
+  type LegacyExtensionPackageManifest
 } from '../../../../domain/extension-package'
 import {
   normalizeSkillDefinition,
@@ -24,7 +24,7 @@ import {
 } from '../../../../domain/tool-protocol-validation'
 
 export type BuiltinCatalogPackage = {
-  manifest: ExtensionPackageManifest
+  manifest: LegacyExtensionPackageManifest
   packageDigest: string
   tools: ToolDefinition[]
   skills: SkillDefinition[]
@@ -66,6 +66,9 @@ export class BuiltinCatalogLoader {
     const manifest = normalizeExtensionPackageManifest(
       await readJson(manifestPath, 'Builtin extension manifest')
     )
+    if (manifest.schemaVersion !== 1) {
+      throw new Error('Builtin extension manifest schema is unsupported')
+    }
     if (
       manifest.packageId !== entry.packageId ||
       manifest.version !== entry.version

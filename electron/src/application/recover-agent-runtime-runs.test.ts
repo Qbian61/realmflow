@@ -13,6 +13,94 @@ import type {
 import { RecoverAgentRuntimeRunsUseCase } from './recover-agent-runtime-runs'
 
 describe('RecoverAgentRuntimeRunsUseCase', () => {
+  it('preserves blocked runs for explicit recovery without preventing other runs from resuming', async () => {
+    const blocked = runtimeRun('blocked', 'recovery_blocked')
+    const running = runtimeRun('running', 'running')
+    const resume = vi.fn()
+    const transition = vi.fn(async (id: string, status: string) => {
+      if (id === blocked.id && status === 'retrying') throw new Error('invalid_transition')
+    })
+    expect(await recoveryUseCase({
+      runs: repository([blocked, running], transition),
+      checkpointByRun: new Map([[blocked.id, checkpoint(blocked.id)], [running.id, checkpoint(running.id)]]),
+      resume
+    }).execute()).toEqual({ resumed: 1, blocked: 0, preserved: 1 })
+    expect(resume).toHaveBeenCalledOnce()
+    expect(resume).toHaveBeenCalledWith(running, expect.anything())
+  })
+
+  it.each(['validation', 'attachment'] as const)('preserves cancellation during recovery %s', async (stage) => {
+    const run = runtimeRun('run-cancelled', 'running')
+    let current = run
+    const transition = vi.fn(async (_id: string, status: AgentRunLifecycleStatus) => {
+      current = { ...current, status }
+    })
+    const runs = { ...repository([run], transition), getById: vi.fn(async () => current) }
+    const start = vi.fn()
+    const cancel = vi.fn()
+    const resume = vi.fn(async () => {
+      if (stage === 'attachment') current = { ...current, status: 'cancelled' }
+      return { start, cancel }
+    })
+    const result = await recoveryUseCase({
+      runs, checkpointByRun: new Map([[run.id, checkpoint(run.id)]]), resume,
+      reconcile: async () => {
+        if (stage === 'validation') current = { ...current, status: 'cancelled' }
+        return []
+      }
+    }).execute()
+    expect(result).toEqual({ resumed: 0, blocked: 0, preserved: 1 })
+    expect(current.status).toBe('cancelled')
+    expect(start).not.toHaveBeenCalled()
+    if (stage === 'validation') expect(resume).not.toHaveBeenCalled()
+    else expect(cancel).toHaveBeenCalledOnce()
+  })
+
+  it('preserves terminal status when attaching recovery fails after cancellation', async () => {
+    const run = runtimeRun('run-cancelled', 'running')
+    let current = run
+    const transition = vi.fn(async (_id: string, status: AgentRunLifecycleStatus) => {
+      current = { ...current, status }
+    })
+    const runs = { ...repository([run], transition), getById: vi.fn(async () => current) }
+    const result = await recoveryUseCase({
+      runs, checkpointByRun: new Map([[run.id, checkpoint(run.id)]]),
+      resume: async () => { current = { ...current, status: 'cancelled' }; throw new Error('request_cancelled') }
+    }).execute()
+    expect(current.status).toBe('cancelled')
+    expect(result).toEqual({ resumed: 0, blocked: 0, preserved: 1 })
+  })
+
+  it('does not recover a descendant cancelled while its ancestor was being recovered', async () => {
+    const parent = runtimeRun('parent', 'running')
+    const child = runtimeRun('child', 'running')
+    const transition = vi.fn()
+    const runs = {
+      ...repository([parent, child], transition),
+      getById: vi.fn(async (id: string) => id === 'child' ? { ...child, status: 'cancelled' as const } : parent)
+    }
+    const resume = vi.fn()
+    await recoveryUseCase({ runs, checkpointByRun: new Map([
+      [parent.id, checkpoint(parent.id)], [child.id, checkpoint(child.id)]
+    ]), resume }).execute()
+    expect(resume).toHaveBeenCalledOnce()
+    expect(resume).toHaveBeenCalledWith(parent, expect.anything())
+  })
+
+  it('activates the recovered stream only after committing the running lifecycle', async () => {
+    const running = runtimeRun('run-running', 'running')
+    const order: string[] = []
+    const transition = vi.fn(async (_id: string, status: string) => { order.push(status) })
+    const start = vi.fn(() => { order.push('consume') })
+    const useCase = recoveryUseCase({
+      runs: repository([running], transition),
+      checkpointByRun: new Map([[running.id, checkpoint(running.id)]]),
+      resume: vi.fn(async () => ({ start }))
+    })
+    await useCase.execute()
+    expect(order).toEqual(['retrying', 'running', 'consume'])
+  })
+
   it('resumes a running Run from its last safe checkpoint', async () => {
     const running = runtimeRun('run-running', 'running')
     const transition = vi.fn().mockResolvedValue(undefined)
@@ -278,7 +366,7 @@ function recoveryUseCase(input: {
   resume?: (
     run: AgentRuntimeRun,
     value: ReturnType<typeof checkpoint>
-  ) => Promise<void>
+  ) => Promise<void | { start(): void }>
 }) {
   const checkpoints = {
     save: vi.fn(),

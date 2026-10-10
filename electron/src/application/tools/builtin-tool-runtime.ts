@@ -38,6 +38,10 @@ import {
   type ManagedProcessPort
 } from './builtin-process-tool-handlers'
 import { createWebToolHandlers } from './builtin-web-tool-handlers'
+import { WebProviderRuntime } from '../web/web-provider-runtime'
+import type { WebProviderConfigurationService } from '../web/web-provider-configuration-service'
+import { createBrowserToolHandlers } from './builtin-browser-tool-handlers'
+import type { BrowserRuntimeService } from '../browser/browser-runtime-service'
 import type { JsonObject } from '../../../../domain/tool-protocol-validation'
 import type { ToolSessionFamily } from './tool-effect-planner'
 
@@ -70,6 +74,7 @@ const CONTEXT_ARGUMENT_KEYS = [
 ] as const
 
 export type BuiltinToolRuntimeDependencies = {
+  browser?: Pick<BrowserRuntimeService, 'createSession' | 'attachSession' | 'closeSession' | 'execute'>
   resolveSessionPath?: (
     family: ToolSessionFamily,
     sessionId: string
@@ -123,9 +128,7 @@ export type BuiltinToolRuntimeDependencies = {
   }
   git: GitCommandPort
   processes: ManagedProcessPort
-  web?: {
-    searxngBaseUrl?: string
-  }
+  web?: Pick<WebProviderConfigurationService, 'get' | 'resolveCredential'>
   application: Record<
     ApplicationToolHandlerName,
     (input: BuiltinToolHandlerInput) => Promise<unknown>
@@ -161,18 +164,16 @@ export function createBuiltinToolAdapter(
       ...createFixedLayoutToolHandlers(dependencies.fixedLayout),
       ...createGitToolHandlers(dependencies.git),
       ...createProcessToolHandlers(dependencies.processes),
-      ...createWebToolHandlers({
-        search: {
-          searxngBaseUrl: dependencies.web?.searxngBaseUrl
-        }
-      }),
+      ...createBrowserToolHandlers(dependencies.browser),
+      ...createWebToolHandlers(new WebProviderRuntime({
+        resolveCredential: dependencies.web
+          ? (handle, revision) => dependencies.web!.resolveCredential(handle, revision) : undefined
+      })),
       ...applicationHandlers
     ],
     {
       resolveSessionPath: dependencies.resolveSessionPath,
-      webSearch: {
-        searxngBaseUrl: dependencies.web?.searxngBaseUrl
-      }
+      webConfiguration: dependencies.web
     }
   )
 }

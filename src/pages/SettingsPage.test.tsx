@@ -426,6 +426,22 @@ describe("SettingsPage", () => {
     expect(screen.getByRole("heading", { name: "从备份恢复" })).toBeVisible();
   });
 
+  it("opens Main-owned web provider settings from its section URL", async () => {
+    const business = createBusiness();
+    window.realmflow = {
+      business,
+      webProviders: {
+        get: vi.fn().mockResolvedValue({
+          revision: 0, searchProvider: "disabled", searxngBaseUrl: "",
+          hasBraveCredential: false, browserContinuation: false,
+        }),
+        save: vi.fn(),
+      },
+    } as unknown as typeof window.realmflow;
+    renderSettingsPage(window.localStorage, "/settings?section=web");
+    expect(await screen.findByLabelText("搜索供应商")).toHaveValue("disabled");
+  });
+
   it("falls back from removed settings sections without loading their data", async () => {
     const business = createBusiness();
     window.realmflow = { business } as unknown as typeof window.realmflow;

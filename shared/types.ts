@@ -15,6 +15,10 @@ import type {
 import type { ConversationAttachmentApi } from './conversation-attachments'
 import type { RuntimeGovernanceApi } from './runtime-governance'
 import type { ToolPermissionApi } from './tool-permissions'
+import type { ToolPolicyApi } from './tool-policy'
+import type { WebProviderApi } from './web-provider'
+import type { AgentRuntimeApi } from './agent-runtime-state'
+import type { SkillRegistryApi } from './skill-registry'
 
 export type SidecarStatus = 'starting' | 'ready' | 'stopped' | 'error'
 
@@ -30,6 +34,10 @@ export interface RealmFlowApi {
   aiRuns: AiRunApi
   business: BusinessApi
   toolCatalog: ToolCatalogApi
+  skillRegistry?: SkillRegistryApi
+  toolPolicy?: ToolPolicyApi
+  webProviders?: WebProviderApi
+  agentRuntime?: AgentRuntimeApi
   toolPermissions: ToolPermissionApi
   capabilityCatalog?: CapabilityCatalogApi
   capabilityBuilder?: CapabilityBuilderApi

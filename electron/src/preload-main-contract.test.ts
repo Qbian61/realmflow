@@ -1018,6 +1018,11 @@ describe('preload and main IPC contract', () => {
     const respondToCloseRequest = vi.fn()
     registerMainIpc({
       sidecar: { getStatus: getSidecarStatus },
+      webProviders: { get: vi.fn(), save: vi.fn() },
+      agentRuntime: {
+        orchestrator: { status: vi.fn(), command: vi.fn() },
+        resolveRunId: vi.fn(), resolveRun: vi.fn(), cancel: vi.fn()
+      },
       aiRuns: {
         generate: {
           execute: vi.fn().mockResolvedValue({
@@ -1046,6 +1051,14 @@ describe('preload and main IPC contract', () => {
           testConnection: vi.fn(),
           discover: vi.fn()
         }
+      } as never,
+      skillRegistry: {
+        service: {
+          list: vi.fn(),
+          review: vi.fn(),
+          setActivation: vi.fn()
+        },
+        synchronize: vi.fn()
       } as never,
       toolPermissions: {
         permissions: {
@@ -1223,6 +1236,32 @@ describe('preload and main IPC contract', () => {
     )
 
     await invokeEveryApiCommand(api)
+    await api.agentRuntime!.get('run-1')
+    await api.agentRuntime!.updateGoal({
+      runId: 'run-1', requestId: 'goal-1', objective: 'Review', status: 'active', expectedRevision: 0
+    })
+    await api.agentRuntime!.steer({ runId: 'run-1', requestId: 'steer-1', message: 'Review' })
+    await api.agentRuntime!.cancel({ runId: 'run-1', sessionId: 'session-1' })
+    await api.webProviders!.get()
+    await api.webProviders!.save({
+      searchProvider: 'disabled', searxngBaseUrl: '', browserContinuation: false,
+      expectedRevision: 0, requestId: 'web-save',
+    })
+    await api.toolPolicy!.get({ source: 'user', scenarioId: 'general' })
+    await api.toolPolicy!.preview({ source: 'user', scenarioId: 'general' })
+    await api.toolPolicy!.save({
+      source: 'user', scenarioId: 'general', expectedRevision: null, layers: [],
+    })
+    await api.skillRegistry!.list()
+    await api.skillRegistry!.synchronize()
+    await api.skillRegistry!.review({
+      skillId: 'workspace.review', version: '1.0.0', digest: 'a'.repeat(64),
+      status: 'approved', notes: '', expectedRevision: 1, requestId: 'review-1'
+    })
+    await api.skillRegistry!.setActivation({
+      skillId: 'workspace.review', version: '1.0.0', digest: 'a'.repeat(64),
+      enabled: true, expectedRevision: 1, requestId: 'activate-1'
+    })
     await api.toolPermissions.listPending()
     await api.toolPermissions.resolve({
       requestId: 'permission-1',
@@ -1236,6 +1275,7 @@ describe('preload and main IPC contract', () => {
     api.business.onConversationEvent?.(vi.fn())
     api.persistence.onChanged(vi.fn())
     api.webWorkbench.onStateChange(vi.fn())
+    api.webWorkbench.onAgentBrowserSurface(vi.fn())
     api.terminal.onEvent(vi.fn())
     api.toolPermissions.onChanged(vi.fn())
 
@@ -2235,6 +2275,12 @@ async function invokeEveryApiCommand(api: RealmFlowApi): Promise<void> {
       targetId: 'builtin.files.read',
       enabled: true,
       idempotencyKey: 'tool-enable-1'
+    }),
+    api.toolCatalog.changePackageVersion({
+      packageId: 'com.example.files',
+      targetVersion: '1.0.0',
+      operation: 'rollback',
+      idempotencyKey: 'package-rollback-1'
     }),
     api.toolCatalog.listMcpServers(),
     api.toolCatalog.saveMcpServer({

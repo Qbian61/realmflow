@@ -135,4 +135,36 @@ describe('workbenchReducer', () => {
       '进程已退出，代码 0'
     )
   })
+
+  it('opens and closes an isolated Agent browser tab from Main lifecycle events', () => {
+    const page = {
+      id: 'browser-session-1',
+      title: 'Agent Browser',
+      url: 'about:blank',
+      loading: false,
+      canGoBack: false,
+      canGoForward: false,
+      managed: 'agent' as const
+    }
+    const opened = workbenchReducer(createWorkbenchState(), {
+      type: 'agent-browser-opened',
+      page
+    } as never)
+    const closed = workbenchReducer(opened, {
+      type: 'agent-browser-closed',
+      sessionId: page.id
+    } as never)
+
+    expect(opened).toEqual({
+      tabs: [{
+        id: page.id,
+        type: 'web',
+        label: 'Agent Browser',
+        page,
+        managed: 'agent'
+      }],
+      activeTabId: page.id
+    })
+    expect(closed).toEqual({ tabs: [], activeTabId: undefined })
+  })
 })

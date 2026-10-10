@@ -51,7 +51,7 @@ export type PreparedToolInvocation = {
   attemptId: string
   attempt: number
   requestedBy: {
-    type: 'user' | 'model' | 'workflow' | 'schedule' | 'skill'
+    type: 'user' | 'model' | 'workflow' | 'schedule' | 'skill' | 'hook'
     id: string
   }
   arguments: JsonObject

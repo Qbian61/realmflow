@@ -125,8 +125,6 @@ export function NewChatPage({
   const [submittedPrompt, setSubmittedPrompt] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [selectedWorkspace, setSelectedWorkspace] = useState("none");
-  const [reasoningMode, setReasoningMode] =
-    useState<ReasoningPreference>("auto");
   const draftId = useRef(crypto.randomUUID());
   const [attachments, setAttachments] = useState<
     ConversationAttachmentDescriptor[]
@@ -185,7 +183,7 @@ export function NewChatPage({
             selectedWorkspace,
             nextPrompt,
             models.selectedId || undefined,
-            reasoningMode,
+            "auto",
             submission,
           );
         } else {
@@ -193,7 +191,7 @@ export function NewChatPage({
             selectedWorkspace,
             nextPrompt,
             models.selectedId || undefined,
-            reasoningMode,
+            "auto",
           );
         }
         setPrompt("");
@@ -239,11 +237,8 @@ export function NewChatPage({
           modelGroups={models.groups}
           modelProfileId={models.selectedId}
           effectiveModelProfileId={models.effectiveId}
-          reasoningMode={reasoningMode}
-          reasoningSupported={models.reasoningSupported}
           onModelProfileChange={models.select}
           onModelPickerOpen={() => void models.refresh()}
-          onReasoningModeChange={setReasoningMode}
           disabled={submitting}
           attachments={attachments}
           attachmentErrors={attachmentErrors}

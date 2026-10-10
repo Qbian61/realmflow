@@ -384,6 +384,7 @@ export type SidecarSandboxCapabilities = {
 }
 
 export type SidecarResumeRunInput = {
+  turnGate?: boolean
   resumeToken: string
   conversationId: string
   messages: Array<{
@@ -1126,6 +1127,20 @@ export class SidecarClient {
     }
   }
 
+  async acknowledgeTurn(
+    runId: string,
+    input: { turn: number; messages: Array<{ role: 'user'; content: string }> }
+  ): Promise<void> {
+    const payload = await this.requestJson(
+      `/api/v1/runs/${encodeURIComponent(runId)}/turn`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }
+    )
+    if (!hasExactKeys(payload, ['runId', 'turn', 'status']) ||
+        payload.runId !== runId || payload.turn !== input.turn || payload.status !== 'accepted') {
+      throw new Error('Invalid Sidecar turn acknowledgment')
+    }
+  }
+
   async submitToolResult(
     runId: string,
     result: AiRunToolResult
@@ -1325,6 +1340,10 @@ function isValidEventData(
   data: Record<string, unknown>
 ): boolean {
   if (!isValidEventMetrics(data)) return false
+  if (type === 'run.turn_ready') {
+    return hasExactKeys(data, ['agentTurn']) && isNonNegativeInteger(data.agentTurn) &&
+      (data.agentTurn as number) >= 1 && (data.agentTurn as number) <= 180
+  }
   if (type === 'tool.call.requested') {
     return (
       hasAllowedKeys(data, ['toolCall', 'agentTurn']) &&

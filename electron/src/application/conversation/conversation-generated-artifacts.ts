@@ -13,10 +13,19 @@ type RunState = {
   final: Set<string>
 }
 
+export type GeneratedArtifactRunState = { temporary: string[]; final: string[] }
+export type GeneratedArtifactStateStore = {
+  read(runId: string): GeneratedArtifactRunState | undefined
+  write(runId: string, state: GeneratedArtifactRunState): void
+}
+
 export type ToolExecutionArtifactSnapshot = ToolSnapshot | undefined
 
 export class ConversationGeneratedArtifactService {
   private readonly runs = new Map<string, RunState>()
+  private readonly operations = new Map<string, Promise<unknown>>()
+
+  constructor(private readonly store?: GeneratedArtifactStateStore) {}
 
   async beforeToolExecution(input: {
     runId?: string
@@ -39,17 +48,22 @@ export class ConversationGeneratedArtifactService {
     output?: JsonObject
   }): Promise<void> {
     if (!input.runId) return
-    const state = this.state(input.runId)
-    for (const path of await resolveFinalArtifactPaths(input, state)) {
-      state.final.add(path)
-    }
-    if (input.toolName !== 'process.run' || !input.snapshot?.cwd) return
-    const after = await listFiles(input.snapshot.cwd)
-    for (const path of after) {
-      if (!input.snapshot.files.has(path) && !state.final.has(path)) {
-        state.temporary.add(path)
+    const runId = input.runId
+    return this.serialize(runId, async () => {
+      const state = this.state(runId)
+      for (const path of await resolveFinalArtifactPaths(input, state)) {
+        state.final.add(path)
       }
-    }
+      if (input.toolName === 'process.run' && input.snapshot?.cwd) {
+        const after = await listFiles(input.snapshot.cwd)
+        for (const path of after) {
+          if (!input.snapshot.files.has(path) && !state.final.has(path)) {
+            state.temporary.add(path)
+          }
+        }
+      }
+      this.save(runId, state)
+    })
   }
 
   async finalizeRun(input: {
@@ -58,33 +72,53 @@ export class ConversationGeneratedArtifactService {
     assistantMessageId?: string
     status: 'completed' | 'failed' | 'cancelled'
   }): Promise<ConversationGeneratedArtifactSource | undefined> {
-    const state = this.runs.get(input.runId)
-    if (!state) return undefined
-    this.runs.delete(input.runId)
-    if (input.status === 'completed') {
-      await Promise.all(
-        [...state.temporary]
-          .filter((path) => !state.final.has(path))
-          .map((path) => rm(path, { force: true }))
+    return this.serialize(input.runId, async () => {
+      const state = this.state(input.runId)
+      if (input.status === 'completed') {
+        await Promise.all(
+          [...state.temporary]
+            .filter((path) => !state.final.has(path))
+            .map((path) => rm(path, { force: true }))
+        )
+        state.temporary.clear()
+      }
+      const generatedArtifacts = await Promise.all(
+        [...state.final].map(toGeneratedArtifact)
       )
-    }
-    const generatedArtifacts = await Promise.all(
-      [...state.final].map(toGeneratedArtifact)
-    )
-    const existing = generatedArtifacts.filter(
-      (artifact): artifact is NonNullable<typeof artifact> => Boolean(artifact)
-    )
-    return existing.length > 0
-      ? { schemaVersion: 1, generatedArtifacts: existing }
-      : undefined
+      const existing = generatedArtifacts.filter(
+        (artifact): artifact is NonNullable<typeof artifact> => Boolean(artifact)
+      )
+      state.final = new Set(existing.map((artifact) => artifact.path))
+      this.save(input.runId, state)
+      return existing.length > 0
+        ? { schemaVersion: 1, generatedArtifacts: existing }
+        : undefined
+    })
   }
 
   private state(runId: string): RunState {
+    if (this.store) {
+      const saved = this.store.read(runId)
+      return { temporary: new Set(saved?.temporary), final: new Set(saved?.final) }
+    }
     const existing = this.runs.get(runId)
     if (existing) return existing
     const created = { temporary: new Set<string>(), final: new Set<string>() }
     this.runs.set(runId, created)
     return created
+  }
+
+  private save(runId: string, state: RunState): void {
+    if (this.store) this.store.write(runId, { temporary: [...state.temporary], final: [...state.final] })
+    else this.runs.set(runId, state)
+  }
+
+  private serialize<T>(runId: string, operation: () => Promise<T>): Promise<T> {
+    const current = (this.operations.get(runId) ?? Promise.resolve()).then(operation, operation)
+    this.operations.set(runId, current)
+    const clear = () => { if (this.operations.get(runId) === current) this.operations.delete(runId) }
+    void current.then(clear, clear)
+    return current
   }
 }
 
@@ -219,8 +253,16 @@ function artifactKind(path: string): string {
 }
 
 function isArtifactProducingTool(toolName: string): boolean {
-  return /^(?:document|documents?|office)\.(?:create|export|export_pdf|save)/.test(
-    toolName
+  return (
+    /^(?:document|documents?|office)\.(?:create|export|export_pdf|save)/.test(
+      toolName
+    ) ||
+    [
+      'image_generate',
+      'video_generate',
+      'music_generate',
+      'tts'
+    ].includes(toolName)
   )
 }
 

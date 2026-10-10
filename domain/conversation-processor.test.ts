@@ -169,6 +169,27 @@ describe('ConversationProcessorPipeline', () => {
     expect(result.gate).toEqual({ status: 'continue' })
   })
 
+  it.each([
+    '请使用 Browser 工具创建浏览器并打开 https://example.com',
+    'Use the Browser tool to create a browser and open https://example.com'
+  ])('does not mistake Tool invocation for capability creation: %s', async (content) => {
+    const result = await new ConversationProcessorPipeline(
+      createBuiltinConversationProcessors()
+    ).run({
+      ...baseInput,
+      content,
+      bindings: {}
+    })
+
+    expect(result.semanticUnderstanding.intent).not.toBe(
+      'capability_create'
+    )
+    expect(result.semanticUnderstanding.ambiguity).not.toContain(
+      '未明确能力安装范围'
+    )
+    expect(result.gate).toEqual({ status: 'continue' })
+  })
+
   it('routes when-to-run requests to internal Trigger configuration', async () => {
     const result = await new ConversationProcessorPipeline(
       createBuiltinConversationProcessors()

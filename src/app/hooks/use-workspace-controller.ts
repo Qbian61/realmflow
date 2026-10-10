@@ -22,26 +22,26 @@ import {
 import { executeCreateSpace } from './workspace-command-errors'
 import { createConversationManagementActions } from './workspace-conversation-management'
 import { highestSequence, moveToIndex } from './workspace-list-utils'
+import { useActiveConversation } from './use-active-conversation'
 export type WorkspacePersistenceIssue = 'navigation' | 'sessions'
 export type WorkspaceOperationNotice =
   | 'work-root-required'
-  | 'space-create-failed' | 'space-rename-failed'
-  | 'space-relocate-failed' | 'space-delete-failed'
-  | 'space-move-failed'
-  | 'requirement-create-failed' | 'requirement-rename-failed'
-  | 'requirement-delete-failed' | 'requirement-move-failed'
-  | 'conversation-rename-failed'
-  | 'conversation-delete-failed'
+  | 'space-create-failed' | 'space-rename-failed' | 'space-relocate-failed'
+  | 'space-delete-failed' | 'space-move-failed' | 'requirement-create-failed'
+  | 'requirement-rename-failed' | 'requirement-delete-failed'
+  | 'requirement-move-failed' | 'conversation-rename-failed' | 'conversation-delete-failed'
 export function useWorkspaceController({
   navigationRepository,
   sessionRepository,
   business,
+  activeSessionId,
   applicationLocale = 'zh-CN',
   onOperationNotice = () => undefined
 }: {
   navigationRepository: WorkspaceNavigationRepository
   sessionRepository: ChatSessionRepository
   business?: BusinessApi
+  activeSessionId?: string
   applicationLocale?: 'zh-CN' | 'en' | 'ja'
   onOperationNotice?: (notice: WorkspaceOperationNotice) => void
 }) {
@@ -61,6 +61,13 @@ export function useWorkspaceController({
     WorkspacePersistenceIssue[]
   >([])
   const [sessionsLoading, setSessionsLoading] = useState(Boolean(business))
+  const hasActiveSession = state.sessions.some(({ id }) => id === activeSessionId)
+  const resolvedSessionId = useActiveConversation({
+    sessionId: activeSessionId, business, alreadyLoaded: hasActiveSession,
+    onLoaded: (conversation) =>
+      dispatch({ type: 'session-synced', session: mapConversation(conversation) }),
+    onUnavailable: () => updatePersistenceIssue('sessions', true)
+  })
   const [recentSessions, setRecentSessions] = useState(() =>
     initialSessions.value.filter((session) => session.kind !== 'requirement_node')
   )
@@ -97,7 +104,6 @@ export function useWorkspaceController({
   )
   const recentRequestSequenceRef = useRef(0)
   const recentFiltersRef = useRef(recentFilters)
-
   const refreshRecentConversations = useCallback(
     async (filters: RecentConversationFilters): Promise<void> => {
       if (!business) return
@@ -125,7 +131,6 @@ export function useWorkspaceController({
     },
     [business]
   )
-
   useEffect(() => {
     if (!business) return
     let disposed = false
@@ -151,7 +156,6 @@ export function useWorkspaceController({
       disposed = true
     }
   }, [business])
-
   useEffect(() => {
     if (!business) return
     void refreshRecentConversations(recentFilters)
@@ -159,7 +163,6 @@ export function useWorkspaceController({
       recentRequestSequenceRef.current += 1
     }
   }, [business, recentFilters, refreshRecentConversations])
-
   useEffect(() => {
     if (!business?.onConversationEvent) return
     return business.onConversationEvent(({ conversation }) => {
@@ -173,7 +176,6 @@ export function useWorkspaceController({
       pendingConversationReadyRef.current.delete(conversation.id)
     })
   }, [business])
-
   useEffect(() => {
     if (business) return
     if (skipNextNavigationSaveRef.current) {
@@ -233,7 +235,6 @@ export function useWorkspaceController({
     state.requirementsBySpace,
     state.spaces
   ])
-
   useEffect(() => {
     if (business) return
     if (skipNextSessionSaveRef.current) {
@@ -286,7 +287,6 @@ export function useWorkspaceController({
       }
     )
   }, [sessionRepository, state.sessions])
-
   useEffect(
     () => {
       if (business) return
@@ -302,7 +302,6 @@ export function useWorkspaceController({
     },
     [business, navigationRepository]
   )
-
   useEffect(
     () => {
       if (business) return
@@ -318,7 +317,6 @@ export function useWorkspaceController({
     },
     [business, sessionRepository]
   )
-
   const refreshBusinessNavigation = async (): Promise<void> => {
     if (!business) return
     const spaces = await business.listSpaces()
@@ -345,7 +343,9 @@ export function useWorkspaceController({
   return {
     ...state,
     persistenceIssues,
-    sessionsLoading,
+    sessionsLoading: sessionsLoading || Boolean(
+      business?.getConversation && activeSessionId && !hasActiveSession && resolvedSessionId !== activeSessionId
+    ),
     recentSessions: business
       ? recentSessions
       : state.sessions.filter((session) => session.kind !== 'requirement_node'),
@@ -683,7 +683,6 @@ export function useWorkspaceController({
     },
     ...conversationManagement
   }
-
   function updatePersistenceIssue(
     issue: WorkspacePersistenceIssue,
     unavailable: boolean
