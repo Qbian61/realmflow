@@ -52,8 +52,6 @@ export default function ChatSessionPage({
   const { sessionId } = useParams();
   const [prompt, setPrompt] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [reasoningMode, setReasoningMode] =
-    useState<ReasoningPreference>("auto");
   const draftId = useRef(crypto.randomUUID());
   const [attachments, setAttachments] = useState<
     ConversationAttachmentDescriptor[]
@@ -65,6 +63,7 @@ export default function ChatSessionPage({
   const [allowImageEgress, setAllowImageEgress] = useState(false);
   const [copiedMessageId, setCopiedMessageId] = useState("");
   const [sendingSuggestionSetId, setSendingSuggestionSetId] = useState("");
+  const [cancellingRunId, setCancellingRunId] = useState("");
   const session = sessions.find((item) => item.id === sessionId);
   const models = useModelProfiles(session?.modelProfileId);
 
@@ -96,6 +95,14 @@ export default function ChatSessionPage({
             })
           : t("chat.knowledgeNone")
         : space?.label ?? t("chat.local");
+  const activeRunId = [...session.messages]
+    .reverse()
+    .find(
+      (message) =>
+        message.role === "assistant" &&
+        message.status === "pending" &&
+        Boolean(message.runId),
+    )?.runId;
 
   const submitContent = async (
     rawContent: string,
@@ -103,7 +110,7 @@ export default function ChatSessionPage({
     includeAttachments = false,
   ): Promise<void> => {
     const content = rawContent.trim();
-    if (!content || submitting) return;
+    if (!content || submitting || activeRunId) return;
     setSubmitting(true);
     try {
       const submission =
@@ -119,7 +126,7 @@ export default function ChatSessionPage({
           session.id,
           content,
           models.selectedId || undefined,
-          reasoningMode,
+          "auto",
           submission,
         );
       } else {
@@ -127,7 +134,7 @@ export default function ChatSessionPage({
           session.id,
           content,
           models.selectedId || undefined,
-          reasoningMode,
+          "auto",
         );
       }
       if (clearPrompt) {
@@ -339,6 +346,7 @@ export default function ChatSessionPage({
         </ConversationShareController>
         <div className="chat-session-composer">
           <Composer
+            permissionRunIds={session.messages.flatMap(message => message.runId ? [message.runId] : [])}
             value={prompt}
             placeholder={t("chat.placeholder")}
             labels={{
@@ -361,12 +369,10 @@ export default function ChatSessionPage({
             modelGroups={models.groups}
             modelProfileId={models.selectedId}
             effectiveModelProfileId={models.effectiveId}
-            reasoningMode={reasoningMode}
-            reasoningSupported={models.reasoningSupported}
             onModelProfileChange={models.select}
             onModelPickerOpen={() => void models.refresh()}
-            onReasoningModeChange={setReasoningMode}
-            disabled={submitting}
+            disabled={submitting || Boolean(activeRunId)}
+            cancelling={cancellingRunId === activeRunId}
             attachments={attachments}
             attachmentErrors={attachmentErrors}
             attachmentBusy={attachmentBusy}
@@ -414,6 +420,21 @@ export default function ChatSessionPage({
             compact
             onChange={setPrompt}
             onSubmit={() => void submitContent(prompt, true, true)}
+            onCancel={
+              activeRunId
+                ? () => {
+                    const api = window.realmflow?.agentRuntime;
+                    if (!api || cancellingRunId) return;
+                    setCancellingRunId(activeRunId);
+                    void api
+                      .cancel({ runId: activeRunId, sessionId: session.id })
+                      .catch(() => {
+                        setCancellingRunId("");
+                        toast.error("chat.cancelFailed");
+                      });
+                  }
+                : undefined
+            }
           />
         </div>
       </div>

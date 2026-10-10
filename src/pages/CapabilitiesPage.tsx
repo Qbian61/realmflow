@@ -21,6 +21,8 @@ import type {
 import type { CapabilityInstallation } from "../../domain/capability";
 import { WorkspaceHeaderPortal } from "../features/navigation/WorkspaceLayout";
 import { ToolCatalogPanel } from "../features/capabilities/ToolCatalogPanel";
+import { ToolPolicyPanel } from "../features/capabilities/ToolPolicyPanel";
+import { SkillRegistryPanel } from "../features/capabilities/SkillRegistryPanel";
 import { ConnectorCatalogPanel } from "../features/capabilities/ConnectorCatalogPanel";
 import { CapabilityImportDialog } from "../features/capabilities/CapabilityImportDialog";
 import { InstalledCapabilityList } from "../features/capabilities/InstalledCapabilityList";
@@ -62,6 +64,7 @@ export default function CapabilitiesPage(): JSX.Element {
   const toast = useToast();
   const business = window.realmflow?.business;
   const toolCatalog = window.realmflow?.toolCatalog;
+  const skillRegistry = window.realmflow?.skillRegistry;
   const capabilityCatalog = window.realmflow?.capabilityCatalog;
   const [activeTab, setActiveTab] = useUrlQueryState<CapabilityTab>(
     "tab",
@@ -177,6 +180,24 @@ export default function CapabilitiesPage(): JSX.Element {
     setBusyTarget(`${command.targetType}:${command.targetId}`);
     try {
       await toolCatalog.setActivation(command);
+      setCatalog(await toolCatalog.list(currentCatalogQuery()));
+    } catch {
+      toast.error("capabilities.updateFailed");
+    } finally {
+      setBusyTarget(undefined);
+    }
+  }
+
+  async function changeExtensionPackageVersion(command: {
+    packageId: string;
+    targetVersion: string;
+    operation: "upgrade" | "rollback";
+    idempotencyKey: string;
+  }): Promise<void> {
+    if (!toolCatalog) return;
+    setBusyTarget(`package:${command.packageId}`);
+    try {
+      await toolCatalog.changePackageVersion(command);
       setCatalog(await toolCatalog.list(currentCatalogQuery()));
     } catch {
       toast.error("capabilities.updateFailed");
@@ -491,6 +512,9 @@ export default function CapabilitiesPage(): JSX.Element {
                   importing={importing}
                   onCatalogViewChange={setToolCatalogView}
                   onToggle={(command) => void toggleActivation(command)}
+                  onChangePackageVersion={(command) =>
+                    void changeExtensionPackageVersion(command)
+                  }
                   onImport={(sourceType) => void importPackage(sourceType)}
                 />
               ) : null}
@@ -503,6 +527,9 @@ export default function CapabilitiesPage(): JSX.Element {
               role="tabpanel"
               aria-labelledby="capabilities-skills-tab"
             >
+              {skillRegistry ? (
+                <SkillRegistryPanel api={skillRegistry} />
+              ) : null}
               <InstalledCapabilityList
                 kind="skill"
                 {...filteredCapabilitySnapshot}
@@ -525,6 +552,9 @@ export default function CapabilitiesPage(): JSX.Element {
                   importing={importing}
                   onCatalogViewChange={setToolCatalogView}
                   onToggle={(command) => void toggleActivation(command)}
+                  onChangePackageVersion={(command) =>
+                    void changeExtensionPackageVersion(command)
+                  }
                   onImport={(sourceType) => void importPackage(sourceType)}
                 />
               ) : null}
@@ -537,6 +567,9 @@ export default function CapabilitiesPage(): JSX.Element {
               role="tabpanel"
               aria-labelledby="capabilities-agents-tab"
             >
+              {window.realmflow?.toolPolicy ? (
+                <ToolPolicyPanel api={window.realmflow.toolPolicy} business={business} />
+              ) : null}
               <InstalledCapabilityList
                 kind="agent"
                 {...filteredCapabilitySnapshot}

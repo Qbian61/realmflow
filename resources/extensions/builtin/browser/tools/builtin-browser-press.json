@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.browser.press",
+  "version": "1.0.0",
+  "name": "Press browser key",
+  "description": "Send a supported key to a current snapshot ref. May submit data.",
+  "tags": [
+    "browser"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "browser.press",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sessionId": {
+        "type": "string",
+        "pattern": "^browser-[A-Za-z0-9-]+$",
+        "maxLength": 120
+      },
+      "ref": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 16000
+      },
+      "key": {
+        "type": "string",
+        "enum": [
+          "Enter",
+          "Tab",
+          "Escape",
+          "Backspace",
+          "Delete",
+          "ArrowUp",
+          "ArrowDown",
+          "ArrowLeft",
+          "ArrowRight",
+          "Space"
+        ]
+      }
+    },
+    "required": [
+      "sessionId",
+      "ref",
+      "key"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "computer.control",
+    "network.connect"
+  ],
+  "effects": [
+    "user_interface.change",
+    "external.read"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "required",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "press browser key"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

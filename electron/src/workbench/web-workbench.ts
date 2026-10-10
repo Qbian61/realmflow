@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { EventEmitter } from 'node:events'
 import {
   BrowserWindow,
   session,
@@ -8,9 +9,42 @@ import {
 } from 'electron'
 import { IPC_EVENT_CHANNELS } from '../../../shared/ipc-contract'
 import type { WebPageState, WorkbenchBounds } from '../../../shared/workbench'
+import type { BrowserPageHost } from '../application/browser/browser-cdp-page'
+import { browserUrl } from '../application/browser/browser-artifacts'
 import { normalizeWebUrl } from './web-url'
 
 const WEB_PARTITION = 'realmflow-web-workbench'
+
+class AgentBrowserPageHost extends EventEmitter implements BrowserPageHost {
+  private closed = false
+
+  constructor(
+    readonly webContents: WebContentsView['webContents'],
+    private readonly closeSurface: () => void,
+    private readonly cleanup: () => void
+  ) {
+    super()
+  }
+
+  loadURL(url: string): Promise<void> {
+    return this.webContents.loadURL(url)
+  }
+
+  isDestroyed(): boolean {
+    return this.closed || this.webContents.isDestroyed()
+  }
+
+  destroy(): void {
+    this.closeSurface()
+  }
+
+  markClosed(): void {
+    if (this.closed) return
+    this.closed = true
+    this.cleanup()
+    this.emit('closed')
+  }
+}
 
 function sanitizeBounds(bounds: WorkbenchBounds): Rectangle {
   return {
@@ -24,6 +58,8 @@ function sanitizeBounds(bounds: WorkbenchBounds): Rectangle {
 export class WebWorkbenchManager {
   private readonly views = new Map<string, WebContentsView>()
   private readonly urls = new Map<string, string>()
+  private readonly agentHosts = new Map<string, AgentBrowserPageHost>()
+  private readonly agentIds = new Set<string>()
   private activeId: string | undefined
 
   constructor(
@@ -34,7 +70,9 @@ export class WebWorkbenchManager {
     isolatedSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
       callback(false)
     })
-    isolatedSession.on('will-download', (event) => event.preventDefault())
+    const preventDownload = (event: Electron.Event): void =>
+      event.preventDefault()
+    isolatedSession.on('will-download', preventDownload)
   }
 
   async create(urlValue: string): Promise<WebPageState> {
@@ -89,6 +127,115 @@ export class WebWorkbenchManager {
     }
   }
 
+  createAgentSurface(input: {
+    sessionId: string
+    profileId: string
+  }): BrowserPageHost {
+    if (
+      !/^browser-[A-Za-z0-9-]+$/.test(input.sessionId) ||
+      !/^browser-[A-Za-z0-9-]+$/.test(input.profileId) ||
+      this.views.has(input.sessionId)
+    ) {
+      throw new Error('Agent browser surface identity is invalid')
+    }
+    const partition = `persist:realmflow-browser-${input.profileId}`
+    const isolatedSession = session.fromPartition(partition)
+    isolatedSession.setPermissionCheckHandler(() => false)
+    isolatedSession.setPermissionRequestHandler(
+      (_contents, _permission, callback) => callback(false)
+    )
+    const preventDownload = (event: Electron.Event): void =>
+      event.preventDefault()
+    isolatedSession.on('will-download', preventDownload)
+    isolatedSession.webRequest.onBeforeRequest(
+      { urls: ['<all_urls>'] },
+      (details, callback) => {
+        let permitted = false
+        try {
+          permitted = details.url === 'about:blank' ||
+            Boolean(browserUrl(details.url))
+        } catch {
+          permitted = false
+        }
+        callback({ cancel: !permitted })
+      }
+    )
+    const view = new WebContentsView({
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        webSecurity: true,
+        webviewTag: false,
+        spellcheck: false,
+        navigateOnDragDrop: false,
+        partition
+      }
+    })
+    view.setBackgroundColor('#ffffff')
+    view.setVisible(false)
+    view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    const preventUnsupportedNavigation = (
+      event: Electron.Event,
+      nextUrl: string
+    ): void => {
+      try {
+        if (nextUrl !== 'about:blank') browserUrl(nextUrl)
+      } catch {
+        event.preventDefault()
+      }
+    }
+    view.webContents.on('will-navigate', preventUnsupportedNavigation)
+    view.webContents.on('will-redirect', preventUnsupportedNavigation)
+    view.webContents.on('will-frame-navigate', (event) => {
+      try {
+        if (event.url !== 'about:blank') browserUrl(event.url)
+      } catch {
+        event.preventDefault()
+      }
+    })
+    view.webContents.on('did-start-loading', () =>
+      this.emitState(input.sessionId))
+    view.webContents.on('did-stop-loading', () =>
+      this.emitState(input.sessionId))
+    view.webContents.on('did-navigate', () =>
+      this.emitState(input.sessionId))
+    view.webContents.on('did-navigate-in-page', () =>
+      this.emitState(input.sessionId))
+    view.webContents.on('page-title-updated', () =>
+      this.emitState(input.sessionId))
+    view.webContents.on(
+      'did-fail-load',
+      (_event, _errorCode, errorDescription) =>
+        this.emitState(input.sessionId, errorDescription)
+    )
+    const host = new AgentBrowserPageHost(
+      view.webContents,
+      () => this.destroy(input.sessionId),
+      () => isolatedSession.removeListener(
+        'will-download',
+        preventDownload
+      )
+    )
+    this.views.set(input.sessionId, view)
+    this.urls.set(input.sessionId, 'about:blank')
+    this.agentIds.add(input.sessionId)
+    this.agentHosts.set(input.sessionId, host)
+    this.emitAgentSurface({
+      type: 'opened',
+      page: {
+        id: input.sessionId,
+        title: 'Agent Browser',
+        url: 'about:blank',
+        loading: false,
+        canGoBack: false,
+        canGoForward: false,
+        managed: 'agent'
+      }
+    })
+    return host
+  }
+
   show(id: string, bounds: WorkbenchBounds): void {
     const view = this.requireView(id)
     const hostWindow = this.requireHostWindow()
@@ -111,6 +258,7 @@ export class WebWorkbenchManager {
   }
 
   async navigate(id: string, urlValue: string): Promise<WebPageState> {
+    this.requireUserView(id)
     const view = this.requireView(id)
     const url = normalizeWebUrl(urlValue)
     this.urls.set(id, url)
@@ -119,16 +267,19 @@ export class WebWorkbenchManager {
   }
 
   goBack(id: string): void {
+    this.requireUserView(id)
     const contents = this.requireView(id).webContents
     if (contents.canGoBack()) contents.goBack()
   }
 
   goForward(id: string): void {
+    this.requireUserView(id)
     const contents = this.requireView(id).webContents
     if (contents.canGoForward()) contents.goForward()
   }
 
   reload(id: string): void {
+    this.requireUserView(id)
     this.requireView(id).webContents.reload()
   }
 
@@ -142,6 +293,11 @@ export class WebWorkbenchManager {
     view.webContents.close()
     this.views.delete(id)
     this.urls.delete(id)
+    if (this.agentIds.delete(id)) {
+      this.agentHosts.get(id)?.markClosed()
+      this.agentHosts.delete(id)
+      this.emitAgentSurface({ type: 'closed', sessionId: id })
+    }
     if (this.activeId === id) this.activeId = undefined
   }
 
@@ -165,6 +321,7 @@ export class WebWorkbenchManager {
       loading: contents.isLoading(),
       canGoBack: contents.canGoBack(),
       canGoForward: contents.canGoForward(),
+      ...(this.agentIds.has(id) ? { managed: 'agent' as const } : {}),
       ...(error ? { error } : {})
     }
   }
@@ -186,6 +343,17 @@ export class WebWorkbenchManager {
     )
   }
 
+  private emitAgentSurface(
+    event: import('../../../shared/workbench').AgentBrowserSurfaceEvent
+  ): void {
+    const hostWindow = this.getHostWindow()
+    if (!hostWindow || hostWindow.isDestroyed()) return
+    hostWindow.webContents.send(
+      IPC_EVENT_CHANNELS.agentBrowserSurface,
+      event
+    )
+  }
+
   private requireHostWindow(): BrowserWindow {
     const hostWindow = this.getHostWindow()
     if (!hostWindow || hostWindow.isDestroyed()) {
@@ -198,5 +366,13 @@ export class WebWorkbenchManager {
     const view = this.views.get(id)
     if (!view) throw new Error('Web page is no longer available')
     return view
+  }
+
+  private requireUserView(id: string): void {
+    if (this.agentIds.has(id)) {
+      throw new Error(
+        'Agent browser navigation requires the Tool execution boundary'
+      )
+    }
   }
 }

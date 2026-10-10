@@ -5,6 +5,8 @@ import {
 } from '../../../../domain/file-mutation-command'
 import type { ToolDefinition } from '../../../../domain/tool-definition'
 import type { JsonObject } from '../../../../domain/tool-protocol-validation'
+import { DEFAULT_WEB_PROVIDER_CONFIGURATION, type WebProviderConfiguration } from '../../../../shared/web-provider'
+import { webError } from '../web/web-response'
 import type {
   AdapterEffectPlan,
   AdapterExecutionResult,
@@ -31,6 +33,8 @@ export type BuiltinToolHandlerInput = {
   signal: AbortSignal
   sink: ToolExecutionEventSink
   mutation?: FileMutationCommand
+  /** Trusted Main snapshot; never copied from model arguments. */
+  webConfiguration?: WebProviderConfiguration
 }
 
 export type BuiltinToolHandler = {
@@ -51,12 +55,14 @@ type BuiltinRuntimeHandle = {
   mutatesFiles: boolean
   capabilities: ToolDefinition['capabilities']
   context: ToolExecutionContext
+  webConfiguration?: WebProviderConfiguration
 }
 
 export class BuiltinToolAdapter implements ToolAdapter {
   readonly kind = 'builtin' as const
   private readonly handlers = new Map<string, BuiltinToolHandler>()
   private readonly effectPlanner: typeof planBuiltinToolEffects
+  private readonly webConfiguration: () => WebProviderConfiguration
 
   constructor(
     handlers: readonly BuiltinToolHandler[],
@@ -64,6 +70,7 @@ export class BuiltinToolAdapter implements ToolAdapter {
       planEffects?: typeof planBuiltinToolEffects
     } = {}
   ) {
+    this.webConfiguration = () => options.webConfiguration?.get() ?? DEFAULT_WEB_PROVIDER_CONFIGURATION
     this.effectPlanner = options.planEffects ?? ((input) =>
       planBuiltinToolEffects(input, options))
     for (const handler of handlers) {
@@ -87,13 +94,15 @@ export class BuiltinToolAdapter implements ToolAdapter {
       definition.executor.handlerVersion
     )
     this.requireHandler(key)
+    const webConfiguration = definition.executor.handler.startsWith('web.')
+      ? Object.freeze({ ...this.webConfiguration() }) : undefined
     return {
       definitionId: definition.id,
       definitionVersion: definition.version,
       definitionDigest: definition.definitionDigest,
       adapterKind: this.kind,
       bindingId: `builtin-${createHash('sha256')
-        .update(`${definition.id}@${definition.version}:${definition.definitionDigest}`)
+        .update(`${definition.id}@${definition.version}:${definition.definitionDigest}${webConfiguration ? JSON.stringify(webConfiguration) : ''}`)
         .digest('hex')
         .slice(0, 24)}`,
       opaqueRuntimeHandle: {
@@ -107,7 +116,8 @@ export class BuiltinToolAdapter implements ToolAdapter {
             capability === 'filesystem.delete'
         ),
         capabilities: [...definition.capabilities],
-        context
+        context,
+        ...(webConfiguration ? { webConfiguration } : {})
       } satisfies BuiltinRuntimeHandle
     }
   }
@@ -119,6 +129,7 @@ export class BuiltinToolAdapter implements ToolAdapter {
     try {
       const handle = this.requireHandle(binding)
       this.requireHandler(handle.handlerKey)
+      this.assertWebConfiguration(handle)
       return {
         outcome: 'ready',
         ...(handle.mutatesFiles
@@ -133,12 +144,14 @@ export class BuiltinToolAdapter implements ToolAdapter {
             }
           : {})
       }
-    } catch {
+    } catch (error) {
       return {
         outcome: 'unavailable',
         error: {
-          code: 'binding_invalid',
-          message: 'Builtin Tool binding is invalid',
+          code: error instanceof Error && error.message === 'web_configuration_changed'
+            ? 'web_configuration_changed' : 'binding_invalid',
+          message: error instanceof Error && error.message === 'web_configuration_changed'
+            ? 'Web configuration changed; request authorization again' : 'Builtin Tool binding is invalid',
           retryable: false
         }
       }
@@ -157,7 +170,8 @@ export class BuiltinToolAdapter implements ToolAdapter {
       ),
       capabilities: handle.capabilities,
       arguments: invocation.arguments,
-      scopeRoots: invocation.scopeRoots
+      scopeRoots: invocation.scopeRoots,
+      ...(handle.webConfiguration ? { webConfiguration: handle.webConfiguration } : {})
     })
   }
 
@@ -179,6 +193,7 @@ export class BuiltinToolAdapter implements ToolAdapter {
     }
     const handle = this.requireHandle(binding)
     try {
+      this.assertWebConfiguration(handle)
       const mutation = handle.mutatesFiles
         ? createFileMutationCommand({
             mutationId: invocation.executionId,
@@ -201,7 +216,8 @@ export class BuiltinToolAdapter implements ToolAdapter {
           })),
           signal,
           sink,
-          ...(mutation ? { mutation } : {})
+          ...(mutation ? { mutation } : {}),
+          ...(handle.webConfiguration ? { webConfiguration: handle.webConfiguration } : {})
         })
       )
       const result = mutation ? { ...output, mutation } : output
@@ -258,6 +274,13 @@ export class BuiltinToolAdapter implements ToolAdapter {
           definition.executor.handlerVersion
         )
       )
+    }
+  }
+
+  private assertWebConfiguration(handle: BuiltinRuntimeHandle): void {
+    if (handle.webConfiguration &&
+        JSON.stringify(handle.webConfiguration) !== JSON.stringify(this.webConfiguration())) {
+      throw webError('web_configuration_changed')
     }
   }
 
@@ -335,7 +358,7 @@ function safeErrorCode(error: unknown): string {
   return (
     isRecord(error) &&
     typeof error.code === 'string' &&
-    /^(?:tool|file|image|archive|artifact|document|fixed_layout|office|legacy_office|word|spreadsheet|presentation|pdf|process|web)_[a-z0-9_]+$/.test(
+    /^(?:tool|file|image|archive|artifact|document|fixed_layout|office|legacy_office|word|spreadsheet|presentation|pdf|process|web|browser)_[a-z0-9_]+$/.test(
       error.code
     )
   )

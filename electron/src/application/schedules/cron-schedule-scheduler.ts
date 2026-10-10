@@ -37,6 +37,7 @@ export class CronScheduleScheduler {
   private running = false
   private generation = 0
   private timer: unknown
+  private armedCursor: ScheduleTriggerCursor | undefined
   private refreshQueue: Promise<void> = Promise.resolve()
 
   constructor(private readonly dependencies: Dependencies) {
@@ -68,6 +69,22 @@ export class CronScheduleScheduler {
     this.running = false
     this.generation += 1
     this.clearArmedTimer()
+  }
+
+  status(): {
+    running: boolean
+    nextDueAt?: number
+    nextScheduleId?: string
+  } {
+    return {
+      running: this.running,
+      ...(this.running && this.armedCursor
+        ? {
+            nextDueAt: this.armedCursor.nextDueAt,
+            nextScheduleId: this.armedCursor.scheduleId
+          }
+        : {})
+    }
   }
 
   private enqueueRefresh(preserveOverdue: boolean): Promise<void> {
@@ -106,6 +123,7 @@ export class CronScheduleScheduler {
     if (!this.isCurrent(generation)) return
     const cursor = await this.dependencies.store.getNextTrigger()
     if (!cursor || !this.isCurrent(generation)) return
+    this.armedCursor = cursor
     const delay = Math.max(0, cursor.nextDueAt - this.now())
     if (delay > MAX_TIMER_DELAY) {
       this.timer = this.setTimer(() => {
@@ -121,6 +139,7 @@ export class CronScheduleScheduler {
   private async continueLongDelay(generation: number): Promise<void> {
     if (!this.isCurrent(generation)) return
     this.timer = undefined
+    this.armedCursor = undefined
     const nextGeneration = ++this.generation
     try {
       await this.armNext(nextGeneration)
@@ -135,6 +154,7 @@ export class CronScheduleScheduler {
   ): Promise<void> {
     if (!this.isCurrent(generation)) return
     this.timer = undefined
+    this.armedCursor = undefined
     this.generation += 1
     try {
       const schedule = await this.dependencies.store.get(cursor.scheduleId)
@@ -157,9 +177,11 @@ export class CronScheduleScheduler {
   }
 
   private clearArmedTimer(): void {
-    if (this.timer === undefined) return
-    this.clearTimer(this.timer)
-    this.timer = undefined
+    this.armedCursor = undefined
+    if (this.timer !== undefined) {
+      this.clearTimer(this.timer)
+      this.timer = undefined
+    }
   }
 }
 

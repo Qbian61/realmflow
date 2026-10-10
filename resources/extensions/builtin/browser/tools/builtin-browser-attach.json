@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.browser.attach",
+  "version": "1.0.0",
+  "name": "Attach browser profile",
+  "description": "Resume an owned local login profile after explicit profile-specific approval.",
+  "tags": [
+    "browser"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "browser.attach",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "profileId": {
+        "type": "string",
+        "pattern": "^browser-[A-Za-z0-9-]+$",
+        "maxLength": 120
+      }
+    },
+    "required": [
+      "profileId"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "computer.control",
+    "network.connect",
+    "credential.use"
+  ],
+  "effects": [
+    "user_interface.change",
+    "external.read",
+    "local_data.read"
+  ],
+  "risk": "high",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "required",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "attach browser profile"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ],
+    "requiresExplicitSelection": true
+  }
+}

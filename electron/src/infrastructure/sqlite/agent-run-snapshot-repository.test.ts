@@ -31,6 +31,19 @@ describe('SqliteAgentRuntimeRunRepository', () => {
         agentProfileDigest: 'd'.repeat(64),
         promptDigest: 'e'.repeat(64),
         policyDigest: 'f'.repeat(64),
+        toolPolicy: {
+          digest: '0'.repeat(64), providerId: 'remote', context: 'general',
+          sandbox: { available: true, networkAllowed: false },
+          grants: [], inheritedGrants: [], decisions: [],
+        },
+        modelFacing: {
+          mode: 'directory',
+          directory: {
+            catalogDigest: 'a'.repeat(64), policyDigest: '0'.repeat(64), digest: '1'.repeat(64),
+            entries: [{ id: 'builtin.files.read' }], totalEntries: 1, truncated: false,
+            renderedPromptDirectory: '目录', renderedByteLength: 6,
+          },
+        },
         capabilityCatalogDigest: 'a'.repeat(64),
         capabilityBindingDigest: 'b'.repeat(64),
         permissionSnapshotDigest: 'c'.repeat(64),
@@ -47,6 +60,10 @@ describe('SqliteAgentRuntimeRunRepository', () => {
       updatedAt: 100
     })
     await repository.bindProviderRun('agent-run-1', 'provider-run-1', 110)
+    expect(new SqliteAgentRuntimeRunRepository(database).getById('agent-run-1')?.snapshot.toolPolicy)
+      .toEqual(snapshot.toolPolicy)
+    expect(new SqliteAgentRuntimeRunRepository(database).getById('agent-run-1')?.snapshot.modelFacing)
+      .toEqual(snapshot.modelFacing)
 
     await expect(
       repository.getByProviderRunId('provider-run-1')

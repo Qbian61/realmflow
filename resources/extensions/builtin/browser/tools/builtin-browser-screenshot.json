@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.browser.screenshot",
+  "version": "1.0.0",
+  "name": "Screenshot browser",
+  "description": "Save a PNG in authorized roots without overwrite; mask sensitive fields and embedded frames. Also writes a .realmflow-browser.json provenance sidecar.",
+  "tags": [
+    "browser"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "browser.screenshot",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sessionId": {
+        "type": "string",
+        "pattern": "^browser-[A-Za-z0-9-]+$",
+        "maxLength": 120
+      },
+      "path": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 16000
+      },
+      "expectedAbsent": {
+        "type": "boolean",
+        "const": true
+      }
+    },
+    "required": [
+      "sessionId",
+      "path",
+      "expectedAbsent"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "computer.observe",
+    "filesystem.write"
+  ],
+  "effects": [
+    "local_data.read",
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "required",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "screenshot browser"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

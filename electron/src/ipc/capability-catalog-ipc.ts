@@ -62,7 +62,8 @@ export function registerCapabilityCatalogIpc({
           definitions.map((definition) => [
             `${definition.id}@${definition.version}`,
             localizeCapability(
-              definition.id,
+              definition.runtime.kind === 'tool'
+                ? definition.runtime.definitionId : definition.id,
               {
                 name: definition.name,
                 description: definition.description

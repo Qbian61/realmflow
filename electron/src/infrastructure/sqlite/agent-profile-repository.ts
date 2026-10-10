@@ -14,6 +14,7 @@ export type AgentProfilePublication = {
   scenarioId: AgentRunScenarioId
   workspaceId?: string
   profile: AgentProfile
+  expectedDigest?: string | null
 }
 
 export interface AgentProfileLayerRepository {
@@ -30,6 +31,21 @@ export class SqliteAgentProfileRepository
 
   async publish(value: AgentProfilePublication): Promise<boolean> {
     assertPublication(value)
+    return this.database.transaction(() => this.publishInTransaction(value))()
+  }
+
+  private publishInTransaction(value: AgentProfilePublication): boolean {
+    if (value.expectedDigest !== undefined) {
+      const current = this.database.prepare(
+        `SELECT profile_digest FROM agent_profile_publications
+         WHERE scenario_id = ? AND source = ? AND workspace_id IS ?
+         ORDER BY published_at DESC, profile_version DESC, profile_id LIMIT 1`,
+      ).get(value.scenarioId, value.profile.source, value.workspaceId ?? null) as
+        { profile_digest: string } | undefined
+      if ((current?.profile_digest ?? null) !== value.expectedDigest) {
+        throw new Error('Agent Profile revision conflict')
+      }
+    }
     const existing = this.database
       .prepare(
         `SELECT source, scenario_id, workspace_id, profile_digest, profile_json

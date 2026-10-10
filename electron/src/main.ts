@@ -88,6 +88,22 @@ import { SqliteKnowledgeSearchStore } from './infrastructure/sqlite/knowledge-se
 import { SqliteKnowledgeRefreshRepository } from './infrastructure/sqlite/knowledge-refresh-repository'
 import { SqliteIndexMaintenanceRepository } from './infrastructure/sqlite/index-maintenance-repository'
 import { SqliteAgentRuntimeRunRepository } from './infrastructure/sqlite/agent-runtime-run-repository'
+import { SqliteAgentRuntimeStateRepository } from './infrastructure/sqlite/agent-runtime-state-repository'
+import { SqliteAgentRuntimeBudgetRepository } from './infrastructure/sqlite/agent-runtime-budget-repository'
+import { SqliteAgentDelegationRepository } from './infrastructure/sqlite/agent-delegation-repository'
+import { RuntimeDelegationService } from './application/agent-runtime/runtime-delegation-service'
+import { ReconcileRuntimeDelegations } from './application/agent-runtime/runtime-delegation-recovery'
+import { RuntimeRunResumer } from './application/agent-runtime/runtime-run-resumer'
+import { RuntimeSensitiveControls } from './application/agent-runtime/runtime-sensitive-controls'
+import {
+  GatewayRuntimeService,
+  type GatewayRuntimeHealth
+} from './application/agent-runtime/gateway-runtime-service'
+import { AutomationRuntimeService } from './application/agent-runtime/automation-runtime-service'
+import { MediaProviderRuntime } from './application/media/media-provider-runtime'
+import { RuntimeStateService } from './application/agent-runtime/runtime-state-service'
+import { AgentRuntimeOrchestrator } from './application/agent-runtime/agent-runtime-orchestrator'
+import { createRuntimeToolBindings } from './application/agent-runtime/runtime-tool-bindings'
 import { SqliteAgentRunCheckpointRepository } from './infrastructure/sqlite/agent-run-checkpoint-repository'
 import { SqliteRuntimeGovernanceRepository } from './infrastructure/sqlite/runtime-governance-repository'
 import { SqliteAssistantRunEventStore } from './infrastructure/sqlite/assistant-run-event-store'
@@ -170,6 +186,13 @@ import {
 import { BuiltinCatalogLoader } from './application/tools/builtin-catalog-loader'
 import { BuiltinCatalogSyncService } from './application/tools/builtin-catalog-sync-service'
 import { ToolCatalogService } from './application/tools/tool-catalog-service'
+import {
+  PluginContributionRegistry,
+  PluginHookDispatcher,
+} from './application/plugins/plugin-contribution-registry'
+import { normalizeToolDefinitionReference } from '../../domain/tool-definition'
+import type { JsonObject } from '../../domain/tool-protocol-validation'
+import { ToolPolicyConfigurationService } from './application/tools/tool-policy-configuration-service'
 import { RuntimeFilteredToolProjectionStore } from './application/tools/runtime-filtered-tool-projection-store'
 import { SkillInstructionReader } from './application/tools/skill-instruction-reader'
 import { ExtensionCatalogImportService } from './application/tools/extension-catalog-import-service'
@@ -183,6 +206,14 @@ import { MacOsNativeComputerHost } from './application/tools/macos-native-comput
 import { ElectronMacOsComputerDriver } from './application/tools/electron-macos-computer-driver'
 import { NodeLocalProcessService } from './application/tools/node-local-process-service'
 import { createBuiltinToolAdapter } from './application/tools/builtin-tool-runtime'
+import { WebProviderConfigurationService } from './application/web/web-provider-configuration-service'
+import { SqliteWebProviderRepository } from './infrastructure/sqlite/web-provider-repository'
+import { BrowserRuntimeService } from './application/browser/browser-runtime-service'
+import { ElectronBrowserDriver } from './application/browser/electron-browser-driver'
+import { SqliteBrowserSessionRepository } from './infrastructure/sqlite/browser-session-repository'
+import { SqliteSkillRegistryRepository } from './infrastructure/sqlite/skill-registry-repository'
+import { SkillRegistryService } from './application/skills/skill-registry-service'
+import { SkillSourceScanner } from './application/skills/skill-source-scanner'
 import { SandboxToolAdapter } from './application/tools/sandbox-tool-adapter'
 import { McpToolAdapter } from './application/tools/mcp-tool-adapter'
 import { ComputerToolAdapter } from './application/tools/computer-tool-adapter'
@@ -194,6 +225,7 @@ import {
   ToolExecutionApplicationService,
   type ToolExecutionCommand,
 } from './application/tools/tool-execution-application-service'
+import { RunToolPolicyResolver } from './application/tools/run-tool-policy-resolver'
 import { ToolPermissionDecisionService } from './application/tools/tool-permission-decision-service'
 import { EncryptedPendingToolInvocationCheckpointStore } from './application/tools/pending-tool-invocation-checkpoint-store'
 import {
@@ -336,6 +368,7 @@ import {
   toAssistantRunEvent,
 } from './application/conversation/assistant-turn-projector'
 import { ConversationGeneratedArtifactService } from './application/conversation/conversation-generated-artifacts'
+import { SqliteGeneratedArtifactStateRepository } from './infrastructure/sqlite/generated-artifact-state-repository'
 import type { AiRunEvent } from '../../domain/ai-run'
 import { CreateGeneralConversationUseCase } from './application/conversation/create-general-conversation'
 import { CreateFolderConversationUseCase } from './application/conversation/create-folder-conversation'
@@ -389,6 +422,7 @@ let database: RealmFlowDatabase | null = null
 let scheduleScheduler: CronScheduleScheduler | null = null
 let toolAdapters: ToolAdapterRegistry | null = null
 let localToolProcesses: NodeLocalProcessService | null = null
+let browserRuntime: BrowserRuntimeService | null = null
 let workspaceCleanupTimer: ReturnType<typeof setTimeout> | undefined
 let workspaceCleanupRun: Promise<void> | undefined
 
@@ -640,14 +674,63 @@ app
       projections: persistedToolProjections,
       projectionRunner: toolProjectionRunner,
     }).synchronize()
+    const legacySkillInstructions = new SkillInstructionReader({
+      builtins: builtinCatalogPackages,
+      local: extensionPackages,
+    })
+    const skillRegistry = new SkillRegistryService({
+      store: new SqliteSkillRegistryRepository(database),
+      scanner: new SkillSourceScanner(),
+      resolveWorkspaceRootId: async (workspaceId) =>
+        (await repositories.workspaces.get(workspaceId))?.workRootId,
+    })
+    skillRegistry.synchronizeBuiltins(
+      await Promise.all(
+        builtinCatalogPackages.map(async (packageItem) => ({
+          packageId: packageItem.manifest.packageId,
+          displayName: packageItem.manifest.name,
+          skills: await Promise.all(
+            packageItem.skills.map(async (definition) => ({
+              definition,
+              instructions:
+                await legacySkillInstructions.readInstructions(definition),
+            })),
+          ),
+        })),
+      ),
+    )
+    const configuredSkillSync = await skillRegistry.synchronizeConfiguredSources({
+      workspaceRoots: (await repositories.workRoots.list()).map((root) => ({
+        id: root.id,
+        label: root.id,
+        path: root.path,
+      })),
+      userGlobalRoot: join(homedir(), '.realmflow', 'skills'),
+      pluginRoots: [],
+      generatedRoots: [],
+    })
+    for (const error of configuredSkillSync.errors) {
+      console.warn(
+        `[Skill Registry] ${error.sourceId}:${error.relativePath}:${error.code}`,
+      )
+    }
+    const pluginContributions = new PluginContributionRegistry()
+    const mediaRuntime = new MediaProviderRuntime({
+      registry: pluginContributions,
+      adapters: [],
+      resolveCredentialHandle: async () => undefined,
+    })
     const toolCatalog = new ToolCatalogService({
       events: toolEvents,
       projections: toolProjections,
       projectionRunner: toolProjectionRunner,
+      skillRegistry,
+      mediaRuntime,
     })
     const skillInstructions = new SkillInstructionReader({
       builtins: builtinCatalogPackages,
       local: extensionPackages,
+      registry: skillRegistry,
     })
     const extensionCatalogImporter = new ExtensionCatalogImportService({
       packages: extensionPackages,
@@ -655,6 +738,7 @@ app
       projections: toolProjections,
       projectionRunner: toolProjectionRunner,
       unitOfWork: repositories.unitOfWork,
+      skillRegistry,
     })
     const sqliteCoordinator = getSqliteConnectionCoordinator(database)
     const vectorIndexes = coordinateRepository(
@@ -1004,6 +1088,13 @@ app
         allowCreate: (await repositories.modelCredentials.list()).length === 0,
       },
     )
+    const webProviderRepository = new SqliteWebProviderRepository(database)
+    const webProviders = new WebProviderConfigurationService({
+      store: webProviderRepository,
+      vault: await CredentialVault.open(join(userDataPath, 'web-credentials.key'), {
+        allowCreate: !webProviderRepository.get().hasBraveCredential,
+      }),
+    })
     const mcpServerRepository = new SqliteMcpServerRepository(database)
     let mcpServers!: McpServerService
     const mcpClients = new SdkMcpClientFactory({
@@ -1124,7 +1215,8 @@ app
       ) => requireToolRuntime().prepare(command),
       execute: (
         command: Parameters<ToolExecutionApplicationService['execute']>[0],
-      ) => requireToolRuntime().execute(command),
+        signal?: AbortSignal,
+      ) => requireToolRuntime().execute(command, signal),
       cancelByParent: (parentExecutionId: string) =>
         requireToolRuntime().cancelByParent(parentExecutionId),
       list: (query: Parameters<ToolExecutionApplicationService['list']>[0]) =>
@@ -1854,6 +1946,43 @@ app
       knowledgeSearch,
     )
     const agentRuntimeRuns = new SqliteAgentRuntimeRunRepository(database)
+    const agentRuntimeState = new RuntimeStateService(new SqliteAgentRuntimeStateRepository(database))
+    const agentRuntimeBudgets = new SqliteAgentRuntimeBudgetRepository(database)
+    const agentDelegationStore = new SqliteAgentDelegationRepository(database)
+    const agentDelegations: RuntimeDelegationService = new RuntimeDelegationService({
+      store: agentDelegationStore,
+      runTask: (record, signal) => runGateway.runDelegated(record, signal),
+      finalizeArtifacts: (record, status) => conversationGeneratedArtifacts.finalizeRun({
+        runId: record.runId, conversationId: record.sessionId, assistantMessageId: `${record.runId}:assistant`, status
+      }),
+    })
+    const agentOrchestrator = new AgentRuntimeOrchestrator({
+      runs: {
+        get: async (id) => agentRuntimeRuns.getById(id),
+        listByRoot: (id) => agentRuntimeRuns.listByRootRunId(id),
+      },
+      sessions: repositories.chatSessions,
+      state: agentRuntimeState,
+      delegations: agentDelegations,
+    })
+    const runtimeSensitiveControls = new RuntimeSensitiveControls({
+      catalog: capabilityCatalog,
+      credentials: {
+        resolveHandle: async (name, service) => {
+          if (service === 'model') {
+            const providerId = name.startsWith('model:') ? name.slice('model:'.length) : name
+            return await repositories.modelCredentials.getByProvider(providerId)
+              ? `model:${providerId}` : undefined
+          }
+          if (service === 'web') {
+            const configuration = webProviderRepository.get()
+            return name === 'brave' || name === configuration.braveCredentialHandle
+              ? configuration.braveCredentialHandle : undefined
+          }
+          return undefined
+        },
+      },
+    })
     const agentRunCheckpoints =
       new SqliteAgentRunCheckpointRepository(database)
     const assistantTimeline = new SqliteAssistantRunEventStore(
@@ -1921,7 +2050,7 @@ app
         sidecar: sidecar.getClient(),
       }),
     })
-    const runGateway = new AgentToolLoopCoordinator({
+    const runGateway: AgentToolLoopCoordinator = new AgentToolLoopCoordinator({
       gateway: {
         createRun: gatewayRuns.createRun,
         resumeRun: gatewayRuns.resumeRun,
@@ -1931,6 +2060,8 @@ app
         releaseRun: (runId) => networkGateway.releaseRun(runId),
         submitToolResult: (runId, result) =>
           sidecar.getClient().submitToolResult(runId, result),
+        acknowledgeTurn: (runId, input) =>
+          sidecar.getClient().acknowledgeTurn(runId, input),
       },
       catalog: toolCatalog,
       capabilities: capabilityCatalog,
@@ -1944,8 +2075,26 @@ app
       skills: skillInstructions,
       skillRuntime,
       profiles: agentProfileResolver,
+      resolveSandbox: async () => {
+        const capabilities = await sidecar.getClient().getSandboxCapabilities()
+          .catch(() => ({ processIsolation: 'unavailable' as const }))
+        return {
+          available: capabilities.processIsolation !== 'unavailable',
+          networkAllowed: true,
+        }
+      },
       runtimeRuns: agentRuntimeRuns,
       checkpoints: agentRunCheckpoints,
+      projectionCursor: { get: async (id) => (await assistantTimeline.getSnapshot(id))?.lastSequence ?? 0 },
+      budgets: agentRuntimeBudgets,
+      delegations: agentDelegations,
+      turnBoundary: {
+        pending: (runId) => agentRuntimeState.read(runId).instructions.filter((item) => item.status === 'queued'),
+        commit: async (checkpoint, ids) => agentRunCheckpoints.saveWithInstructions(checkpoint, ids),
+      },
+      onTerminal: async (runId) => {
+        await browserRuntime?.closeRunSessions(runId)
+      },
     })
     liveModelSkillRuntime = new ModelSkillExecutionRuntime({
       models: modelService,
@@ -1953,7 +2102,7 @@ app
     })
     const followUpSuggestions = new SqliteFollowUpSuggestionRepository(database)
     const conversationGeneratedArtifacts =
-      new ConversationGeneratedArtifactService()
+      new ConversationGeneratedArtifactService(new SqliteGeneratedArtifactStateRepository(database))
     const followUpSuggestionCoordinator = new FollowUpSuggestionCoordinator({
       repository: followUpSuggestions,
       generator: new RealModelFollowUpSuggestionGenerator({
@@ -3116,7 +3265,15 @@ app
     })
     const localProcesses = new NodeLocalProcessService()
     localToolProcesses = localProcesses
+    webWorkbench = new WebWorkbenchManager(() => mainWindow)
+    browserRuntime = new BrowserRuntimeService(
+      new SqliteBrowserSessionRepository(database),
+      new ElectronBrowserDriver(webWorkbench)
+    )
+    browserRuntime.recover()
     const builtinToolAdapter = createBuiltinToolAdapter({
+      browser: browserRuntime,
+      web: webProviders,
       resolveSessionPath: (family, sessionId) => {
         if (family === 'word') return wordSessions.getCanonicalPath(sessionId)
         if (family === 'spreadsheet') {
@@ -3400,6 +3557,98 @@ app
           sidecar.getClient().submitToolResult(runId, result),
       },
     })
+    const runToolPolicies = new RunToolPolicyResolver({
+      active: (runId) => runGateway.getToolPolicy(runId),
+      stored: async (runId) =>
+        agentRuntimeRuns.getById(runId) ?? await agentRuntimeRuns.getByProviderRunId(runId),
+    })
+    const gatewayRuntime = new GatewayRuntimeService({
+      health: async () => {
+        const probe = async (
+          kind: 'builtin' | 'sandbox' | 'mcp' | 'computer' | 'connector'
+        ): Promise<'ready' | 'degraded' | 'unavailable'> => {
+          try {
+            return (await toolAdapters!.health(kind)).status
+          } catch {
+            return 'unavailable'
+          }
+        }
+        let sidecarStatus: GatewayRuntimeHealth['sidecar'] = 'unavailable'
+        try {
+          await sidecar.getClient().getHealth()
+          sidecarStatus = 'ready'
+        } catch {
+          sidecarStatus = 'unavailable'
+        }
+        const [builtin, sandbox, mcp, computer, connector] =
+          await Promise.all([
+            probe('builtin'),
+            probe('sandbox'),
+            probe('mcp'),
+            probe('computer'),
+            probe('connector'),
+          ])
+        return {
+          sidecar: sidecarStatus,
+          adapters: { builtin, sandbox, mcp, computer, connector },
+        }
+      },
+      configuration: async () => {
+        const [roots, web] = await Promise.all([
+          repositories.workRoots.list(),
+          Promise.resolve(webProviders.get()),
+        ])
+        return {
+          application: {
+            version: app.getVersion(),
+            schemaVersion: REALMFLOW_SCHEMA_VERSION,
+          },
+          workspace: {
+            configured: roots.length > 0,
+            count: roots.length,
+          },
+          web: {
+            searchProvider: web.searchProvider,
+            browserContinuation: web.browserContinuation,
+            endpointConfigured: Boolean(web.searxngBaseUrl),
+            credentialConfigured: web.hasBraveCredential,
+          },
+        }
+      },
+      checkForUpdates: (input) => appSupport.checkForUpdates(input),
+    })
+    const automationRuntime = new AutomationRuntimeService({
+      schedules,
+      scheduler: {
+        status: () => scheduleScheduler?.status() ?? { running: false },
+      },
+      background: {
+        status: async () => {
+          const [jobs, runs] = await Promise.all([
+            systemStatusStore.count(),
+            agentRuntimeRuns.listUnfinished(),
+          ])
+          return {
+            running:
+              jobs.running +
+              runs.filter(({ status }) =>
+                ['preparing', 'running', 'retrying'].includes(status),
+              ).length,
+            pending:
+              jobs.pending +
+              runs.filter(({ status }) =>
+                [
+                  'waiting_permission',
+                  'waiting_input',
+                  'paused',
+                  'recovery_blocked',
+                ].includes(status),
+              ).length,
+          }
+        },
+      },
+    })
+    let pluginHooks: PluginHookDispatcher | undefined
     liveToolRuntime = new ToolExecutionApplicationService({
       events: toolEvents,
       projections: toolProjections,
@@ -3417,6 +3666,33 @@ app
       },
       aiRuns: aiRunToolResults,
       generatedArtifacts: conversationGeneratedArtifacts,
+      pluginHooks: {
+        dispatch: (event, context) =>
+          pluginHooks?.dispatch(event, context) ?? Promise.resolve([]),
+      },
+      assistantRuntime: createRuntimeToolBindings({
+        orchestrator: agentOrchestrator,
+        resolveRun: async (id) => agentRuntimeRuns.getById(id) ?? await agentRuntimeRuns.getByProviderRunId(id),
+        sensitive: {
+          resolveCredential: (input) => runtimeSensitiveControls.secret(input),
+          runCapabilityCommand: (input, context) =>
+            runtimeSensitiveControls.capability(input, context),
+          runGatewayCommand: (input, context) =>
+            gatewayRuntime.execute(input, context),
+          runAutomationCommand: (input, context) =>
+            automationRuntime.execute(input, context),
+          runMediaCommand: async (input, _context, signal) => {
+            const command = parseMediaRuntimeCommand(input)
+            return mediaRuntime.execute({
+              catalog: await toolProjections.getCatalog(),
+              ...command,
+              signal: signal ?? new AbortController().signal,
+            }) as unknown as JsonObject
+          },
+        },
+      }),
+      mediaRuntime,
+      resolveRunPolicy: (command) => runToolPolicies.resolve(command),
       resolveScopeRoots: (command) =>
         resolveToolScopeRoots(command, executionScopeDependencies),
       resolveBoundScopes: (command) =>
@@ -3439,6 +3715,11 @@ app
           )
       },
     })
+    pluginHooks = new PluginHookDispatcher({
+      catalog: () => toolCatalog.list(),
+      registry: pluginContributions,
+      toolBoundary: liveToolRuntime,
+    })
     await Promise.all([
       toolAdapters.health('builtin'),
       toolAdapters.health('sandbox'),
@@ -3449,6 +3730,14 @@ app
     await liveToolRuntime.restorePendingPermissions()
     while ((await toolOutboxDispatcher.dispatchBatch()).claimed > 0) {
       // Drain persisted Tool dispatches before accepting new work.
+    }
+    await new ReconcileRuntimeDelegations({
+      store: agentDelegationStore, runs: agentRuntimeRuns, checkpoints: agentRunCheckpoints,
+    }).execute()
+    await assistantTimeline.reconcileTerminalConversations(conversationGeneratedArtifacts)
+    agentDelegations.restore()
+    for (const run of await agentRuntimeRuns.listUnfinished()) {
+      if (run.status === 'waiting_input' || run.status === 'paused') agentDelegations.recoveryBlocked(run.id)
     }
     await liveToolRuntime.recoverInterrupted()
     await networkGateway.start()
@@ -3488,39 +3777,45 @@ app
         models: modelService,
       })
     const pendingCallReconciler = new PendingCallReconciler(toolProjections)
-    const resumeRecoveredRun = async (
-      run: AgentRuntimeRun,
-      checkpoint: RunCheckpoint,
-    ): Promise<void> => {
-      const model = run.snapshot.modelProfileId
-        ? await modelService.resolveExecution(run.snapshot.modelProfileId)
-        : undefined
-      await runGateway.attachRecoveredRun(run, checkpoint, model)
-      setTimeout(() => {
-        void (async () => {
-          let projection = await assistantTimeline.getSnapshot(run.id)
-          try {
-            for await (const event of runGateway.streamEvents(
-              run.id,
-              new AbortController().signal,
-            )) {
-              if (!projection) continue
-              const next = projectConversationRunEvent(projection, event)
-              const timelineEvent = toAssistantRunEvent(event)
-              if (next && timelineEvent) {
-                await assistantTimeline.appendAndProject(timelineEvent, next)
-                projection = next
-              }
-            }
-          } catch {
-            console.error('Recovered Agent Run stream failed', {
-              runId: run.id,
-              errorCode: 'recovery_stream_failed',
-            })
-          }
-        })()
-      }, 0)
-    }
+    const runtimeRunResumer = new RuntimeRunResumer({
+      store: agentDelegationStore,
+      delegations: agentDelegations,
+      attach: async (run, checkpoint) => {
+        const model = run.snapshot.modelProfileId
+          ? await modelService.resolveExecution(run.snapshot.modelProfileId) : undefined
+        await runGateway.attachRecoveredRun(run, checkpoint, model)
+      },
+      events: (runId, signal) => runGateway.streamEvents(runId, signal),
+      cancel: (runId) => runGateway.cancelRun(runId),
+      project: async (event) => {
+        const projection = await assistantTimeline.getSnapshot(event.runId)
+        if (!projection) return
+        const next = projectConversationRunEvent(projection, event)
+        const timelineEvent = toAssistantRunEvent(event)
+        if (!next || !timelineEvent) return
+        if (agentDelegationStore.get(event.runId)) {
+          await assistantTimeline.appendAndProject(timelineEvent, next)
+        } else {
+          const sessionId = agentRuntimeRuns.getById(event.runId)?.snapshot.conversationId
+          const status = event.type === 'run.completed' ? 'completed'
+            : event.type === 'run.failed' ? 'failed' : event.type === 'run.cancelled' ? 'cancelled' : undefined
+          const source = status ? await conversationGeneratedArtifacts.finalizeRun({
+            runId: event.runId, conversationId: sessionId, assistantMessageId: next.assistantMessageId, status
+          }) : undefined
+          await assistantTimeline.appendRecoveredAndProject(timelineEvent, next, source)
+        }
+        const sessionId = agentRuntimeRuns.getById(event.runId)?.snapshot.conversationId
+        const conversation = sessionId ? await repositories.chatSessions.get(sessionId) : undefined
+        if (conversation && mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send(IPC_EVENT_CHANNELS.conversationEvent, { conversation })
+        }
+      },
+      onError: (runId) => console.error('Recovered Agent Run stream failed', {
+        runId, errorCode: 'recovery_stream_failed',
+      }),
+    })
+    const resumeRecoveredRun = (run: AgentRuntimeRun, checkpoint: RunCheckpoint) =>
+      runtimeRunResumer.resume(run, checkpoint)
     const recoveryActions = new AgentRunRecoveryActions({
       runs: agentRuntimeRuns,
       checkpoints: agentRunCheckpoints,
@@ -3539,8 +3834,9 @@ app
       },
       cancelProvider: (providerRunId) =>
         gatewayRuns.cancelRun(providerRunId),
+      cancelDelegations: (runId) => agentDelegations.cancel(runId),
     })
-    await new RecoverAgentRuntimeRunsUseCase({
+    const recoverRuntimeRuns = new RecoverAgentRuntimeRunsUseCase({
       runs: agentRuntimeRuns,
       checkpoints: agentRunCheckpoints,
       validateConfiguration: (run, checkpoint) =>
@@ -3549,6 +3845,7 @@ app
         pendingCallReconciler.reconcile(checkpoint.pendingCalls),
       resume: resumeRecoveredRun,
       projectRecoveryEvent: async (run, recoveryEvent) => {
+        if (recoveryEvent.type === 'run.recovery_blocked') agentDelegations.recoveryBlocked(run.id)
         const projection = await assistantTimeline.getSnapshot(run.id)
         if (!projection) return
         const sequence = projection.lastSequence + 1
@@ -3563,10 +3860,19 @@ app
         const next = projectConversationRunEvent(projection, event)
         const timelineEvent = toAssistantRunEvent(event)
         if (next && timelineEvent) {
-          await assistantTimeline.appendAndProject(timelineEvent, next)
+          if (agentDelegationStore.get(event.runId)) {
+            await assistantTimeline.appendAndProject(timelineEvent, next)
+          } else {
+            await assistantTimeline.appendRecoveredAndProject(timelineEvent, next)
+          }
+          const sessionId = run.snapshot.conversationId
+          const conversation = sessionId ? await repositories.chatSessions.get(sessionId) : undefined
+          if (conversation && mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send(IPC_EVENT_CHANNELS.conversationEvent, { conversation })
+          }
         }
       },
-    }).execute()
+    })
     await new RecoverInterruptedNodeRunsUseCase({
       executions: repositories.workflowExecutions,
       workflows: repositories.requirementWorkflows,
@@ -3592,9 +3898,16 @@ app
       rendererUrl: process.env.ELECTRON_RENDERER_URL,
       rendererFile: join(moduleDirectory, '../renderer/index.html'),
     })
-    webWorkbench = new WebWorkbenchManager(() => mainWindow)
     registerMainIpc({
       sidecar,
+      webProviders,
+      agentRuntime: {
+        orchestrator: agentOrchestrator,
+        resolveRunId: async (id) => (agentRuntimeRuns.getById(id) ??
+          await agentRuntimeRuns.getByProviderRunId(id))?.id,
+        resolveRun: async (id) => agentRuntimeRuns.getById(id),
+        cancel: (id) => runGateway.cancelRun(id),
+      },
       aiRuns: {
         executeNode: executeWorkflowNode,
         executeStage: executeWorkflowStage,
@@ -3609,9 +3922,43 @@ app
       business,
       toolCatalog: {
         catalog: toolCatalog,
+        policy: new ToolPolicyConfigurationService({
+          profiles: agentProfiles,
+          catalog: toolCatalog,
+          workspaceExists: async (id) => Boolean(await repositories.workspaces.get(id)),
+          sandbox: async () => {
+            const capabilities = await sidecar.getClient().getSandboxCapabilities()
+              .catch(() => ({ processIsolation: 'unavailable' as const }))
+            return { available: capabilities.processIsolation !== 'unavailable', networkAllowed: true }
+          },
+        }),
         importer: extensionCatalogImporter,
         mcpServers,
         onCatalogChanged: synchronizeLegacyCapabilities,
+      },
+      skillRegistry: {
+        service: skillRegistry,
+        synchronize: async () => {
+          const report = await skillRegistry.synchronizeConfiguredSources({
+            workspaceRoots: (await repositories.workRoots.list()).map((root) => ({
+              id: root.id,
+              label: root.id,
+              path: root.path,
+            })),
+            userGlobalRoot: join(homedir(), '.realmflow', 'skills'),
+            pluginRoots: [],
+            generatedRoots: [],
+          })
+          for (const error of report.errors) {
+            console.warn(
+              `[Skill Registry] ${error.sourceId}:${error.relativePath}:${error.code}`,
+            )
+          }
+          return {
+            published: report.published,
+            errorCount: report.errors.length,
+          }
+        },
       },
       toolPermissions: {
         permissions: toolProjections,
@@ -3654,6 +4001,10 @@ app
       createArtifactProtocolHandler(workspace),
     )
     createWindow()
+    // Recovery may wait for a delegated execution slot; keep the window and IPC responsive.
+    void recoverRuntimeRuns.execute().catch(() => {
+      console.error('Agent Runtime recovery failed', { errorCode: 'runtime_recovery_failed' })
+    })
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -3717,6 +4068,36 @@ function requireToolString(args: Record<string, unknown>, key: string): string {
     throw new Error(`Tool argument is invalid: ${key}`)
   }
   return value
+}
+
+function parseMediaRuntimeCommand(input: JsonObject): {
+  definition: ReturnType<typeof normalizeToolDefinitionReference>
+  input: JsonObject
+  scopeRoots: string[]
+} {
+  const definition = normalizeToolDefinitionReference(input.definition)
+  const mediaInput = input.input
+  const scopeRoots = input.scopeRoots
+  if (
+    !mediaInput ||
+    typeof mediaInput !== 'object' ||
+    Array.isArray(mediaInput) ||
+    !Array.isArray(scopeRoots) ||
+    scopeRoots.length === 0 ||
+    scopeRoots.some(
+      (root) =>
+        typeof root !== 'string' ||
+        !root.trim() ||
+        root.includes('\0')
+    )
+  ) {
+    throw new Error('media_command_invalid')
+  }
+  return {
+    definition,
+    input: structuredClone(mediaInput) as JsonObject,
+    scopeRoots: [...scopeRoots] as string[],
+  }
 }
 
 function optionalToolString(
@@ -4018,6 +4399,12 @@ async function shutdownMainRuntime(): Promise<void> {
     firstError ??= error
   }
   toolAdapters = null
+  try {
+    await browserRuntime?.shutdown()
+  } catch (error) {
+    firstError ??= error
+  }
+  browserRuntime = null
   try {
     await localToolProcesses?.close()
   } catch (error) {

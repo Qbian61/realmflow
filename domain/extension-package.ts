@@ -1,4 +1,8 @@
 import { createHash } from 'node:crypto'
+import {
+  normalizePluginPackageManifest,
+  type PluginPackageManifest
+} from './plugin-package'
 
 export type ExtensionPackagePlatform = 'darwin' | 'win32' | 'linux'
 
@@ -6,7 +10,7 @@ export type ExtensionPackageDefinitionEntry = {
   path: string
 }
 
-export type ExtensionPackageManifest = {
+export type LegacyExtensionPackageManifest = {
   schemaVersion: 1
   packageId: string
   version: string
@@ -25,6 +29,10 @@ export type ExtensionPackageManifest = {
   skills: ExtensionPackageDefinitionEntry[]
   assets: string[]
 }
+
+export type ExtensionPackageManifest =
+  | LegacyExtensionPackageManifest
+  | PluginPackageManifest
 
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/
 const SEMVER_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
@@ -50,6 +58,9 @@ export function normalizeExtensionPackageManifest(
   value: unknown
 ): ExtensionPackageManifest {
   const manifest = requireObject(value, 'manifest')
+  if (manifest.schemaVersion === 2) {
+    return normalizePluginPackageManifest(value)
+  }
   requireExactKeys(manifest, MANIFEST_KEYS, 'manifest')
   if (manifest.schemaVersion !== 1) {
     throw new Error('Extension package schema version is invalid')
@@ -104,7 +115,9 @@ export function calculateExtensionPackageDigest(
   return hash.digest('hex')
 }
 
-function normalizePublisher(value: unknown): ExtensionPackageManifest['publisher'] {
+function normalizePublisher(
+  value: unknown
+): LegacyExtensionPackageManifest['publisher'] {
   const publisher = requireObject(value, 'publisher')
   requireExactKeys(
     publisher,
@@ -124,7 +137,7 @@ function normalizePublisher(value: unknown): ExtensionPackageManifest['publisher
 
 function normalizeCompatibility(
   value: unknown
-): ExtensionPackageManifest['compatibility'] {
+): LegacyExtensionPackageManifest['compatibility'] {
   const compatibility = requireObject(value, 'compatibility')
   requireExactKeys(
     compatibility,

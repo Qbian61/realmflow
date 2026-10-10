@@ -19,6 +19,7 @@ export type AiRunStatus = (typeof AI_RUN_STATUSES)[number]
 
 export const AI_RUN_EVENT_TYPES = [
   'run.started',
+  'run.turn_ready',
   'run.progress',
   'answer.delta',
   'execution.summary.delta',

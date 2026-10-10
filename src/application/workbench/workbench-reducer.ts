@@ -22,6 +22,7 @@ export type WebTab = {
   type: 'web'
   label: string
   page: WebPageState
+  managed?: 'agent'
 }
 
 export type TerminalTab = {
@@ -56,6 +57,11 @@ export type WorkbenchAction =
   | { type: 'tab-selected'; tabId: string }
   | { type: 'tab-closed'; tabId: string }
   | { type: 'web-state-changed'; page: WebPageState }
+  | {
+      type: 'agent-browser-opened'
+      page: WebPageState & { managed: 'agent' }
+    }
+  | { type: 'agent-browser-closed'; sessionId: string }
   | { type: 'terminal-event-received'; event: TerminalEvent }
 
 export function createWorkbenchState(): WorkbenchState {
@@ -105,6 +111,33 @@ export function workbenchReducer(
             : tab
         )
       }
+    case 'agent-browser-opened': {
+      const tab: WebTab = {
+        id: action.page.id,
+        type: 'web',
+        label: action.page.title || action.page.url,
+        page: action.page,
+        managed: 'agent'
+      }
+      const exists = state.tabs.some(({ id }) => id === tab.id)
+      return {
+        tabs: exists
+          ? state.tabs.map((candidate) =>
+              candidate.id === tab.id ? tab : candidate)
+          : [...state.tabs, tab],
+        activeTabId: tab.id
+      }
+    }
+    case 'agent-browser-closed': {
+      const tabs = state.tabs.filter(({ id }) => id !== action.sessionId)
+      return {
+        tabs,
+        activeTabId:
+          state.activeTabId === action.sessionId
+            ? tabs.at(-1)?.id
+            : state.activeTabId
+      }
+    }
     case 'terminal-event-received':
       return {
         ...state,

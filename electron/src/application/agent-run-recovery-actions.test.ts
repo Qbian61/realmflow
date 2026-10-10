@@ -12,6 +12,22 @@ import type {
 import { AgentRunRecoveryActions } from './agent-run-recovery-actions'
 
 describe('AgentRunRecoveryActions', () => {
+  it('cancels the delegation tree even when no provider attempt is attached', async () => {
+    const harness = createHarness()
+    delete harness.run.providerRunId
+    await harness.actions.execute({ runId: harness.run.id, action: 'cancel' })
+    expect(harness.cancelDelegations).toHaveBeenCalledWith(harness.run.id)
+    expect(harness.cancelProvider).not.toHaveBeenCalled()
+  })
+
+  it('activates explicit recovery after the durable running transition', async () => {
+    const harness = createHarness()
+    const start = vi.fn(() => expect(harness.transition).toHaveBeenCalledWith(harness.run.id, 'running', 500))
+    harness.resume.mockResolvedValue({ start })
+    await harness.actions.execute({ runId: harness.run.id, action: 'resume' })
+    expect(start).toHaveBeenCalledOnce()
+  })
+
   it('resumes only after current configuration and pending calls are safe', async () => {
     const harness = createHarness()
     harness.reconcile.mockResolvedValue([
@@ -135,6 +151,7 @@ function createHarness() {
   const resume = vi.fn().mockResolvedValue(undefined)
   const branch = vi.fn().mockResolvedValue({ runId: 'run-branch' })
   const cancelProvider = vi.fn().mockResolvedValue(undefined)
+  const cancelDelegations = vi.fn()
   const validateConfiguration = vi.fn().mockResolvedValue({
     profileAvailable: true,
     capabilitiesAvailable: true,
@@ -150,6 +167,7 @@ function createHarness() {
     resume,
     branch,
     cancelProvider,
+    cancelDelegations,
     validateConfiguration,
     actions: new AgentRunRecoveryActions(
       {
@@ -159,7 +177,8 @@ function createHarness() {
         reconcilePendingCalls: reconcile,
         resume,
         branch,
-        cancelProvider
+        cancelProvider,
+        cancelDelegations
       },
       () => 500
     )

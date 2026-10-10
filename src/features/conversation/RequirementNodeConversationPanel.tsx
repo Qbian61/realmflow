@@ -262,6 +262,7 @@ export function RequirementNodeConversationPanel({
             </label>
           ) : null}
           <Composer
+            permissionRunIds={displayedConversation?.messages.flatMap(message => message.runId ? [message.runId] : []) ?? []}
             value={prompt}
             placeholder={t("nodeConversation.placeholder")}
             labels={{

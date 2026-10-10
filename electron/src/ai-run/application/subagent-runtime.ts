@@ -49,6 +49,9 @@ export class SubagentRuntime {
         consumed.toolCalls
       )
     })
+    if (input.signal.aborted) {
+      return { status: 'cancelled', tasks: validated.tasks.map(cancelled) }
+    }
     this.usage.set(input.rootRunId, {
       subagents: consumed.subagents + validated.reservation.subagents,
       toolCalls: consumed.toolCalls + validated.reservation.toolCalls

@@ -91,6 +91,7 @@ export function WorkbenchProvider({
   const nativeSync = useNativeWorkbenchSync({
     api,
     dispatch,
+    activateTab,
     panelOpen,
     activeTab,
     panelRef: geometry.panelRef,

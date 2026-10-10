@@ -24,6 +24,71 @@
       "skillDefinitions": []
     },
     {
+      "packageId": "realmflow.builtin.browser",
+      "version": "1.0.0",
+      "path": "browser/extension.json",
+      "sourceDigest": "fdd011b0ce03cafb1a000c5c2dce01bdb22c782eca5d4d4f86f7952e6c87e230",
+      "toolDefinitions": [
+        {
+          "id": "builtin.browser.attach",
+          "version": "1.0.0"
+        },
+        {
+          "id": "builtin.browser.click",
+          "version": "1.0.0"
+        },
+        {
+          "id": "builtin.browser.close",
+          "version": "1.0.0"
+        },
+        {
+          "id": "builtin.browser.create",
+          "version": "1.0.0"
+        },
+        {
+          "id": "builtin.browser.download",
+          "version": "1.0.0"
+        },
+        {
+          "id": "builtin.browser.evaluate",
+          "version": "1.0.0"
+        },
+        {
+          "id": "builtin.browser.fill",
+          "version": "1.0.0"
+        },
+        {
+          "id": "builtin.browser.navigate",
+          "version": "1.0.0"
+        },
+        {
+          "id": "builtin.browser.press",
+          "version": "1.0.0"
+        },
+        {
+          "id": "builtin.browser.screenshot",
+          "version": "1.0.0"
+        },
+        {
+          "id": "builtin.browser.select",
+          "version": "1.0.0"
+        },
+        {
+          "id": "builtin.browser.snapshot",
+          "version": "1.0.0"
+        },
+        {
+          "id": "builtin.browser.upload",
+          "version": "1.0.0"
+        },
+        {
+          "id": "builtin.browser.wait_for",
+          "version": "1.0.0"
+        }
+      ],
+      "skillDefinitions": []
+    },
+    {
       "packageId": "realmflow.builtin.computer",
       "version": "1.0.0",
       "path": "computer/extension.json",
@@ -643,17 +708,17 @@
     },
     {
       "packageId": "realmflow.builtin.web",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "path": "web/extension.json",
-      "sourceDigest": "5b988532a9e3a0e3260b076ec09f48c698b4ddc7399d186b7e753cfc1fe3dd53",
+      "sourceDigest": "2fbec962abfa4a4dfc2e143348ca5ccdc24da3ed5e6e6a4042de7d6d90242367",
       "toolDefinitions": [
         {
           "id": "builtin.web.fetch",
-          "version": "1.0.0"
+          "version": "1.1.0"
         },
         {
           "id": "builtin.web.search",
-          "version": "1.0.0"
+          "version": "1.1.0"
         }
       ],
       "skillDefinitions": []

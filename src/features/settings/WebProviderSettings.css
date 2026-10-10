@@ -1,0 +1,47 @@
+.web-provider-settings {
+  max-width: 680px;
+  min-width: 0;
+}
+
+.web-provider-settings-form {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+
+.web-provider-settings-hint,
+.web-provider-settings-browser p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.web-provider-settings-key,
+.web-provider-settings-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.web-provider-settings-browser {
+  display: grid;
+  gap: 8px;
+  padding-top: 18px;
+  border-top: 1px solid var(--color-border);
+}
+
+.web-provider-settings-browser label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.web-provider-settings-browser input {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}

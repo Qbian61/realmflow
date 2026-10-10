@@ -1,0 +1,85 @@
+.agent-runtime-panel {
+  min-width: 0;
+  margin-top: 8px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.agent-runtime-body {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+.agent-runtime-body p,
+.agent-runtime-body h4 {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.agent-runtime-body h4 {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.agent-runtime-body form,
+.agent-runtime-records {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.agent-runtime-body textarea,
+.agent-runtime-body select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.agent-runtime-body textarea {
+  resize: vertical;
+  max-height: 200px;
+}
+
+.agent-runtime-heading,
+.agent-runtime-actions,
+.agent-runtime-record-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.agent-runtime-heading,
+.agent-runtime-record-heading {
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.agent-runtime-record-heading a,
+.agent-runtime-record-heading p,
+.agent-runtime-heading p {
+  flex: 1 1 160px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.agent-runtime-record-heading a {
+  color: var(--color-text-primary);
+  text-underline-offset: 3px;
+}
+
+.agent-runtime-records {
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.agent-runtime-record-heading span {
+  font-size: 11px;
+}

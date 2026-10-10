@@ -3,6 +3,29 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 describe('Main startup recovery order', () => {
+  it('owns the sanitized Gateway Runtime and binds it to audited Main services', () => {
+    const mainSource = readFileSync(resolve('electron/src/main.ts'), 'utf8')
+    const gatewayStart = mainSource.indexOf('new GatewayRuntimeService')
+    const runtimeStart = mainSource.indexOf(
+      'new ToolExecutionApplicationService',
+      gatewayStart
+    )
+    const gatewaySource = mainSource.slice(gatewayStart, runtimeStart)
+
+    expect(gatewayStart).toBeGreaterThan(-1)
+    expect(runtimeStart).toBeGreaterThan(gatewayStart)
+    expect(gatewaySource).toContain('appSupport.checkForUpdates')
+    expect(gatewaySource).toContain('toolAdapters!.health')
+    expect(gatewaySource).toContain('repositories.workRoots.list')
+    expect(gatewaySource).toContain('webProviders.get')
+    expect(gatewaySource).toContain('REALMFLOW_SCHEMA_VERSION')
+    expect(gatewaySource).not.toContain('root.path')
+    expect(mainSource).toContain(
+      'runGatewayCommand: (input, context) =>'
+    )
+    expect(mainSource).toContain('gatewayRuntime.execute(input, context)')
+  })
+
   it('derives bundled asset paths without CommonJS globals', () => {
     const mainSource = readFileSync(resolve('electron/src/main.ts'), 'utf8')
 
@@ -223,20 +246,30 @@ describe('Main startup recovery order', () => {
       'new RecoverAgentRuntimeRunsUseCase'
     )
     const recoverySource = mainSource.slice(
-      mainSource.indexOf('const resumeRecoveredRun'),
+      mainSource.indexOf('const runtimeRunResumer'),
       mainSource.indexOf('new RecoverInterruptedNodeRunsUseCase')
     )
 
     expect(permissionRestore).toBeGreaterThan(-1)
     expect(outboxDrain).toBeGreaterThan(permissionRestore)
     expect(toolRecovery).toBeGreaterThan(outboxDrain)
+    const terminalReconciliation = mainSource.indexOf('await assistantTimeline.reconcileTerminalConversations')
+    expect(terminalReconciliation).toBeGreaterThan(outboxDrain)
+    expect(agentRecovery).toBeGreaterThan(terminalReconciliation)
     expect(agentRecovery).toBeGreaterThan(toolRecovery)
     expect(recoverySource).toContain('runGateway.attachRecoveredRun')
     expect(recoverySource).toContain('runGateway.streamEvents')
+    expect(recoverySource).toContain('assistantTimeline.appendRecoveredAndProject')
     expect(recoverySource).not.toContain(
       'sidecar.getClient().streamEvents'
     )
     expect(mainSource).not.toContain('recoverPendingTurns')
+    const registration = mainSource.indexOf('registerMainIpc({', agentRecovery)
+    const window = mainSource.indexOf('createWindow()', registration)
+    const start = mainSource.indexOf('void recoverRuntimeRuns.execute().catch', window)
+    expect(registration).toBeGreaterThan(agentRecovery)
+    expect(window).toBeGreaterThan(registration)
+    expect(start).toBeGreaterThan(window)
   })
 
   it('reconciles pending Agent calls from durable Tool projections', () => {

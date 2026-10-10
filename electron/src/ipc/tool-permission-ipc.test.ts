@@ -52,6 +52,13 @@ describe('Tool permission IPC', () => {
     expect(onChanged.mock.invocationCallOrder[0]).toBeGreaterThan(
       resolve.mock.invocationCallOrder[0]!
     )
+    for (const decision of ['deny', 'allow_session', 'allow_always']) {
+      await handlers.get('tool-permission:resolve')!({} as IpcMainInvokeEvent,
+        { requestId: 'permission-1', expectedRevision: 1, decision })
+      expect(resolve).toHaveBeenLastCalledWith({
+        requestId: 'permission-1', expectedRevision: 1, decision
+      })
+    }
   })
 
   it('rejects malformed, extra, and stale-shaped commands', async () => {

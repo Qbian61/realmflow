@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "packageId": "realmflow.builtin.browser",
+  "version": "1.0.0",
+  "name": "Browser",
+  "description": "Main-owned Chromium sessions and scoped browser artifacts.",
+  "publisher": {
+    "name": "RealmFlow",
+    "keyId": "realmflow-builtin-v1"
+  },
+  "compatibility": {
+    "realmflow": ">=0.1.0 <1.0.0",
+    "platforms": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
+  },
+  "tools": [
+    {
+      "path": "tools/builtin-browser-create.json"
+    },
+    {
+      "path": "tools/builtin-browser-attach.json"
+    },
+    {
+      "path": "tools/builtin-browser-close.json"
+    },
+    {
+      "path": "tools/builtin-browser-navigate.json"
+    },
+    {
+      "path": "tools/builtin-browser-snapshot.json"
+    },
+    {
+      "path": "tools/builtin-browser-click.json"
+    },
+    {
+      "path": "tools/builtin-browser-fill.json"
+    },
+    {
+      "path": "tools/builtin-browser-select.json"
+    },
+    {
+      "path": "tools/builtin-browser-press.json"
+    },
+    {
+      "path": "tools/builtin-browser-evaluate.json"
+    },
+    {
+      "path": "tools/builtin-browser-wait_for.json"
+    },
+    {
+      "path": "tools/builtin-browser-screenshot.json"
+    },
+    {
+      "path": "tools/builtin-browser-upload.json"
+    },
+    {
+      "path": "tools/builtin-browser-download.json"
+    }
+  ],
+  "skills": [],
+  "assets": []
+}

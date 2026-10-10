@@ -7,7 +7,7 @@ import {
 
 describe('builtin extension catalog generator', () => {
   it('contains the complete stable Tool and Skill contract', () => {
-    expect(BUILTIN_TOOL_IDS).toHaveLength(118)
+    expect(BUILTIN_TOOL_IDS).toHaveLength(132)
     expect(BUILTIN_SKILL_IDS).toHaveLength(10)
     expect(BUILTIN_TOOL_IDS).toEqual([
       'builtin.archives.create',
@@ -15,6 +15,20 @@ describe('builtin extension catalog generator', () => {
       'builtin.archives.list',
       'builtin.artifact.verify',
       'builtin.attachment.read_chunk',
+      'builtin.browser.attach',
+      'builtin.browser.click',
+      'builtin.browser.close',
+      'builtin.browser.create',
+      'builtin.browser.download',
+      'builtin.browser.evaluate',
+      'builtin.browser.fill',
+      'builtin.browser.navigate',
+      'builtin.browser.press',
+      'builtin.browser.screenshot',
+      'builtin.browser.select',
+      'builtin.browser.snapshot',
+      'builtin.browser.upload',
+      'builtin.browser.wait_for',
       'builtin.computer.click',
       'builtin.computer.focus',
       'builtin.computer.key',
@@ -151,7 +165,7 @@ describe('builtin extension catalog generator', () => {
     )
 
     expect(second).toEqual(first)
-    expect(first.index.packages).toHaveLength(16)
+    expect(first.index.packages).toHaveLength(17)
     expect(
       first.packages.flatMap(({ skills }) => skills).every(({ requiredTools }) =>
         requiredTools.every(({ toolId }) => toolIds.has(toolId))
@@ -884,7 +898,7 @@ describe('builtin extension catalog generator', () => {
     )
 
     expect(webPackage.manifest).toMatchObject({
-      version: '1.0.0',
+      version: '1.1.0',
       name: 'Web'
     })
     expect(webFetch).toMatchObject({
@@ -907,8 +921,8 @@ describe('builtin extension catalog generator', () => {
     })
     expect(webSearch).toMatchObject({
       name: 'Search web',
-      capabilities: ['network.connect'],
-      effects: ['external.read'],
+      capabilities: ['network.connect', 'credential.use'],
+      effects: ['external.read', 'local_data.read'],
       risk: 'medium',
       inputSchema: {
         type: 'object',
@@ -926,8 +940,7 @@ describe('builtin extension catalog generator', () => {
           safeSearch: {
             type: 'string',
             enum: ['strict', 'moderate', 'off']
-          },
-          provider: { type: 'string', enum: ['searxng'] }
+          }
         }
       }
     })

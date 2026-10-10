@@ -16,6 +16,8 @@ type RecoveryConfiguration = {
   credentialAvailable: boolean
 }
 
+export type RecoveredRunActivation = { start(): void; cancel?(): void }
+
 type RecoveryDependencies = {
   runs: AgentRuntimeRunRepository
   checkpoints: AgentRunCheckpointRepository
@@ -35,7 +37,7 @@ type RecoveryDependencies = {
   resume(
     run: AgentRuntimeRun,
     checkpoint: RunCheckpoint
-  ): Promise<void>
+  ): Promise<void | RecoveredRunActivation>
   projectRecoveryEvent(
     run: AgentRuntimeRun,
     event:
@@ -70,8 +72,14 @@ export class RecoverAgentRuntimeRunsUseCase {
   }> {
     const unfinished = await this.dependencies.runs.listUnfinished()
     const result = { resumed: 0, blocked: 0, preserved: 0 }
-    for (const run of unfinished) {
-      if (run.status === 'waiting_input' || run.status === 'paused') {
+    for (const candidate of unfinished) {
+      const run = this.dependencies.runs.getById
+        ? await this.dependencies.runs.getById(candidate.id) : candidate
+      if (!run || ['completed', 'failed', 'cancelled'].includes(run.status)) {
+        result.preserved += 1
+        continue
+      }
+      if (run.status === 'waiting_input' || run.status === 'paused' || run.status === 'recovery_blocked') {
         result.preserved += 1
         continue
       }
@@ -86,6 +94,10 @@ export class RecoverAgentRuntimeRunsUseCase {
         this.dependencies.validateConfiguration(run, checkpoint),
         this.dependencies.reconcilePendingCalls(run, checkpoint)
       ])
+      if (await this.stopped(run.id)) {
+        result.preserved += 1
+        continue
+      }
       const decision = decideAgentRunRecovery({
         checkpoint,
         configuration,
@@ -111,8 +123,18 @@ export class RecoverAgentRuntimeRunsUseCase {
           errorCode: 'interrupted'
         }
       })
+      let activation: void | RecoveredRunActivation = undefined
       try {
-        await this.dependencies.resume(run, checkpoint)
+        if (await this.stopped(run.id)) {
+          result.preserved += 1
+          continue
+        }
+        activation = await this.dependencies.resume(run, checkpoint)
+        if (await this.stopped(run.id)) {
+          activation?.cancel?.()
+          result.preserved += 1
+          continue
+        }
         await this.dependencies.runs.transition(
           run.id,
           'running',
@@ -122,13 +144,25 @@ export class RecoverAgentRuntimeRunsUseCase {
           type: 'run.resumed',
           data: {}
         })
+        activation?.start()
         result.resumed += 1
       } catch {
+        activation?.cancel?.()
+        if (await this.stopped(run.id)) {
+          result.preserved += 1
+          continue
+        }
         await this.block(run, 'resume_unavailable')
         result.blocked += 1
       }
     }
     return result
+  }
+
+  private async stopped(runId: string): Promise<boolean> {
+    if (!this.dependencies.runs.getById) return false
+    const current = await this.dependencies.runs.getById(runId)
+    return !current || ['completed', 'failed', 'cancelled', 'paused', 'waiting_input'].includes(current.status)
   }
 
   private block(run: AgentRuntimeRun, reason: string): Promise<void> {

@@ -7,17 +7,16 @@ import {
   useState,
 } from "react";
 import {
-  AudioLines,
+  ArrowUp,
   Blocks,
-  BrainCircuit,
   ChevronDown,
   ChevronRight,
   Folder,
   Link2,
-  Mic,
   Paperclip,
   Plus,
   ShieldCheck,
+  Square,
   WandSparkles,
   X,
 } from "lucide-react";
@@ -26,7 +25,6 @@ import {
   type ModelSelectorGroup,
 } from "../features/conversation/ModelSelector";
 import { useLocalization } from "../localization/LocalizationProvider";
-import type { ReasoningPreference } from "../../domain/reasoning-router";
 import type { ConversationAttachmentDescriptor } from "../../domain/conversation-input";
 import {
   IconButton,
@@ -55,6 +53,7 @@ type ComposerInsertions = {
 
 type ComposerProps = {
   value: string;
+  permissionRunIds?: readonly string[];
   placeholder: string;
   labels: ComposerLabels;
   insertions: ComposerInsertions;
@@ -64,8 +63,6 @@ type ComposerProps = {
   modelGroups?: ModelSelectorGroup[];
   modelProfileId?: string;
   effectiveModelProfileId?: string;
-  reasoningMode?: ReasoningPreference;
-  reasoningSupported?: boolean;
   modelControl?: ReactNode;
   defaultWorkspace?: string;
   workspaceValue?: string;
@@ -73,6 +70,7 @@ type ComposerProps = {
   compact?: boolean;
   autoFocus?: boolean;
   disabled?: boolean;
+  cancelling?: boolean;
   attachments?: ConversationAttachmentDescriptor[];
   attachmentErrors?: Array<{ fileName: string; message: string }>;
   attachmentBusy?: boolean;
@@ -82,16 +80,17 @@ type ComposerProps = {
   onWorkspaceChange?: (value: string) => void;
   onModelProfileChange?: (value: string) => void;
   onModelPickerOpen?: () => void;
-  onReasoningModeChange?: (value: ReasoningPreference) => void;
   onConfigureModels?: () => void;
   onPickAttachments?: () => void;
   onRemoveAttachment?: (attachmentId: string) => void;
   onImageEgressChange?: (allowed: boolean) => void;
   onSubmit: () => void;
+  onCancel?: () => void;
 };
 
 export function Composer({
   value,
+  permissionRunIds = [],
   placeholder,
   labels,
   insertions,
@@ -101,8 +100,6 @@ export function Composer({
   modelGroups,
   modelProfileId = "",
   effectiveModelProfileId,
-  reasoningMode = "auto",
-  reasoningSupported,
   modelControl,
   defaultWorkspace = "none",
   workspaceValue,
@@ -110,6 +107,7 @@ export function Composer({
   compact = false,
   autoFocus = false,
   disabled = false,
+  cancelling = false,
   attachments = [],
   attachmentErrors = [],
   attachmentBusy = false,
@@ -119,12 +117,12 @@ export function Composer({
   onWorkspaceChange,
   onModelProfileChange,
   onModelPickerOpen,
-  onReasoningModeChange,
   onConfigureModels,
   onPickAttachments,
   onRemoveAttachment,
   onImageEgressChange,
   onSubmit,
+  onCancel,
 }: ComposerProps): JSX.Element {
   const { t } = useLocalization();
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
@@ -164,6 +162,8 @@ export function Composer({
   };
 
   return (
+    <div className="composer-surface">
+    <div data-permission-run-ids={JSON.stringify(permissionRunIds)} />
     <form
       className={[
         "composer",
@@ -324,27 +324,6 @@ export function Composer({
             </div>
           </div>
           <div className="composer-actions-right">
-            <label className="reasoning-control" title={t("conversation.reasoning")}>
-              <BrainCircuit size={14} />
-              <select name="composer-reasoning" autoComplete="off"
-                aria-label={t("conversation.reasoning")}
-                value={reasoningMode === "off" ? "low" : reasoningMode}
-                disabled={disabled}
-                onChange={(event) =>
-                  onReasoningModeChange?.(
-                    event.target.value as ReasoningPreference,
-                  )
-                }
-              >
-                <option value="auto">{t("conversation.reasoning.auto")}</option>
-                <option value="low">{t("conversation.reasoning.quick")}</option>
-                <option value="medium">
-                  {t("conversation.reasoning.standard")}
-                </option>
-                <option value="high">{t("conversation.reasoning.deep")}</option>
-              </select>
-              <ChevronDown size={12} />
-            </label>
             {modelControl ?? (
               <ModelSelector
                 ariaLabel={labels.model}
@@ -369,31 +348,30 @@ export function Composer({
                 }
               />
             )}
-            <button
-              className="icon-action"
-              type="button"
-              aria-label={t("composer.voiceInput")}
-              title={t("composer.voiceInput")}
-              disabled={disabled}
-            >
-              <Mic size={20} />
-            </button>
-            <button
-              className="send-action"
-              type="submit"
-              aria-label={labels.submit}
-              title={labels.submit}
-              disabled={disabled || !value.trim()}
-            >
-              <AudioLines size={20} />
-            </button>
+            {onCancel ? (
+              <button
+                className="send-action stop-action"
+                type="button"
+                aria-label={t(cancelling ? "composer.stopping" : "composer.stopGeneration")}
+                title={t(cancelling ? "composer.stopping" : "composer.stopGeneration")}
+                disabled={cancelling}
+                onClick={onCancel}
+              >
+                <Square size={14} fill="currentColor" />
+              </button>
+            ) : (
+              <button
+                className="send-action"
+                type="submit"
+                aria-label={labels.submit}
+                title={labels.submit}
+                disabled={disabled || !value.trim()}
+              >
+                <ArrowUp size={20} />
+              </button>
+            )}
           </div>
         </div>
-        {reasoningSupported === false && reasoningMode !== "off" ? (
-          <span className="reasoning-degrade" role="status">
-            {t("conversation.reasoning.unsupported")}
-          </span>
-        ) : null}
       </div>
 
       {showContext ? (
@@ -434,5 +412,6 @@ export function Composer({
         </div>
       ) : null}
     </form>
+    </div>
   );
 }

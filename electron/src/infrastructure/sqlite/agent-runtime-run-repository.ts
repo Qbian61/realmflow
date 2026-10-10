@@ -187,7 +187,7 @@ export class SqliteAgentRuntimeRunRepository
     return rows.map(mapRow)
   }
 
-  private getById(runId: string): AgentRuntimeRun | undefined {
+  getById(runId: string): AgentRuntimeRun | undefined {
     const row = this.database
       .prepare(
         `SELECT id, provider_run_id, lifecycle_status, snapshot_json,

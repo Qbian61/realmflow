@@ -1,132 +1,82 @@
-import { useEffect, useId, useState } from 'react'
-import { ShieldAlert, X } from 'lucide-react'
+import { useEffect, useId, useRef, useState } from 'react'
+import { AlertTriangle } from 'lucide-react'
 import type { PendingToolPermissionView } from '../../../shared/tool-permissions'
-import {
-  Button,
-  Dialog,
-  DialogBody,
-  DialogFooter,
-  DialogHeader,
-  IconButton,
-  InlineAlert
-} from '../../components/ui'
+import { Button, InlineAlert } from '../../components/ui'
 import { useLocalization } from '../../localization/LocalizationProvider'
+import './ToolPermissionCard.css'
 
 type Props = {
   request: PendingToolPermissionView
   pending: boolean
   error?: string
   onAllow(): void
+  onAllowSession(): void
+  onAllowAlways(): void
   onDeny(): void
-  onLater(): void
 }
 
 export function ToolPermissionDialog({
-  request,
-  pending,
-  error,
-  onAllow,
-  onDeny,
-  onLater
+  request, pending, error, onAllow, onAllowSession, onAllowAlways, onDeny
 }: Props): JSX.Element {
   const { t } = useLocalization()
   const titleId = useId()
-  const descriptionId = useId()
+  const cardRef = useRef<HTMLElement>(null)
   const destructive = request.reason === 'delete'
   const [confirmed, setConfirmed] = useState(false)
+  const paths = request.resources.filter(resource => resource.kind !== 'process')
+  const commands = request.resources.filter(resource => resource.kind === 'process')
+  const canAllow = !pending && (!destructive || confirmed)
 
   useEffect(() => {
     setConfirmed(false)
-  }, [request.id, request.requestRevision])
+    cardRef.current?.focus()
+  }, [request.id, request.requestRevision, destructive])
 
   return (
-    <Dialog
-      open
-      size="compact"
-      locked={pending}
-      aria-labelledby={titleId}
-      aria-describedby={descriptionId}
-      onOpenChange={(open) => {
-        if (!open && !pending) onLater()
-      }}
-    >
-      <section className="tool-permission-dialog">
-        <DialogHeader>
-          <div className="tool-permission-dialog__heading">
-            <span className="tool-permission-dialog__icon" aria-hidden="true">
-              <ShieldAlert size={18} />
-            </span>
-            <div>
-              <h2 id={titleId}>{t('permission.title')}</h2>
-              <p id={descriptionId}>{t('permission.description')}</p>
-            </div>
-          </div>
-          <IconButton
-            aria-label={t('permission.close')}
-            title={t('common.close')}
-            variant="ghost"
-            disabled={pending}
-            onClick={onLater}
-          >
-            <X size={17} />
-          </IconButton>
-        </DialogHeader>
-        <DialogBody>
-          <div className="tool-permission-dialog__tool">
-            <strong>{request.toolName}</strong>
-            <span data-risk={request.risk}>
-              {t(`permission.risk.${request.risk}`)}
-            </span>
-          </div>
-          <p className="tool-permission-dialog__reason">
-            {t(`permission.reason.${request.reason}`)}
-          </p>
-          <ul
-            className="tool-permission-dialog__resources"
-            aria-label={t('permission.resources')}
-          >
-            {request.resources.map((resource, index) => (
-              <li key={`${resource.kind}:${resource.label}:${index}`}>
-                <span>{t(`permission.resource.${resource.kind}`)}</span>
-                <code title={resource.label}>{resource.label}</code>
-              </li>
-            ))}
-          </ul>
-          {destructive ? (
-            <label className="tool-permission-dialog__confirmation">
-              <input
-                name="confirm-destructive-tool-action"
-                autoComplete="off"
-                type="checkbox"
-                checked={confirmed}
-                disabled={pending}
-                onChange={(event) => setConfirmed(event.target.checked)}
-              />
-              <span>{t('permission.deleteConfirmation')}</span>
-            </label>
-          ) : null}
-          {error ? (
-            <InlineAlert tone="danger" title={error} role="alert" />
-          ) : null}
-        </DialogBody>
-        <DialogFooter>
-          <Button disabled={pending} onClick={onLater}>
-            {t('permission.later')}
+    <section ref={cardRef} tabIndex={-1} role="region" aria-labelledby={titleId}
+      aria-busy={pending} className="tool-permission-card">
+      <header className="tool-permission-card__heading">
+        <AlertTriangle size={20} aria-hidden="true" />
+        <h2 id={titleId}>{t(commands.length ? 'permission.commandTitle' : 'permission.actionTitle')}</h2>
+      </header>
+      <p className="tool-permission-card__reason">
+        <span>{request.toolName}</span> · {t(`permission.reason.${request.reason}`)}
+      </p>
+      {paths.length ? (
+        <div className="tool-permission-card__resources">
+          <span>{t('permission.resources')}</span>
+          {paths.map((resource, index) => (
+            <code key={`${resource.kind}:${index}`}>{resource.label}</code>
+          ))}
+        </div>
+      ) : null}
+      {commands.map((resource, index) => (
+        <div className="tool-permission-card__command" key={index}>
+          <span aria-hidden="true">$</span><code>{resource.label}</code>
+        </div>
+      ))}
+      {destructive ? (
+        <label className="tool-permission-card__confirmation">
+          <input name="confirm-destructive-tool-action" autoComplete="off" type="checkbox"
+            checked={confirmed} disabled={pending}
+            onChange={event => setConfirmed(event.target.checked)} />
+          <span>{t('permission.deleteConfirmation')}</span>
+        </label>
+      ) : null}
+      {error ? <InlineAlert tone="danger" title={error} role="alert" /> : null}
+      <div className="tool-permission-card__choices">
+        {([
+          { number: 1, label: 'permission.rejectExecution', action: onDeny },
+          { number: 2, label: 'permission.executeOnce', action: onAllow },
+          { number: 3, label: 'permission.allowSession', action: onAllowSession },
+          { number: 4, label: 'permission.allowAlways', action: onAllowAlways }
+        ] as const).map(({ number, label, action }) => (
+          <Button key={number} variant="neutral" className="tool-permission-card__choice"
+            disabled={number === 1 ? pending : !canAllow} onClick={action}>
+            {t(label)}
           </Button>
-          <Button disabled={pending} onClick={onDeny}>
-            {t('permission.deny')}
-          </Button>
-          <Button
-            data-autofocus={!destructive || undefined}
-            variant={destructive ? 'danger' : 'primary'}
-            loading={pending}
-            disabled={destructive && !confirmed}
-            onClick={onAllow}
-          >
-            {t(destructive ? 'permission.allowDelete' : 'permission.allowOnce')}
-          </Button>
-        </DialogFooter>
-      </section>
-    </Dialog>
+        ))}
+      </div>
+    </section>
   )
 }

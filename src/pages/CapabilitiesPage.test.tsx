@@ -303,6 +303,169 @@ describe("CapabilitiesPage", () => {
     ).toHaveAttribute("aria-checked", "true");
   });
 
+  it("shows Plugin contributions, permission review, sandbox, and dependency state before enablement", async () => {
+    const catalog = catalogFixture();
+    const setActivation = vi.fn().mockResolvedValue(undefined);
+    setRealmflow(
+      createToolCatalog({
+        list: vi.fn().mockResolvedValue({
+          ...catalog,
+          packages: [
+            {
+              packageId: "com.example.research",
+              version: "1.0.0",
+              packageDigest: "d".repeat(64),
+              origin: "local_upload",
+              name: "Research",
+              description: "Research Plugin.",
+              enabledPreference: false,
+              status: "dependency_disabled",
+              dependencyIssues: ["com.example.foundation"],
+              revision: 1,
+              updatedAt: 100,
+              plugin: {
+                permissions: {
+                  capabilities: ["filesystem.read", "network.connect"],
+                  maximumRisk: "medium",
+                  pathPrefixes: ["/workspace"],
+                  networkTargets: ["https://api.example.com"],
+                },
+                sandboxes: [
+                  {
+                    id: "worker",
+                    runtime: "node",
+                    filesystem: "package-read",
+                    networkTargets: ["https://api.example.com"],
+                    maximumDurationMs: 30_000,
+                    maximumMemoryMb: 128,
+                  },
+                ],
+                dependencies: [
+                  {
+                    packageId: "com.example.foundation",
+                    versionRange: "^1.0.0",
+                    required: true,
+                    toolIds: [],
+                  },
+                ],
+                contributions: [
+                  {
+                    kind: "tool",
+                    id: "research.search",
+                    definitionDigest: "e".repeat(64),
+                  },
+                  {
+                    kind: "skill",
+                    id: "research.workflow",
+                    definitionDigest: "f".repeat(64),
+                  },
+                  {
+                    kind: "connector",
+                    id: "research.connector",
+                    definitionDigest: "1".repeat(64),
+                  },
+                  {
+                    kind: "web_provider",
+                    id: "research.web",
+                    definitionDigest: "2".repeat(64),
+                  },
+                  {
+                    kind: "hook",
+                    id: "research.after-search",
+                    definitionDigest: "3".repeat(64),
+                    targetToolId: "research.search",
+                    event: "tool.completed",
+                  },
+                ],
+              },
+            },
+          ],
+          tools: [],
+          skills: [],
+        }),
+        setActivation,
+      }),
+    );
+
+    renderPage();
+
+    expect(await screen.findByText("Research")).toBeVisible();
+    expect(
+      screen.getByText(
+        "工具 1 · 技能 1 · 连接器 1 · 提供方 1 · Hook 1",
+      ),
+    ).toBeVisible();
+    expect(screen.getByText("2 项权限 · medium 风险")).toBeVisible();
+    expect(screen.getByText("1 个沙箱")).toBeVisible();
+    expect(screen.getByText("1 项必需依赖")).toBeVisible();
+    expect(screen.getByText("com.example.foundation")).toBeVisible();
+
+    fireEvent.click(
+      screen.getByRole("switch", { name: "审核并启用Research" }),
+    );
+    expect(setActivation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetType: "package",
+        targetId: "com.example.research",
+        enabled: true,
+      }),
+    );
+  });
+
+  it("waits for Main when rolling a Plugin package back to an installed version", async () => {
+    const catalog = catalogFixture();
+    const changePackageVersion = vi.fn().mockResolvedValue(undefined);
+    const packageBase = {
+      packageId: "com.example.research",
+      origin: "local_upload" as const,
+      name: "Research",
+      description: "Research Plugin.",
+      enabledPreference: true,
+      dependencyIssues: [],
+      revision: 1,
+      updatedAt: 100,
+    };
+    setRealmflow(
+      createToolCatalog({
+        list: vi.fn().mockResolvedValue({
+          ...catalog,
+          packages: [
+            {
+              ...packageBase,
+              version: "1.0.0",
+              packageDigest: "d".repeat(64),
+              status: "superseded",
+            },
+            {
+              ...packageBase,
+              version: "2.0.0",
+              packageDigest: "e".repeat(64),
+              status: "enabled",
+            },
+          ],
+          tools: [],
+          skills: [],
+        }),
+        changePackageVersion,
+      }),
+    );
+
+    renderPage();
+    const version = await screen.findByRole("combobox", {
+      name: "Research 版本",
+    });
+    expect(version).toHaveValue("2.0.0");
+    fireEvent.change(version, { target: { value: "1.0.0" } });
+    fireEvent.click(screen.getByRole("button", { name: "回滚 Research" }));
+
+    expect(changePackageVersion).toHaveBeenCalledWith({
+      packageId: "com.example.research",
+      targetVersion: "1.0.0",
+      operation: "rollback",
+      idempotencyKey: expect.stringMatching(/^package-rollback-/),
+    });
+  });
+
   it("switches the Tool Catalog between primitive and model-facing facade views", async () => {
     const list = vi.fn(
       async ({
@@ -1219,6 +1382,7 @@ function createToolCatalog(
     listMcpServers: vi.fn().mockResolvedValue([mcpServerFixture()]),
     chooseAndImport: vi.fn(),
     setActivation: vi.fn(),
+    changePackageVersion: vi.fn(),
     saveMcpServer: vi.fn(),
     deleteMcpServer: vi.fn(),
     testMcpServer: vi.fn(),

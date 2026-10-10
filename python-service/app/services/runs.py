@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from time import monotonic
 from typing import AsyncIterator
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 import httpx
 
@@ -114,6 +114,9 @@ class RunState:
         default_factory=dict
     )
     agent_turns: int = 0
+    pending_turn: int | None = None
+    turn_messages: list[dict[str, object]] | None = None
+    accepted_turns: dict[int, str] = field(default_factory=dict)
 
 
 class RunService:
@@ -180,7 +183,9 @@ class RunService:
         restored_calls, restored_suspensions = restore_pending_tool_calls(
             pending_tool_calls
         )
-        run_id = str(uuid4())
+        # Main persists this attempt identity. Recreating the process must not
+        # assign another provider ID to the same immutable checkpoint.
+        run_id = str(uuid5(NAMESPACE_URL, f"realmflow:resume:{resume_token}"))
         state = RunState(
             run_id=run_id,
             request=resumed_request,
@@ -197,6 +202,43 @@ class RunService:
             return self._runs[run_id]
         except KeyError as error:
             raise LookupError("Run not found") from error
+
+    async def acknowledge_turn(self, run_id: str, payload: dict[str, object]) -> None:
+        state = self.require(run_id)
+        turn = payload.get("turn")
+        messages = payload.get("messages")
+        if (not isinstance(turn, int) or isinstance(turn, bool) or turn < 1
+                or not isinstance(messages, list) or len(messages) > 100
+                or any(not isinstance(m, dict) or set(m) != {"role", "content"}
+                       or m["role"] != "user" or not isinstance(m["content"], str)
+                       or not m["content"] or len(m["content"]) > 12000 for m in messages)):
+            raise ValueError("Invalid turn acknowledgment")
+        digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+        async with state.condition:
+            if turn in state.accepted_turns:
+                if state.accepted_turns[turn] != digest:
+                    raise ValueError("Turn acknowledgment conflict")
+                return
+            if state.terminal_type or state.cancel_requested or state.pending_turn != turn:
+                raise ValueError("Turn is not awaiting acknowledgment")
+            state.accepted_turns[turn] = digest
+            state.turn_messages = [dict(message) for message in messages]
+            state.condition.notify_all()
+
+    async def _await_turn(self, state: RunState) -> list[dict[str, object]] | None:
+        async with state.condition:
+            state.pending_turn = state.agent_turns + 1
+            state.turn_messages = None
+            self._append_locked(state, "run.turn_ready", {"agentTurn": state.pending_turn})
+            state.condition.notify_all()
+            await state.condition.wait_for(lambda: state.terminal_type is not None
+                                           or state.cancel_requested or state.turn_messages is not None)
+            if state.terminal_type or state.cancel_requested:
+                return None
+            messages = state.turn_messages
+            state.pending_turn = None
+            state.turn_messages = None
+            return messages
 
     def validate_replay_cursor(
         self, run_id: str, last_event_id: str | None
@@ -404,6 +446,12 @@ class RunService:
                     )
                 request = {**state.request, "messages": messages}
             while True:
+                if state.request.get("turnGate") is True:
+                    additions = await self._await_turn(state)
+                    if additions is None:
+                        return
+                    messages.extend(additions)
+                    request = {**request, "messages": messages}
                 round_content: list[str] = []
                 tool_calls: list[ProviderToolCall] = []
                 result: ProviderResult | None = None

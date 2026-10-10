@@ -20,7 +20,7 @@ afterEach(async () => {
 
 describe('Tool Runtime SQLite schema', () => {
   it('creates the event store, outbox, snapshots, and projections', () => {
-    expect(REALMFLOW_SCHEMA_VERSION).toBe(99)
+    expect(REALMFLOW_SCHEMA_VERSION).toBe(106)
     const tables = database
       .prepare(
         `SELECT name FROM sqlite_master

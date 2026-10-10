@@ -1,5 +1,7 @@
 import type { ToolRisk } from '../domain/tool-definition'
 
+export type ToolPermissionDecision = 'deny' | 'allow_once' | 'allow_session' | 'allow_always'
+
 export type ToolPermissionStatus =
   | 'requested'
   | 'approved'
@@ -38,7 +40,7 @@ export type ToolPermissionRequestProjection = {
   expiresAt: number
   resources: PendingToolPermissionResource[]
   resolvedAt?: number
-  decision?: 'allow_once' | 'deny'
+  decision?: ToolPermissionDecision
 }
 
 export type PendingToolPermissionView = ToolPermissionRequestProjection
@@ -46,7 +48,7 @@ export type PendingToolPermissionView = ToolPermissionRequestProjection
 export type PermissionDecisionCommand = {
   requestId: string
   expectedRevision: number
-  decision: 'allow_once' | 'deny'
+  decision: ToolPermissionDecision
 }
 
 export type ToolPermissionApi = {

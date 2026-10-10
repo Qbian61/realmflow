@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { browserInputSchema, browserPackageSpec } from './builtin-browser-catalog.mjs'
 
 const VERSION = '1.0.0'
 const OUTPUT_ROOT = new URL('../resources/extensions/builtin/', import.meta.url)
@@ -9,6 +10,7 @@ const CONTEXTS = ['general', 'space', 'requirement', 'workflow', 'schedule']
 const OBJECT_SCHEMA = { type: 'object', additionalProperties: true }
 
 const packageSpecs = [
+  browserPackageSpec,
   {
     directory: 'files',
     packageId: 'realmflow.builtin.files',
@@ -349,7 +351,7 @@ const packageSpecs = [
   {
     directory: 'web',
     packageId: 'realmflow.builtin.web',
-    version: '1.0.0',
+    version: '1.1.0',
     name: 'Web',
     description: 'Permissioned public web retrieval.',
     tools: [
@@ -363,8 +365,8 @@ const packageSpecs = [
       [
         'builtin.web.search',
         'Search web',
-        'Search the web through an explicitly configured provider and return normalized results.',
-        'network.connect',
+        'Search using the provider saved in Web settings (self-hosted SearXNG or opt-in Brave); return source-attributed results. Provider selection and credentials are controlled by the user.',
+        ['network.connect', 'credential.use'],
         'medium',
       ],
     ],
@@ -703,7 +705,9 @@ function buildToolPackage(spec) {
       capability,
       risk,
       inputSchema:
-        spec.directory === 'computer'
+        spec.directory === 'browser'
+          ? browserInputSchema(id)
+        : spec.directory === 'computer'
           ? computerInputSchema(id.slice('builtin.computer.'.length))
           : spec.directory === 'knowledge'
             ? knowledgeInputSchema(id)
@@ -2394,7 +2398,6 @@ function webInputSchema(id) {
           type: 'string',
           enum: ['strict', 'moderate', 'off'],
         },
-        provider: { type: 'string', enum: ['searxng'] },
       },
     }
   }
@@ -2456,12 +2459,12 @@ function toolDefinition({
     executor,
     inputSchema,
     outputSchema: OBJECT_SCHEMA,
-    capabilities: [capability],
-    effects: [effectFor(capability)],
+    capabilities: Array.isArray(capability) ? capability : [capability],
+    effects: [...new Set((Array.isArray(capability) ? capability : [capability]).map(effectFor))],
     risk,
     invocation: {
       mode: 'unary',
-      idempotency: 'supported',
+      idempotency: id.startsWith('builtin.browser.') ? 'required' : 'supported',
       cancellable: true,
       resumable: false,
     },
@@ -2473,7 +2476,8 @@ function toolDefinition({
     discovery: {
       intents: [name.toLowerCase()],
       contexts: CONTEXTS,
-      ...(risk === 'critical' ? { requiresExplicitSelection: true } : {}),
+      ...(risk === 'critical' || ['builtin.browser.attach', 'builtin.browser.evaluate'].includes(id)
+        ? { requiresExplicitSelection: true } : {}),
     },
   }
 }
@@ -2696,6 +2700,7 @@ function computerInputSchema(action) {
 }
 
 function effectFor(capability) {
+  if (capability === 'credential.use') return 'local_data.read'
   if (capability.endsWith('.read') || capability.endsWith('.observe')) {
     return 'local_data.read'
   }

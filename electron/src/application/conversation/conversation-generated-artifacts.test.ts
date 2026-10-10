@@ -82,6 +82,90 @@ describe('ConversationGeneratedArtifactService', () => {
     await expect(readFile(join(workspace, 'debug.log'), 'utf8')).resolves.toBe('debug')
   })
 
+  it('retains artifact provenance across a service restart and repeated finalization', async () => {
+    const states = new Map()
+    const store = {
+      read: (id: string) => structuredClone(states.get(id)),
+      write: (id: string, value: unknown) => { states.set(id, structuredClone(value)) }
+    }
+    service = new ConversationGeneratedArtifactService(store)
+    await writeFile(join(workspace, 'final.pdf'), 'final')
+    await service.afterToolExecution({
+      runId: 'run-1', toolName: 'document.create', arguments: {},
+      scopeRoots: [workspace], output: { path: 'final.pdf' }
+    })
+    const restarted = new ConversationGeneratedArtifactService(store)
+    const first = await restarted.finalizeRun({ runId: 'run-1', status: 'completed' })
+    expect(first?.generatedArtifacts).toEqual([expect.objectContaining({ name: 'final.pdf' })])
+    const retried = await new ConversationGeneratedArtifactService(store)
+      .finalizeRun({ runId: 'run-1', status: 'completed' })
+    expect(retried).toEqual(first)
+  })
+
+  it('registers canonical media outputs as final conversation artifacts', async () => {
+    await writeFile(join(workspace, 'generated.png'), 'png')
+
+    await service.afterToolExecution({
+      runId: 'run-media',
+      toolName: 'image_generate',
+      arguments: { prompt: 'local image' },
+      scopeRoots: [workspace],
+      output: { path: 'generated.png', mediaType: 'image/png' }
+    })
+
+    expect(
+      (await service.finalizeRun({
+        runId: 'run-media',
+        status: 'completed'
+      }))?.generatedArtifacts
+    ).toEqual([
+      expect.objectContaining({
+        name: 'generated.png',
+        kind: 'png',
+        mediaType: 'image/png'
+      })
+    ])
+  })
+
+  it('preserves all outputs when tools finish concurrently in one run', async () => {
+    const states = new Map()
+    const store = {
+      read: (id: string) => structuredClone(states.get(id)),
+      write: (id: string, value: unknown) => { states.set(id, structuredClone(value)) }
+    }
+    service = new ConversationGeneratedArtifactService(store)
+    await writeFile(join(workspace, 'one.pdf'), 'one')
+    await writeFile(join(workspace, 'two.pdf'), 'two')
+    await Promise.all(['one.pdf', 'two.pdf'].map((path) => service.afterToolExecution({
+      runId: 'run-1', toolName: 'document.create', arguments: {}, scopeRoots: [workspace], output: { path }
+    })))
+    const output = await new ConversationGeneratedArtifactService(store).finalizeRun({ runId: 'run-1', status: 'completed' })
+    expect(output?.generatedArtifacts.map((item) => item.name).sort()).toEqual(['one.pdf', 'two.pdf'])
+  })
+
+  it('does not lose artifact provenance when a state write fails', async () => {
+    let fail = true
+    const states = new Map()
+    const store = {
+      read: (id: string) => structuredClone(states.get(id)),
+      write: (id: string, value: unknown) => {
+        if (fail) throw new Error('artifact store unavailable')
+        states.set(id, structuredClone(value))
+      }
+    }
+    service = new ConversationGeneratedArtifactService(store)
+    await writeFile(join(workspace, 'final.pdf'), 'final')
+    const input = {
+      runId: 'run-1', toolName: 'document.create', arguments: {},
+      scopeRoots: [workspace], output: { path: 'final.pdf' }
+    }
+    await expect(service.afterToolExecution(input)).rejects.toThrow('artifact store unavailable')
+    fail = false
+    await service.afterToolExecution(input)
+    expect((await new ConversationGeneratedArtifactService(store)
+      .finalizeRun({ runId: 'run-1', status: 'completed' }))?.generatedArtifacts).toHaveLength(1)
+  })
+
   it('promotes verified deliverables while cleaning process probes', async () => {
     const snapshot = await service.beforeToolExecution({
       runId: 'run-1',

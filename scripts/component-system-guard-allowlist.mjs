@@ -108,8 +108,8 @@ export const componentSystemGuardAllowlist = [
   baseline(
     "focus-visible",
     "src/styles.css",
-    44,
-    "6b6030c6abbde7f6b100f3423eaa5c73700df20e65f1164a55030a13cb8fa1d3",
+    43,
+    "ae322b400fed0cecdb4369f0ff9ac2db1e2c305261e4e8a8061c26331517d03b",
   ),
   baseline(
     "named-layer",
@@ -156,8 +156,8 @@ export const componentSystemGuardAllowlist = [
   baseline(
     "primitive-visual-copy",
     "src/styles.css",
-    130,
-    "a173ca245677d2c866a3df39578a9d81902bb450995444fb8d3249d73299ef06",
+    129,
+    "251c74b2fb26e110fd9975024f89821416b8bd995913fac81aaf960b870e038d",
   ),
   baseline(
     "tone-token",

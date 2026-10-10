@@ -5,6 +5,19 @@ import {
 } from './capability-localization'
 
 describe('capability localization', () => {
+  it('explains browser actions and profile approval in localized capability lists', () => {
+    const canonical = { name: 'Attach browser profile', description: 'Attach profile' }
+    expect(localizeBuiltinCapability('builtin.browser.attach', canonical, 'zh-CN')).toMatchObject({
+      name: '恢复浏览器配置', description: expect.stringContaining('明确授权')
+    })
+    expect(localizeBuiltinCapability('builtin.browser.attach', canonical, 'ja').name).toBe('ブラウザープロファイルを再開')
+    for (const action of ['create', 'attach', 'close', 'navigate', 'snapshot', 'click', 'fill', 'select', 'press', 'evaluate', 'wait_for', 'screenshot', 'upload', 'download']) {
+      const display = localizeBuiltinCapability(`builtin.browser.${action}`, { name: action, description: '' }, 'zh-CN')
+      expect(display.name).not.toContain('内置能力')
+      expect(display.description.length).toBeGreaterThan(12)
+    }
+  })
+
   it('uses exact, language, default, then canonical metadata', () => {
     const metadata = {
       'zh-CN': { name: '读取文件', description: '读取工作区文件' },

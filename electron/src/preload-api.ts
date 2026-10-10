@@ -27,6 +27,12 @@ export function createRealmFlowApi(
   return {
     platform,
     getSidecarStatus: () => invoke(IPC_QUERY_CHANNELS.sidecarGetStatus),
+    agentRuntime: {
+      get: (runId) => invoke(IPC_QUERY_CHANNELS.agentRuntimeGet, { runId }),
+      updateGoal: (command) => invoke(IPC_COMMAND_CHANNELS.agentRuntimeUpdateGoal, command),
+      steer: (command) => invoke(IPC_COMMAND_CHANNELS.agentRuntimeSteer, command),
+      cancel: (command) => invoke(IPC_COMMAND_CHANNELS.agentRuntimeCancel, command)
+    },
     conversationAttachments: {
       pick: (command) =>
         invoke(IPC_COMMAND_CHANNELS.conversationAttachmentPick, command),
@@ -443,12 +449,26 @@ export function createRealmFlowApi(
         invoke(IPC_COMMAND_CHANNELS.restorePrepare, command),
       restartForRestore: () => invoke(IPC_COMMAND_CHANNELS.restoreRestart)
     },
+    webProviders: {
+      get: () => invoke(IPC_QUERY_CHANNELS.webProviderGet),
+      save: (command) => invoke(IPC_COMMAND_CHANNELS.webProviderSave, command),
+    },
+    toolPolicy: {
+      get: (query) => invoke(IPC_QUERY_CHANNELS.toolPolicyGet, query),
+      preview: (query) => invoke(IPC_QUERY_CHANNELS.toolPolicyPreview, query),
+      save: (command) => invoke(IPC_COMMAND_CHANNELS.toolPolicySave, command),
+    },
     toolCatalog: {
       list: (query) => invoke(IPC_QUERY_CHANNELS.toolCatalogList, query),
       chooseAndImport: (command) =>
         invoke(IPC_COMMAND_CHANNELS.toolCatalogChooseAndImport, command),
       setActivation: (command) =>
         invoke(IPC_COMMAND_CHANNELS.toolCatalogSetActivation, command),
+      changePackageVersion: (command) =>
+        invoke(
+          IPC_COMMAND_CHANNELS.toolCatalogChangePackageVersion,
+          command
+        ),
       listMcpServers: () => invoke(IPC_QUERY_CHANNELS.mcpServerList),
       saveMcpServer: (command) =>
         invoke(IPC_COMMAND_CHANNELS.mcpServerSave, command),
@@ -458,6 +478,15 @@ export function createRealmFlowApi(
         invoke(IPC_COMMAND_CHANNELS.mcpServerTest, command),
       discoverMcpServer: (command) =>
         invoke(IPC_COMMAND_CHANNELS.mcpServerDiscover, command)
+    },
+    skillRegistry: {
+      list: () => invoke(IPC_QUERY_CHANNELS.skillRegistryList),
+      synchronize: () =>
+        invoke(IPC_COMMAND_CHANNELS.skillRegistrySynchronize),
+      review: (command) =>
+        invoke(IPC_COMMAND_CHANNELS.skillRegistryReview, command),
+      setActivation: (command) =>
+        invoke(IPC_COMMAND_CHANNELS.skillRegistrySetActivation, command)
     },
     toolPermissions: {
       listPending: () =>
@@ -590,6 +619,12 @@ export function createRealmFlowApi(
         subscribe(
           ipcRenderer,
           IPC_EVENT_CHANNELS.webWorkbenchStateChanged,
+          listener
+        ),
+      onAgentBrowserSurface: (listener) =>
+        subscribe(
+          ipcRenderer,
+          IPC_EVENT_CHANNELS.agentBrowserSurface,
           listener
         )
     },

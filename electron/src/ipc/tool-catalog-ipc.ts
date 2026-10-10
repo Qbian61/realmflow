@@ -15,6 +15,7 @@ import {
 } from '../../../shared/ipc-contract'
 import type {
   ChooseExtensionPackageCommand,
+  ChangeExtensionPackageVersionCommand,
   McpServerDto,
   SaveMcpServerCommandDto,
   ToolCatalogActivationCommand,
@@ -29,9 +30,14 @@ import type { ToolCatalogService } from '../application/tools/tool-catalog-servi
 import type { McpServerService } from '../application/tools/mcp-server-service'
 import type { McpServerRecord } from '../application/tools/mcp-server-store'
 import { requireNoIpcPayload } from './runtime-validation'
+import type { ToolPolicyConfigurationService } from '../application/tools/tool-policy-configuration-service'
 
 type RegisterToolCatalogIpcOptions = {
-  catalog: Pick<ToolCatalogService, 'list' | 'setActivation'>
+  policy?: Pick<ToolPolicyConfigurationService, 'get' | 'save' | 'preview'>
+  catalog: Pick<
+    ToolCatalogService,
+    'list' | 'setActivation' | 'changePackageVersion'
+  >
   importer: Pick<ExtensionCatalogImportService, 'importFromPath'>
   mcpServers: Pick<
     McpServerService,
@@ -48,6 +54,7 @@ type RegisterToolCatalogIpcOptions = {
 }
 
 export function registerToolCatalogIpc({
+  policy,
   catalog,
   importer,
   mcpServers,
@@ -55,6 +62,18 @@ export function registerToolCatalogIpc({
   ipcMain,
   dialog
 }: RegisterToolCatalogIpcOptions): void {
+  ipcMain.handle(IPC_QUERY_CHANNELS.toolPolicyGet, async (_event, query) => {
+    if (!policy) throw new Error('Tool policy service unavailable')
+    return policy.get(query)
+  })
+  ipcMain.handle(IPC_QUERY_CHANNELS.toolPolicyPreview, async (_event, query) => {
+    if (!policy) throw new Error('Tool policy service unavailable')
+    return policy.preview(query)
+  })
+  ipcMain.handle(IPC_COMMAND_CHANNELS.toolPolicySave, async (_event, command) => {
+    if (!policy) throw new Error('Tool policy service unavailable')
+    return policy.save(command)
+  })
   ipcMain.handle(IPC_QUERY_CHANNELS.toolCatalogList, async (_event, value) => {
     const { locale, modelFacingMode } = requireCatalogLocaleQuery(value)
     const state = await catalog.list({ modelFacingMode })
@@ -134,6 +153,16 @@ export function registerToolCatalogIpc({
     async (_event, value) => {
       const result = await catalog.setActivation(
         requireActivationCommand(value)
+      )
+      await onCatalogChanged?.()
+      return result
+    }
+  )
+  ipcMain.handle(
+    IPC_COMMAND_CHANNELS.toolCatalogChangePackageVersion,
+    async (_event, value) => {
+      const result = await catalog.changePackageVersion(
+        requirePackageVersionCommand(value)
       )
       await onCatalogChanged?.()
       return result
@@ -244,6 +273,38 @@ function requireActivationCommand(
       'Tool Catalog target ID'
     ),
     enabled: requireBoolean(command.enabled, 'Tool Catalog activation'),
+    idempotencyKey: requireIdempotencyKey(command.idempotencyKey)
+  }
+}
+
+function requirePackageVersionCommand(
+  value: unknown
+): ChangeExtensionPackageVersionCommand {
+  const command = requireObject(value, 'Tool Catalog package version command')
+  requireExactKeys(
+    command,
+    new Set([
+      'packageId',
+      'targetVersion',
+      'operation',
+      'idempotencyKey'
+    ]),
+    'Tool Catalog package version command'
+  )
+  return {
+    packageId: requireIdentifier(
+      command.packageId,
+      'Tool Catalog package ID'
+    ),
+    targetVersion: requireText(
+      command.targetVersion,
+      'Tool Catalog target version'
+    ),
+    operation: requireEnum(
+      command.operation,
+      new Set(['upgrade', 'rollback'] as const),
+      'Tool Catalog package version operation'
+    ),
     idempotencyKey: requireIdempotencyKey(command.idempotencyKey)
   }
 }

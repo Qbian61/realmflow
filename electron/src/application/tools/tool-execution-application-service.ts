@@ -9,6 +9,7 @@ import type {
   ToolDefinitionReference
 } from '../../../../domain/tool-definition'
 import type { ToolExecutionState } from '../../../../domain/tool-execution'
+import type { ToolPolicySnapshot } from '../../../../domain/tool-policy'
 import type { CapabilityScope } from '../../../../domain/capability'
 import type {
   BoundScopeAuthorization,
@@ -52,12 +53,21 @@ import {
 import type { ToolExecutionArtifactSnapshot } from '../conversation/conversation-generated-artifacts'
 import {
   projectModelFacingToolCatalog,
+  isAssistantRuntimeControl,
   resolveModelFacingFacadeInvocation
 } from './tool-model-facing-projection'
+import { directorySearchOutput, directoryDescribeOutput } from './tool-directory'
+import { ToolPermissionReuse } from './tool-permission-reuse'
 
 export type ToolExecutionCommand = {
   definition: ToolDefinitionReference
-  triggerSource: 'user' | 'model' | 'workflow' | 'schedule' | 'skill'
+  triggerSource:
+    | 'user'
+    | 'model'
+    | 'workflow'
+    | 'schedule'
+    | 'skill'
+    | 'hook'
   context: {
     scope:
       | { kind: 'requirement'; requirementId: string }
@@ -73,6 +83,7 @@ export type ToolExecutionCommand = {
     parentExecutionId?: string
     skillExecutionId?: string
     capabilityScopes?: CapabilityScope[]
+    toolPolicyDigest?: string
   }
   input: Record<string, unknown>
   connectorBindings?: unknown[]
@@ -116,6 +127,7 @@ type RuntimeInvocation = ResolvedRuntimeInvocation & {
   effectsDigest: string
   authorization: ToolAuthorizationDecision
   boundScopes: BoundScopeAuthorization[]
+  permissionFingerprint: string
   modelFacingFacade?: ToolFacadeDispatchMetadata
   modelFacingDirectory?: ToolDirectoryDispatchMetadata
 }
@@ -144,17 +156,33 @@ type AssistantRuntimeDependencies = {
     input: JsonObject,
     context: ToolExecutionCommand['context']
   ) => Promise<JsonObject>
-  runSessionCommand?: (
+  runAgentCommand?: (
+    toolId: string,
     input: JsonObject,
-    context: ToolExecutionCommand['context']
-  ) => Promise<JsonObject>
-  updateProgressCard?: (
-    input: JsonObject,
-    context: ToolExecutionCommand['context']
+    context: ToolExecutionCommand['context'],
+    requestId: string,
+    signal?: AbortSignal
   ) => Promise<JsonObject>
   runCapabilityCommand?: (
     input: JsonObject,
-    context: ToolExecutionCommand['context']
+    context: ToolExecutionCommand['context'],
+    requestId: string
+  ) => Promise<JsonObject>
+  runGatewayCommand?: (
+    input: JsonObject,
+    context: ToolExecutionCommand['context'],
+    requestId: string
+  ) => Promise<JsonObject>
+  runAutomationCommand?: (
+    input: JsonObject,
+    context: ToolExecutionCommand['context'],
+    requestId: string
+  ) => Promise<JsonObject>
+  runMediaCommand?: (
+    input: JsonObject,
+    context: ToolExecutionCommand['context'],
+    requestId: string,
+    signal?: AbortSignal
   ) => Promise<JsonObject>
 }
 
@@ -200,6 +228,16 @@ type Dependencies = {
       output?: JsonObject
     }): Promise<void>
   }
+  pluginHooks?: {
+    dispatch(
+      event: {
+        id: string
+        event: 'tool.completed'
+        payload: JsonObject
+      },
+      context: ToolExecutionCommand['context']
+    ): Promise<unknown>
+  }
   resolveScopeRoots(command: ToolExecutionCommand): Promise<string[]>
   resolveBoundScopes?: (
     command: ToolExecutionCommand,
@@ -216,6 +254,11 @@ type Dependencies = {
     command: ToolExecutionCommand
   ) => Promise<ToolDefinition | undefined>
   assistantRuntime?: AssistantRuntimeDependencies
+  mediaRuntime?: {
+    definitions(catalog: ToolCatalogState): Promise<ToolDefinition[]>
+  }
+  /** Main-owned lookup. Never accept authorization supplied by Renderer/model. */
+  resolveRunPolicy?: (command: ToolExecutionCommand) => Promise<ToolPolicySnapshot | undefined>
   now?: () => number
   createId?: () => string
 }
@@ -234,6 +277,7 @@ class ToolArgumentValidationError extends Error {
 const PROJECTION_BATCH_SIZE = 1_000
 
 export class ToolExecutionApplicationService {
+  private readonly permissionReuse: ToolPermissionReuse
   private readonly now: () => number
   private readonly createId: () => string
   private readonly pending = new Map<string, RuntimeInvocation>()
@@ -246,6 +290,7 @@ export class ToolExecutionApplicationService {
   >()
 
   constructor(private readonly dependencies: Dependencies) {
+    this.permissionReuse = new ToolPermissionReuse(dependencies.events)
     this.now = dependencies.now ?? Date.now
     this.createId = dependencies.createId ?? randomUUID
   }
@@ -253,7 +298,14 @@ export class ToolExecutionApplicationService {
   async prepare(
     command: ToolExecutionCommand
   ): Promise<PrepareToolExecutionResult> {
-    const executable = await this.resolveExecutableInvocation(command)
+    const policy = await this.dependencies.resolveRunPolicy?.(command)
+    if (!policyAllows(policy, command.definition)) {
+      return { outcome: 'permission_denied', permissionRequests: [] }
+    }
+    const executable = await this.resolveExecutableInvocation(command, policy)
+    if (!policyAllows(policy, referenceOf(executable.definition))) {
+      return { outcome: 'permission_denied', permissionRequests: [] }
+    }
     const resolved = await this.prepareRuntime(
       executable.command,
       executable.definition,
@@ -296,14 +348,27 @@ export class ToolExecutionApplicationService {
   async execute(
     command: ToolExecutionCommand & {
       idempotencyKey: string
-    }
+    },
+    signal?: AbortSignal
   ): Promise<ExecuteToolExecutionResult> {
-    const directoryControl = await this.executeDirectoryControlTool(command)
+    const policy = await this.dependencies.resolveRunPolicy?.(command)
+    if (policy) command = {
+      ...command, context: { ...command.context, toolPolicyDigest: policy.digest },
+    }
+    if (!policyAllows(policy, command.definition)) {
+      return this.recordPolicyDenial(command)
+    }
+    const directoryControl = await this.executeDirectoryControlTool(command, policy)
     if (directoryControl) return directoryControl
-    const runtimeControl = await this.executeAssistantRuntimeTool(command)
+    const runtimeControl = await this.executeAssistantRuntimeTool(command, signal)
     if (runtimeControl) return runtimeControl
+    const mediaControl = await this.executeMediaProviderTool(command, signal)
+    if (mediaControl) return mediaControl
 
-    const executable = await this.resolveExecutableInvocation(command)
+    const executable = await this.resolveExecutableInvocation(command, policy)
+    if (!policyAllows(policy, referenceOf(executable.definition))) {
+      return this.recordPolicyDenial(command)
+    }
 
     const executionId = this.createId()
     const attemptId = this.createId()
@@ -334,6 +399,7 @@ export class ToolExecutionApplicationService {
     const initialEvents = [
       this.event('tool.invocation_requested', {
         executionId,
+        ...(policy ? { toolPolicyDigest: policy.digest } : {}),
         definition: {
           id: executable.definition.id,
           version: executable.definition.version,
@@ -566,6 +632,28 @@ export class ToolExecutionApplicationService {
       await this.dependencies.aiRuns.submitToolResult(runId, result)
       return
     }
+    if (message.topic === 'plugin_hook.dispatch') {
+      if (!this.dependencies.pluginHooks) return
+      const eventId = message.payload.eventId
+      const context = message.payload.context
+      const payload = message.payload.payload
+      if (
+        typeof eventId !== 'string' ||
+        !isRecord(context) ||
+        !isRecord(payload)
+      ) {
+        throw new Error('Plugin Hook dispatch message is invalid')
+      }
+      await this.dependencies.pluginHooks.dispatch(
+        {
+          id: eventId,
+          event: 'tool.completed',
+          payload
+        },
+        context as ToolExecutionCommand['context']
+      )
+      return
+    }
     if (
       message.topic !== 'tool.dispatch' ||
       typeof message.payload.executionId !== 'string'
@@ -576,6 +664,10 @@ export class ToolExecutionApplicationService {
     const runtime = this.pending.get(executionId)
     if (!runtime) {
       await this.interruptUnavailable(executionId, message.id)
+      return
+    }
+    if (!await this.pendingPolicyValid(runtime)) {
+      await this.interruptUnavailable(executionId, message.id, 'tool_policy_changed')
       return
     }
     const controller = new AbortController()
@@ -644,6 +736,24 @@ export class ToolExecutionApplicationService {
       this.active.delete(executionId)
     }
     if (result.outcome === 'succeeded') {
+      let valid = false
+      try {
+        valid = new Ajv2020({ strict: true, allErrors: false })
+          .compile(runtime.definition.outputSchema)(result.output) === true
+      } catch {
+        // Invalid declarations fail closed without exposing schema or output values.
+      }
+      if (!valid) result = {
+        outcome: 'failed',
+        error: {
+          code: 'tool_output_invalid',
+          message: 'Tool output does not satisfy its declared schema',
+          retryable: false,
+        },
+        metrics: result.metrics,
+      }
+    }
+    if (result.outcome === 'succeeded') {
       await this.dependencies.generatedArtifacts?.afterToolExecution({
         runId: runtime.command.context.parentExecutionId,
         toolName,
@@ -691,6 +801,14 @@ export class ToolExecutionApplicationService {
       await this.catchUpProjection()
       throw new Error('permission_runtime_state_lost')
     }
+    if (command.decision !== 'deny' && !await this.pendingPolicyValid(runtime)) {
+      await this.interruptUnavailable(
+        request.executionId, `permission:${request.id}:policy-changed`, 'tool_policy_changed'
+      )
+      await this.catchUpProjection()
+      await this.drainOutbox()
+      throw new Error('tool_policy_changed')
+    }
     const planned = await this.dependencies.adapters.planEffects(
       runtime.binding,
       runtime.invocation
@@ -712,6 +830,12 @@ export class ToolExecutionApplicationService {
     ) {
       throw new Error('permission_context_changed')
     }
+    const policy = await this.dependencies.resolveRunPolicy?.(runtime.command)
+    if (this.permissionReuse.fingerprint({
+      command: runtime.command, definition: runtime.definition,
+      bindingId: runtime.binding.bindingId, effects: planned.effects,
+      boundScopes: currentScopes, policyDigest: policy?.digest
+    }) !== runtime.permissionFingerprint) throw new Error('permission_context_changed')
 
     const stream = await this.dependencies.events.loadStream(
       request.executionId
@@ -727,23 +851,28 @@ export class ToolExecutionApplicationService {
       occurredAt: at
     }
     const nextRevision = request.requestRevision + 1
+    const reusableGrant = command.decision === 'allow_session' || command.decision === 'allow_always'
+      ? this.permissionReuse.createGrant(runtime.permissionFingerprint,
+          permissionSessionId(runtime.command), command.decision)
+      : undefined
     const decisionEvent = this.event(
       'tool.permission_decided',
       {
         requestId: request.id,
         requestRevision: nextRevision,
         outcome:
-          command.decision === 'allow_once' ? 'authorized' : 'denied',
+          command.decision !== 'deny' ? 'authorized' : 'denied',
         decision: command.decision,
         grantIds: [],
+        ...(reusableGrant ? { reusableGrant } : {}),
         resolvedAt: at
       },
       metadata
     )
     const dispatchId =
-      command.decision === 'allow_once' ? this.createId() : undefined
+      command.decision !== 'deny' ? this.createId() : undefined
     const events =
-      command.decision === 'allow_once'
+      command.decision !== 'deny'
         ? [
             decisionEvent,
             this.event(
@@ -768,7 +897,7 @@ export class ToolExecutionApplicationService {
             )
           ]
     const outbox: Parameters<ToolEventStore['append']>[0]['outbox'] =
-      command.decision === 'allow_once'
+      command.decision !== 'deny'
         ? [
             {
               id: dispatchId!,
@@ -943,6 +1072,13 @@ export class ToolExecutionApplicationService {
       ) {
         continue
       }
+      if (!await this.pendingPolicyValid(restoredRuntime)) {
+        await this.interruptUnavailable(
+          request.executionId, `restore:${request.id}:policy-changed`, 'tool_policy_changed',
+          restoredRuntime,
+        )
+        continue
+      }
       const definition = await this.resolveDefinition(
         restoredRuntime.command.definition,
         restoredRuntime.command
@@ -963,7 +1099,15 @@ export class ToolExecutionApplicationService {
       })
       restored += 1
     }
+    await this.catchUpProjection()
     return restored
+  }
+
+  private async pendingPolicyValid(runtime: PersistedPendingRuntime): Promise<boolean> {
+    const policy = await this.dependencies.resolveRunPolicy?.(runtime.command)
+    const digest = runtime.command.context.toolPolicyDigest
+    return (!digest || policy?.digest === digest) &&
+      policyAllows(policy, runtime.command.definition)
   }
 
   private async resolveDefinition(
@@ -1002,12 +1146,13 @@ export class ToolExecutionApplicationService {
   }
 
   private async resolveExecutableInvocation(
-    command: ToolExecutionCommand
+    command: ToolExecutionCommand,
+    policy?: ToolPolicySnapshot,
   ): Promise<ExecutableToolInvocation> {
     if (command.definition.kind !== 'tool') {
       throw new Error('Skill execution requires the model Tool Loop')
     }
-    const catalog = await this.dependencies.projections.getCatalog()
+    const catalog = await this.directoryCatalog(command, policy)
     const item = catalog.tools.find(
       (candidate) =>
         candidate.id === command.definition.id &&
@@ -1140,7 +1285,7 @@ export class ToolExecutionApplicationService {
         command,
         runtime.invocation.scopeRoots
       )) ?? defaultBoundScopes(command, runtime.invocation.scopeRoots, this.now())
-    const authorization = authorizeToolEffects({
+    let authorization = authorizeToolEffects({
       effects: planned.effects,
       risk: runtime.definition.risk,
       context: permissionContext(command),
@@ -1153,12 +1298,26 @@ export class ToolExecutionApplicationService {
       explicitGrants:
         (await this.dependencies.listPermissionGrants?.(command)) ?? []
     })
+    const policy = await this.dependencies.resolveRunPolicy?.(command)
+    const permissionFingerprint = this.permissionReuse.fingerprint({
+      command, definition: runtime.definition, bindingId: runtime.binding.bindingId,
+      effects: planned.effects, boundScopes, policyDigest: policy?.digest
+    })
+    if (authorization.outcome === 'ask') {
+      const grantId = await this.permissionReuse.matchingGrant(
+        permissionFingerprint, permissionSessionId(command)
+      )
+      if (grantId) authorization = {
+        outcome: 'authorized', source: 'explicit_grant', grantIds: [grantId]
+      }
+    }
     return {
       ...runtime,
       effects: planned.effects,
       effectsDigest: toolExecutionDigest(planned.effects),
       authorization,
       boundScopes,
+      permissionFingerprint,
       ...(modelFacingFacade ? { modelFacingFacade } : {}),
       ...(modelFacingDirectory ? { modelFacingDirectory } : {})
     }
@@ -1210,9 +1369,10 @@ export class ToolExecutionApplicationService {
   }
 
   private async executeDirectoryControlTool(
-    command: ToolExecutionCommand & { idempotencyKey: string }
+    command: ToolExecutionCommand & { idempotencyKey: string },
+    policy?: ToolPolicySnapshot
   ): Promise<ExecuteToolExecutionResult | undefined> {
-    const catalog = await this.dependencies.projections.getCatalog()
+    const catalog = await this.directoryCatalog(command, policy)
     const control = findDirectoryControlTool(catalog, command.definition)
     if (!control) return undefined
     this.validateArguments(control.definition, command.input)
@@ -1239,10 +1399,14 @@ export class ToolExecutionApplicationService {
       })
     }
 
+    const authorizedCatalog = {
+      ...catalog,
+      tools: catalog.tools.filter(({ definition }) => policyAllows(policy, referenceOf(definition))),
+    }
     const output =
       control.id === 'tool_search'
-        ? directorySearchOutput(catalog, command.input)
-        : directoryDescribeOutput(catalog, command.input)
+        ? directorySearchOutput(authorizedCatalog, command.input)
+        : directoryDescribeOutput(authorizedCatalog, command.input)
     return this.recordDirectoryControlResult({
       command,
       definition: control.definition,
@@ -1251,8 +1415,34 @@ export class ToolExecutionApplicationService {
     })
   }
 
+  private async directoryCatalog(
+    command: ToolExecutionCommand, policy?: ToolPolicySnapshot,
+  ): Promise<ToolCatalogState> {
+    const catalog = await this.dependencies.projections.getCatalog()
+    if (!policy || !['tool_search', 'tool_describe', 'tool_call'].includes(command.definition.id)) return catalog
+    const tools = [...catalog.tools]
+    for (const grant of policy.grants) {
+      if (command.definition.id !== 'tool_search' && grant.id !== command.input.id) continue
+      if (tools.some((item) => item.id === grant.id && item.version === grant.version &&
+        item.definitionDigest === grant.digest)) continue
+      const definition = await this.dependencies.resolveDefinition?.(grant, command)
+      if (!definition || definition.id !== grant.id || definition.version !== grant.version ||
+        definition.definitionDigest !== grant.digest) continue
+      tools.push({
+        kind: 'tool', id: definition.id, version: definition.version,
+        definitionDigest: definition.definitionDigest, definition,
+        enabledPreference: true, status: 'enabled', dependencyIssues: [], revision: 0, updatedAt: 0,
+      })
+    }
+    // Prefer the exact run grant when multiple catalog versions share an ID.
+    tools.sort((a, b) => Number(policyAllows(policy, referenceOf(b.definition))) -
+      Number(policyAllows(policy, referenceOf(a.definition))))
+    return { ...catalog, tools }
+  }
+
   private async executeAssistantRuntimeTool(
-    command: ToolExecutionCommand & { idempotencyKey: string }
+    command: ToolExecutionCommand & { idempotencyKey: string },
+    signal?: AbortSignal
   ): Promise<ExecuteToolExecutionResult | undefined> {
     const catalog = await this.dependencies.projections.getCatalog()
     const control = findAssistantRuntimeControlTool(catalog, command.definition)
@@ -1277,28 +1467,33 @@ export class ToolExecutionApplicationService {
               'secrets'
             )(runtimeInput, command.context)
           )
-        : control.id === 'sessions'
-          ? sanitizeSessionsOutput(
-              await requireRuntimeDependency(
-                dependency?.runSessionCommand,
-                'sessions'
-              )(runtimeInput, command.context)
-            )
-          : control.id === 'progress_card'
-            ? sanitizeRuntimeOutput(
-                await requireRuntimeDependency(
-                  dependency?.updateProgressCard,
-                  'progress_card'
-                )(runtimeInput, command.context)
-              )
-            : control.id === 'capabilities'
+        : control.id === 'capabilities'
               ? sanitizeRuntimeOutput(
                   await requireRuntimeDependency(
                     dependency?.runCapabilityCommand,
                     'capabilities'
-                  )(runtimeInput, command.context)
+                  )(runtimeInput, command.context, command.idempotencyKey)
                 )
-              : undefined
+          : control.id === 'gateway'
+              ? sanitizeRuntimeOutput(
+                  await requireRuntimeDependency(
+                    dependency?.runGatewayCommand,
+                    'gateway'
+                  )(runtimeInput, command.context, command.idempotencyKey)
+                )
+          : control.id === 'automation'
+              ? sanitizeRuntimeOutput(
+                  await requireRuntimeDependency(
+                    dependency?.runAutomationCommand,
+                    'automation'
+                  )(runtimeInput, command.context, command.idempotencyKey)
+                )
+              : control.id === 'subagents' ? undefined
+                : (control.id === 'sessions' ? sanitizeSessionsOutput : sanitizeRuntimeOutput)(
+                  await requireRuntimeDependency(dependency?.runAgentCommand, control.id)(
+                    control.id, runtimeInput, command.context, command.idempotencyKey, signal
+                  )
+                )
     if (!output) return undefined
     return this.recordRuntimeControlResult({
       command,
@@ -1306,6 +1501,94 @@ export class ToolExecutionApplicationService {
       status: 'succeeded',
       output,
       resultSummary: `${control.definition.name} completed`
+    })
+  }
+
+  private async executeMediaProviderTool(
+    command: ToolExecutionCommand & { idempotencyKey: string },
+    signal?: AbortSignal
+  ): Promise<ExecuteToolExecutionResult | undefined> {
+    if (!this.dependencies.mediaRuntime) return undefined
+    const catalog = await this.dependencies.projections.getCatalog()
+    const definition = (
+      await this.dependencies.mediaRuntime.definitions(catalog)
+    ).find(
+      (candidate) =>
+        candidate.id === command.definition.id &&
+        candidate.version === command.definition.version &&
+        candidate.definitionDigest === command.definition.digest &&
+        candidate.executor.kind === 'builtin' &&
+        candidate.executor.handler === 'media-provider-runtime'
+    )
+    if (!definition) return undefined
+    this.validateArguments(definition, command.input)
+    const scopeRoots =
+      await this.dependencies.resolveScopeRoots(command)
+    const runtimeInput: JsonObject = {
+      definition: {
+        kind: command.definition.kind,
+        id: command.definition.id,
+        version: command.definition.version,
+        digest: command.definition.digest
+      },
+      input: cloneJsonObject(command.input, 'Media input'),
+      scopeRoots: [...scopeRoots]
+    }
+    let response: JsonObject
+    try {
+      response = await requireRuntimeDependency(
+        this.dependencies.assistantRuntime?.runMediaCommand,
+        'media'
+      )(
+        runtimeInput,
+        command.context,
+        command.idempotencyKey,
+        signal ?? new AbortController().signal
+      )
+    } catch (error) {
+      const code =
+        error instanceof Error &&
+        /^media_[a-z_]+$/.test(error.message)
+          ? error.message
+          : 'media_execution_failed'
+      return this.recordDirectoryControlResult({
+        command,
+        definition,
+        status: 'failed',
+        error: {
+          code,
+          message: 'Media generation failed'
+        }
+      })
+    }
+    if (!isRecord(response.output)) {
+      return this.recordDirectoryControlResult({
+        command,
+        definition,
+        status: 'failed',
+        error: {
+          code: 'media_output_invalid',
+          message: 'Media generation returned an invalid output'
+        }
+      })
+    }
+    const output = cloneJsonObject(response.output, 'Media output')
+    const artifact = isRecord(response.artifact)
+      ? cloneJsonObject(response.artifact, 'Media artifact')
+      : undefined
+    await this.dependencies.generatedArtifacts?.afterToolExecution({
+      runId: command.context.parentExecutionId,
+      toolName: definition.id,
+      arguments: cloneJsonObject(command.input, 'Media arguments'),
+      scopeRoots,
+      output
+    })
+    return this.recordDirectoryControlResult({
+      command,
+      definition,
+      status: 'succeeded',
+      output,
+      artifact
     })
   }
 
@@ -1348,6 +1631,8 @@ export class ToolExecutionApplicationService {
       events: [
         this.event('tool.invocation_requested', {
           executionId,
+          ...(input.command.context.toolPolicyDigest
+            ? { toolPolicyDigest: input.command.context.toolPolicyDigest } : {}),
           definition: {
             id: input.definition.id,
             version: input.definition.version,
@@ -1439,6 +1724,8 @@ export class ToolExecutionApplicationService {
     status: 'succeeded' | 'failed'
     output?: JsonObject
     error?: { code: string; message: string }
+    policyDenied?: boolean
+    artifact?: JsonObject
   }): Promise<ExecuteToolExecutionResult> {
     const executionId = this.createId()
     const commandId = this.createId()
@@ -1449,6 +1736,15 @@ export class ToolExecutionApplicationService {
     const effectsDigest = toolExecutionDigest([])
     const resultEvents = input.status === 'succeeded'
       ? [
+          ...(input.artifact
+            ? [
+                this.event(
+                  'tool.artifact_produced',
+                  { attempt, ...input.artifact },
+                  metadata
+                )
+              ]
+            : []),
           this.event(
             'tool.attempt_succeeded',
             {
@@ -1462,6 +1758,7 @@ export class ToolExecutionApplicationService {
           this.event('tool.completed', { completedAt: at }, metadata)
         ]
       : [
+          ...(!input.policyDenied ? [
           this.event(
             'tool.attempt_failed',
             {
@@ -1478,6 +1775,7 @@ export class ToolExecutionApplicationService {
             },
             metadata
           ),
+          ] : []),
           this.event(
             'tool.failed',
             {
@@ -1493,15 +1791,6 @@ export class ToolExecutionApplicationService {
             metadata
           )
         ]
-    const outbox = directoryControlOutbox({
-      command: input.command,
-      executionId,
-      output: input.output,
-      error: input.error,
-      status: input.status,
-      createId: this.createId,
-      now: this.now
-    })
     const append = await this.dependencies.events.append({
       streamId: executionId,
       streamType: 'tool_execution',
@@ -1518,6 +1807,8 @@ export class ToolExecutionApplicationService {
       events: [
         this.event('tool.invocation_requested', {
           executionId,
+          ...(input.command.context.toolPolicyDigest
+            ? { toolPolicyDigest: input.command.context.toolPolicyDigest } : {}),
           definition: {
             id: input.definition.id,
             version: input.definition.version,
@@ -1526,7 +1817,7 @@ export class ToolExecutionApplicationService {
           context: toolRuntimeContext(input.command, commandId),
           requestedBy: toolRequestedBy(input.command)
         }, metadata),
-        this.event('tool.arguments_validated', {
+        ...(!input.policyDenied ? [this.event('tool.arguments_validated', {
           argumentsDigest: toolExecutionDigest(input.command.input)
         }, metadata),
         this.event('tool.binding_resolved', {
@@ -1542,10 +1833,12 @@ export class ToolExecutionApplicationService {
           grantIds: []
         }, metadata),
         this.event('tool.dispatch_enqueued', { dispatchId }, metadata),
-        this.event('tool.attempt_started', { attempt, startedAt: at }, metadata),
+        this.event('tool.attempt_started', { attempt, startedAt: at }, metadata)] : []),
         ...resultEvents
       ],
-      outbox
+      // Synchronous results are returned to the Coordinator, including replay.
+      // Only suspended invocations use the asynchronous result outbox.
+      outbox: []
     })
     if (append.status === 'idempotency_conflict') {
       throw new Error('Tool execution idempotency key conflicts')
@@ -1558,12 +1851,30 @@ export class ToolExecutionApplicationService {
         ? append.result.executionId
         : executionId
     await this.catchUpProjection()
-    if (append.status === 'appended' && outbox.length > 0) {
-      await this.drainOutbox()
-    }
     const state = await this.dependencies.projections.getExecution(confirmedExecutionId)
     if (!state) throw new Error('Tool execution projection is unavailable')
-    return { outcome: 'executed', execution: toolExecutionRecord(state) }
+    return {
+      outcome: 'executed', execution: toolExecutionRecord(state)
+    }
+  }
+
+  private async recordPolicyDenial(
+    command: ToolExecutionCommand & { idempotencyKey: string }
+  ): Promise<ExecuteToolExecutionResult> {
+    const catalog = await this.dependencies.projections.getCatalog()
+    const candidates = [
+      ...projectModelFacingToolCatalog(catalog, 'facade').tools,
+      ...projectModelFacingToolCatalog(catalog, 'directory').tools,
+    ]
+    const definition = candidates.find((item) =>
+      item.id === command.definition.id && item.version === command.definition.version &&
+      item.definitionDigest === command.definition.digest,
+    )?.definition ?? await this.dependencies.resolveDefinition?.(command.definition, command)
+    if (!definition) throw new Error('Tool definition is unavailable')
+    return this.recordDirectoryControlResult({
+      command, definition, status: 'failed', policyDenied: true,
+      error: { code: 'tool_policy_denied', message: 'Tool is denied by the effective run policy' },
+    })
   }
 
   private recordRuntimeControlResult(input: {
@@ -1611,13 +1922,20 @@ export class ToolExecutionApplicationService {
         ],
         'system',
         'realmflow',
-        this.terminalResultOutbox(runtime, executionId, {
-          callId: runtime.command.context.toolCallId!,
-          status: 'completed',
-          output: result.output,
-          toolExecutionId: executionId,
-          resultSummary: 'Tool execution completed'
-        })
+        [
+          ...this.terminalResultOutbox(runtime, executionId, {
+            callId: runtime.command.context.toolCallId!,
+            status: 'completed',
+            output: result.output,
+            toolExecutionId: executionId,
+            resultSummary: 'Tool execution completed'
+          }),
+          ...this.pluginHookOutbox(
+            runtime,
+            executionId,
+            result.output
+          )
+        ]
       )
       return
     }
@@ -1700,7 +2018,7 @@ export class ToolExecutionApplicationService {
   }
 
   private terminalResultOutbox(
-    runtime: RuntimeInvocation,
+    runtime: PersistedPendingRuntime,
     executionId: string,
     result: AiRunToolResult
   ): Parameters<ToolEventStore['append']>[0]['outbox'] {
@@ -1723,8 +2041,37 @@ export class ToolExecutionApplicationService {
     }]
   }
 
-  private terminalFailureOutbox(
+  private pluginHookOutbox(
     runtime: RuntimeInvocation,
+    executionId: string,
+    output: JsonObject
+  ): Parameters<ToolEventStore['append']>[0]['outbox'] {
+    if (
+      !this.dependencies.pluginHooks ||
+      runtime.command.triggerSource === 'hook'
+    ) {
+      return []
+    }
+    return [{
+      id: this.createId(),
+      topic: 'plugin_hook.dispatch',
+      messageKey: executionId,
+      payload: {
+        eventId: `tool-completed:${executionId}`,
+        context: runtime.command.context,
+        payload: {
+          executionId,
+          toolId: runtime.definition.id,
+          output
+        }
+      },
+      headers: {},
+      availableAt: this.now()
+    }]
+  }
+
+  private terminalFailureOutbox(
+    runtime: PersistedPendingRuntime,
     executionId: string,
     error: { code: string; message: string }
   ): Parameters<ToolEventStore['append']>[0]['outbox'] {
@@ -1739,8 +2086,13 @@ export class ToolExecutionApplicationService {
 
   private async interruptUnavailable(
     executionId: string,
-    dispatchId: string
+    dispatchId: string,
+    code = 'tool_runtime_state_lost',
+    runtime: PersistedPendingRuntime | undefined = this.pending.get(executionId),
   ): Promise<void> {
+    const message = code === 'tool_policy_changed'
+      ? 'Tool policy changed before dispatch'
+      : 'Tool runtime state was lost before dispatch'
     await this.appendExecutionEvents(
       executionId,
       `${dispatchId}:unavailable`,
@@ -1750,15 +2102,16 @@ export class ToolExecutionApplicationService {
           payload: {
             interruptedAt: this.now(),
             error: {
-              code: 'tool_runtime_state_lost',
-              message: 'Tool runtime state was lost before dispatch',
+              code,
+              message,
               retryable: false
             }
           }
         }
       ],
       'recovery',
-      'realmflow'
+      'realmflow',
+      runtime ? this.terminalFailureOutbox(runtime, executionId, { code, message }) : [],
     )
     this.pending.delete(executionId)
     await this.dependencies.pendingCheckpoints.delete(executionId)
@@ -1894,6 +2247,17 @@ export class ToolExecutionApplicationService {
   }
 }
 
+function referenceOf(definition: ToolDefinition): ToolDefinitionReference {
+  return { kind: 'tool', id: definition.id, version: definition.version, digest: definition.definitionDigest }
+}
+
+function policyAllows(policy: ToolPolicySnapshot | undefined, reference: ToolDefinitionReference): boolean {
+  return !policy || policy.grants.some((grant) =>
+    grant.kind === reference.kind && grant.id === reference.id &&
+    grant.version === reference.version && grant.digest === reference.digest,
+  )
+}
+
 function permissionContext(
   command: ToolExecutionCommand
 ): {
@@ -1912,6 +2276,13 @@ function permissionContext(
       ? { workspaceId: command.context.workspaceId }
       : {})
   }
+}
+
+function permissionSessionId(command: ToolExecutionCommand): string {
+  return command.context.conversationId ?? command.context.nodeRunId ??
+    command.context.scheduleRunId ??
+    (command.context.scope.kind === 'conversation'
+      ? command.context.scope.conversationId : 'realmflow')
 }
 
 function toolNameForRuntime(runtime: RuntimeInvocation): string {
@@ -1987,19 +2358,10 @@ function findDirectoryControlTool(
 function findAssistantRuntimeControlTool(
   catalog: ToolCatalogState,
   reference: ToolDefinitionReference
-): (ToolCatalogItem & {
-  id: 'ask_user' | 'secrets' | 'sessions' | 'subagents' | 'progress_card' | 'capabilities'
-}) | undefined {
+): ToolCatalogItem | undefined {
   if (
     reference.kind !== 'tool' ||
-    ![
-      'ask_user',
-      'secrets',
-      'sessions',
-      'subagents',
-      'progress_card',
-      'capabilities'
-    ].includes(reference.id)
+    !isAssistantRuntimeControl(reference.id)
   ) {
     return undefined
   }
@@ -2011,17 +2373,7 @@ function findAssistantRuntimeControlTool(
       candidate.status === 'enabled' &&
       candidate.modelFacing?.kind === 'facade'
   )
-  return projected as
-    | (ToolCatalogItem & {
-        id:
-          | 'ask_user'
-          | 'secrets'
-          | 'sessions'
-          | 'subagents'
-          | 'progress_card'
-          | 'capabilities'
-      })
-    | undefined
+  return projected
 }
 
 function findDirectoryCatalogTool(
@@ -2033,139 +2385,14 @@ function findDirectoryCatalogTool(
   )
 }
 
-function directorySearchOutput(
-  catalog: ToolCatalogState,
-  input: Record<string, unknown>
-): JsonObject {
-  const query = String(input.query ?? '').trim().toLowerCase()
-  const terms = query.split(/\s+/).filter(Boolean)
-  const limit = typeof input.limit === 'number'
-    ? Math.min(50, Math.max(1, Math.trunc(input.limit)))
-    : 10
-  const candidates = projectModelFacingToolCatalog(catalog, 'directory').tools
-    .filter(
-      (tool) =>
-        tool.status === 'enabled' &&
-        tool.modelFacing?.kind === 'primitive' &&
-        tool.modelFacing.visibility === 'directory_only'
-    )
-    .map((tool) => ({
-      tool,
-      score: directorySearchScore(tool, terms)
-    }))
-    .filter(({ score }) => score > 0)
-    .sort((left, right) =>
-      right.score - left.score || left.tool.id.localeCompare(right.tool.id)
-    )
-    .slice(0, limit)
-    .map(({ tool }) => compactDirectoryCandidate(tool))
-  return { candidates }
-}
-
-function directoryDescribeOutput(
-  catalog: ToolCatalogState,
-  input: Record<string, unknown>
-): JsonObject {
-  const id = typeof input.id === 'string' ? input.id : ''
-  const tool = findDirectoryCatalogTool(catalog, id)
-  if (
-    !tool ||
-    tool.modelFacing?.kind !== 'primitive' ||
-    tool.modelFacing.visibility !== 'directory_only'
-  ) {
-    return {
-      error: {
-        code: 'directory_tool_not_found',
-        message: `Tool ${id} is not available in the hidden directory.`
-      }
-    }
-  }
-  return {
-    ...compactDirectoryCandidate(tool),
-    version: tool.version,
-    definitionDigest: tool.definitionDigest,
-    capabilities: [...tool.definition.capabilities],
-    effects: [...tool.definition.effects],
-    visibility: tool.modelFacing.visibility,
-    definition: cloneJsonObject(
-      tool.definition as unknown as JsonObject,
-      'Tool definition'
-    )
-  }
-}
-
-function compactDirectoryCandidate(tool: ToolCatalogItem): JsonObject {
-  const hint = inputHint(tool.definition)
-  return {
-    id: tool.id,
-    name: tool.definition.name,
-    source: directoryToolSource(tool),
-    description: tool.definition.description,
-    risk: tool.definition.risk,
-    ...(hint ? { inputHint: hint } : {})
-  }
-}
-
-function directoryToolSource(
-  tool: ToolCatalogItem
-): 'builtin' | 'facade' | 'mcp' | 'connector' | 'capability' {
-  if (tool.modelFacing?.kind === 'facade') return 'facade'
-  if (
-    tool.definition.executor.kind === 'mcp' ||
-    tool.definition.origin === 'mcp'
-  ) {
-    return 'mcp'
-  }
-  if (tool.definition.executor.kind === 'connector') return 'connector'
-  if (tool.definition.origin === 'local_upload') return 'capability'
-  return 'builtin'
-}
-
-function directorySearchScore(
-  tool: ToolCatalogItem,
-  terms: string[]
-): number {
-  const id = tool.id.toLowerCase()
-  const name = tool.definition.name.toLowerCase()
-  const searchable = [
-    id,
-    name,
-    tool.definition.description,
-    ...tool.definition.tags,
-    ...tool.definition.capabilities,
-    ...tool.definition.effects,
-    ...tool.definition.discovery.intents
-  ].join(' ').toLowerCase()
-  return terms.reduce((score, term) => {
-    if (id === term) return score + 10
-    if (id.includes(term)) return score + 5
-    if (name.includes(term)) return score + 4
-    return searchable.includes(term) ? score + 1 : score
-  }, 0)
-}
-
-function inputHint(definition: ToolDefinition): string | undefined {
-  const properties = definition.inputSchema.properties
-  if (!isRecord(properties)) return undefined
-  const required = Array.isArray(definition.inputSchema.required)
-    ? definition.inputSchema.required.filter((item): item is string =>
-        typeof item === 'string'
-      )
-    : []
-  const keys = required.length > 0 ? required : Object.keys(properties)
-  return keys.slice(0, 4).join(', ')
-}
-
 function outputByteLength(output: JsonObject): number {
   return Buffer.byteLength(JSON.stringify(output))
 }
 
-function requireRuntimeDependency(
-  dependency:
-    | ((input: JsonObject, context: ToolExecutionCommand['context']) => Promise<JsonObject>)
-    | undefined,
+function requireRuntimeDependency<T>(
+  dependency: T | undefined,
   toolId: string
-): (input: JsonObject, context: ToolExecutionCommand['context']) => Promise<JsonObject> {
+): T {
   if (!dependency) {
     throw Object.assign(new Error(`Assistant runtime dependency is unavailable: ${toolId}`), {
       code: 'assistant_runtime_unavailable'
@@ -2268,46 +2495,6 @@ function isSensitiveRuntimeKey(key: string): boolean {
     key !== 'credentialHandle'
 }
 
-function directoryControlOutbox(input: {
-  command: ToolExecutionCommand
-  executionId: string
-  status: 'succeeded' | 'failed'
-  output?: JsonObject
-  error?: { code: string; message: string }
-  createId: () => string
-  now: () => number
-}): Parameters<ToolEventStore['append']>[0]['outbox'] {
-  const runId = input.command.context.parentExecutionId
-  const callId = input.command.context.toolCallId
-  if (!runId || !callId) return []
-  return [
-    {
-      id: input.createId(),
-      topic: 'ai_run.submit_tool_result',
-      messageKey: input.executionId,
-      payload: input.status === 'succeeded'
-        ? {
-            runId,
-            callId,
-            status: 'completed',
-            output: input.output ?? {},
-            toolExecutionId: input.executionId,
-            resultSummary: 'Tool directory control completed'
-          }
-        : {
-            runId,
-            callId,
-            status: 'failed',
-            errorCode: input.error?.code ?? 'directory_tool_failed',
-            message: input.error?.message ?? 'Directory control Tool failed',
-            toolExecutionId: input.executionId
-          },
-      headers: {},
-      availableAt: input.now()
-    }
-  ]
-}
-
 function maximumBindingRevision(
   scopes: readonly BoundScopeAuthorization[]
 ): number {
@@ -2332,7 +2519,8 @@ function serializePendingRuntime(runtime: RuntimeInvocation): JsonObject {
         effects: runtime.effects,
         effectsDigest: runtime.effectsDigest,
         authorization: runtime.authorization,
-        boundScopes: runtime.boundScopes
+        boundScopes: runtime.boundScopes,
+        permissionFingerprint: runtime.permissionFingerprint
       })
     ),
     'pending Tool invocation'

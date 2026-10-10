@@ -3,6 +3,8 @@ import { basename, isAbsolute, join, relative, resolve, win32 } from 'node:path'
 import type { ToolEffect } from '../../../../domain/tool-authorization'
 import type { ToolCapability } from '../../../../domain/tool-definition'
 import type { JsonObject } from '../../../../domain/tool-protocol-validation'
+import type { WebProviderConfiguration } from '../../../../shared/web-provider'
+import { BRAVE_SEARCH_ORIGIN } from '../web/web-search-providers'
 import type { AdapterEffectPlan } from './tool-adapter'
 import { ScopePathResolver } from './scope-path-resolver'
 
@@ -19,9 +21,7 @@ export type BuiltinToolEffectPlannerDependencies = {
     sessionId: string
   ) => Promise<string> | string
   pathResolver?: Pick<ScopePathResolver, 'plan'>
-  webSearch?: {
-    searxngBaseUrl?: string
-  }
+  webConfiguration?: { get(): WebProviderConfiguration }
 }
 
 type PlanInput = {
@@ -29,6 +29,7 @@ type PlanInput = {
   capabilities: readonly ToolCapability[]
   arguments: JsonObject
   scopeRoots: readonly string[]
+  webConfiguration?: WebProviderConfiguration
 }
 
 type PathEffectKind =
@@ -116,6 +117,33 @@ async function plan(
     Omit<BuiltinToolEffectPlannerDependencies, 'pathResolver'>
 ): Promise<ToolEffect[]> {
   const name = input.handlerName
+  if (name.startsWith('browser.')) {
+    const action = name.slice('browser.'.length)
+    const observe = ['snapshot', 'wait_for', 'screenshot', 'download'].includes(action)
+    const effects: ToolEffect[] = [{
+      kind: observe ? 'computer.observe' : 'computer.control',
+      application: action === 'evaluate'
+        ? { bundleId: 'realmflow.browser.evaluate', displayName: 'Browser snapshot evaluation' }
+        : { bundleId: 'realmflow.browser', displayName: 'RealmFlow Browser' }
+    }]
+    if (action === 'attach') {
+      const profileId = requiredPath(input.arguments, 'profileId')
+      if (!/^browser-[a-zA-Z0-9-]+$/.test(profileId)) throw new Error('Invalid browser profile')
+      effects.push({ kind: 'external', capability: 'credential.use', resourceKey: `browser-profile:${profileId}` })
+    }
+    if (action === 'navigate' || action === 'download') {
+      effects.push({ kind: 'external', capability: 'network.connect', resourceKey: sanitizedWebOrigin(input.arguments.url) })
+    }
+    if (action === 'upload') {
+      effects.push(await pathEffect('filesystem.read', requiredPath(input.arguments, 'path'), input, dependencies))
+    }
+    if (action === 'screenshot' || action === 'download') {
+      const path = requiredPath(input.arguments, 'path')
+      effects.push(await pathEffect('filesystem.write', path, input, dependencies))
+      effects.push(await pathEffect('filesystem.write', `${path}.realmflow-browser.json`, input, dependencies))
+    }
+    return effects
+  }
   if (name === 'document.create') {
     return [
       await pathEffect(
@@ -286,13 +314,21 @@ async function plan(
     ]
   }
   if (name === 'web.search') {
-    return [
-      {
-        kind: 'external',
-        capability: 'network.connect',
-        resourceKey: configuredWebSearchOrigin(dependencies)
-      }
-    ]
+    const config = input.webConfiguration
+    if (!config || config.searchProvider === 'disabled') throw Object.assign(
+      new Error('Web search is disabled. Configure a search provider in Settings before using web search.'),
+      { code: 'provider_unconfigured' }
+    )
+    const effects: ToolEffect[] = [{
+      kind: 'external', capability: 'network.connect',
+      resourceKey: config.searchProvider === 'brave'
+        ? BRAVE_SEARCH_ORIGIN : sanitizedWebOrigin(config.searxngBaseUrl)
+    }]
+    if (config.searchProvider === 'brave') {
+      if (!config.hasBraveCredential || !config.braveCredentialHandle) throw new Error('Web credential unavailable')
+      effects.push({ kind: 'external', capability: 'credential.use', resourceKey: config.braveCredentialHandle })
+    }
+    return effects
   }
   if (name.startsWith('git.')) {
     const repositoryRoot = await selectedRoot(input, dependencies)
@@ -595,19 +631,6 @@ function sanitizedWebOrigin(value: unknown): string {
   return `${url.protocol}//${url.host}`
 }
 
-function configuredWebSearchOrigin(
-  dependencies: BuiltinToolEffectPlannerDependencies
-): string {
-  const baseUrl =
-    dependencies.webSearch?.searxngBaseUrl ??
-    process.env.REALMFLOW_SEARXNG_URL ??
-    process.env.SEARXNG_URL
-  if (!baseUrl) {
-    throw new Error('Web search provider is not configured')
-  }
-  return sanitizedWebOrigin(baseUrl)
-}
-
 function pathAlreadyIncludesScopeRoot(
   arguments_: JsonObject,
   relativeRoot: string,
@@ -697,7 +720,8 @@ function unresolved(error?: unknown): AdapterEffectPlan {
   return {
     outcome: 'unresolved',
     error: {
-      code: 'tool_effects_unresolved',
+      code: error instanceof Error && 'code' in error && error.code === 'provider_unconfigured'
+        ? 'provider_unconfigured' : 'tool_effects_unresolved',
       message: safePlanningMessage(error),
       retryable: false
     }
@@ -713,6 +737,7 @@ function safePlanningMessage(error: unknown): string {
     return 'Tool effects could not be resolved'
   }
   const message = error.message
+  if ('code' in error && error.code === 'provider_unconfigured') return message
   if (
     /scope root|scopeRoot|authorized scope|outside the authorized scope/i.test(
       message

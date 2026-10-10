@@ -20,6 +20,9 @@ import {
 import { SkillRuntimeApplicationService } from '../../application/tools/skill-runtime-application-service'
 import { projectModelFacingToolCatalog } from '../../application/tools/tool-model-facing-projection'
 import { AgentToolLoopCoordinator } from './agent-tool-loop-coordinator'
+import { CatalogAgentProfileResolver } from './agent-profile-resolver'
+import type { ToolPolicyLayer } from '../../../../domain/tool-policy'
+import { ToolPolicyEngine } from '../../application/tools/tool-policy-engine'
 
 const digest = 'a'.repeat(64)
 
@@ -173,6 +176,383 @@ function event(
 }
 
 describe('AgentToolLoopCoordinator', () => {
+  it('projects provider-compatible schemas for runtime control Tools', async () => {
+    const createRun = vi.fn().mockResolvedValue({ runId: 'provider-schema' })
+    const catalog = projectModelFacingToolCatalog({
+      packages: [],
+      tools: [],
+      skills: []
+    }, 'facade')
+    const coordinator = new AgentToolLoopCoordinator({
+      gateway: {
+        createRun,
+        cancelRun: vi.fn(),
+        submitToolResult: vi.fn(),
+        streamEvents: vi.fn()
+      },
+      catalog: { list: async () => catalog },
+      tools: { execute: vi.fn() }
+    })
+
+    await coordinator.createRun({
+      conversationId: 'provider-schema',
+      messages: [{ role: 'user', content: 'Inspect runtime status.' }]
+    })
+
+    const tools = createRun.mock.calls[0][2].tools as Array<{
+      function: { name: string; parameters: Record<string, unknown> }
+    }>
+    const runtimeSchemas = tools
+      .filter(({ function: tool }) =>
+        ['rf_automation_', 'rf_gateway_', 'rf_goal_'].some((prefix) =>
+          tool.name.startsWith(prefix)
+        )
+      )
+      .map(({ function: tool }) => tool.parameters)
+    expect(runtimeSchemas).toHaveLength(3)
+    expect(JSON.stringify(runtimeSchemas)).not.toMatch(
+      /"allOf"|"anyOf"|"oneOf"|"if"|"then"|"else"|"not"/
+    )
+    expect(
+      runtimeSchemas.find((schema) =>
+        JSON.stringify(schema).includes('"get"')
+      )
+    ).toMatchObject({
+      type: 'object',
+      required: ['action'],
+      properties: {
+        action: { enum: ['get', 'update'] }
+      }
+    })
+  })
+
+  it('loads a selected Skill when only its optional tool is denied', async () => {
+    const skill = {
+      ...skillDefinition,
+      requiredTools: [{ toolId: definition.id, versionRange: '^1.0.0', required: false }],
+    }
+    const catalog = {
+      packages: [],
+      tools: [{ kind: 'tool' as const, ...definition, definition, status: 'enabled' as const,
+        enabledPreference: true, dependencyIssues: [], revision: 1, updatedAt: 0 }],
+      skills: [{ kind: 'skill' as const, ...skill, definition: skill, status: 'enabled' as const,
+        enabledPreference: true, dependencyIssues: [], revision: 1, updatedAt: 0 }],
+    }
+    const base = getBuiltinAgentProfile('general')
+    const profile = createAgentProfile({
+      ...base, id: 'user.optional', source: 'user',
+      capabilityPolicy: { ...base.capabilityPolicy, toolPolicies: [{ deny: [definition.id] }] },
+    })
+    const createRun = vi.fn().mockResolvedValue({ runId: 'optional' })
+    const coordinator = new AgentToolLoopCoordinator({
+      gateway: { createRun, cancelRun: vi.fn(), submitToolResult: vi.fn(), streamEvents: vi.fn() },
+      catalog: { list: async () => catalog }, tools: { execute: vi.fn() },
+      skills: { readInstructions: async () => 'Review using available evidence.' },
+      profiles: new CatalogAgentProfileResolver({ listLayers: async () => [profile] }),
+    })
+    await expect(coordinator.createRun({
+      conversationId: 'optional', workspaceId: 'workspace-1', messages: [{ role: 'user', content: 'Review' }],
+      skill: { kind: 'skill', id: skill.id, version: skill.version, digest: skill.definitionDigest },
+    })).resolves.toHaveProperty('runId')
+    expect(createRun.mock.calls[0][0].context).toContain('Review using available evidence.')
+    expect(createRun.mock.calls[0][2].tools.map(
+      (tool: { function: { name: string } }) => tool.function.name,
+    )).not.toContain(`rf_files_read_${digest.slice(0, 8)}`)
+  })
+
+  it('rejects recovery when the effective policy environment changes before contacting the provider', async () => {
+    let available = true
+    const created: AgentRuntimeRun[] = []
+    const save = vi.fn().mockResolvedValue(true)
+    const resume = vi.fn().mockResolvedValue({ runId: 'resumed' })
+    const coordinator = new AgentToolLoopCoordinator({
+      gateway: {
+        createRun: async () => ({ runId: 'provider-policy' }),
+        resumeRun: resume, cancelRun: vi.fn(), submitToolResult: vi.fn(), streamEvents: vi.fn(),
+      },
+      catalog: { list: async () => ({ packages: [], tools: [], skills: [] }) },
+      tools: { execute: vi.fn() },
+      resolveSandbox: async () => ({ available, networkAllowed: true }),
+      runtimeRuns: {
+        create: async (run) => { created.push(run) },
+        bindProviderRun: vi.fn(), bindProviderAttempt: vi.fn(), transition: vi.fn(),
+        getByProviderRunId: vi.fn(), listByRootRunId: vi.fn(),
+        listByParentRunId: vi.fn(), listUnfinished: vi.fn(),
+      },
+      checkpoints: { save, getLatest: vi.fn(), list: vi.fn() },
+    })
+    await coordinator.createRun({
+      conversationId: 'recovery-policy', messages: [{ role: 'user', content: 'Continue' }],
+    }, {
+      providerId: 'remote', providerType: 'openai_completions', baseUrl: 'http://localhost:1234',
+      modelId: 'test', timeoutMs: 1000, maxRetries: 0, maxConcurrency: 1,
+    })
+    const run = created[0]
+    const checkpoint = save.mock.calls.at(-1)![0]
+    expect(run.snapshot.toolPolicy).toMatchObject({
+      providerId: 'remote', sandbox: { available: true, networkAllowed: true },
+    })
+    await expect(coordinator.inspectRecoveryConfiguration(run, checkpoint)).resolves.toMatchObject({
+      profileAvailable: true,
+    })
+    available = false
+    await expect(coordinator.inspectRecoveryConfiguration(run, checkpoint)).resolves.toMatchObject({
+      profileAvailable: false,
+    })
+    await expect(coordinator.attachRecoveredRun(run, checkpoint)).rejects.toThrow('tool_policy_changed')
+    expect(resume).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { label: 'empty allowlist', layer: { allow: [] } },
+    { label: 'provider restriction', layer: { byProvider: { remote: { allow: [] } } } },
+  ] satisfies Array<{ label: string; layer: ToolPolicyLayer }>)(
+    'enforces $label for tools, discovered Skills and delegation',
+    async ({ layer }) => {
+      const base = getBuiltinAgentProfile('general')
+      const profile = createAgentProfile({
+        ...base, id: 'user.policy', source: 'user',
+        capabilityPolicy: { ...base.capabilityPolicy, toolPolicies: [layer] },
+      })
+      const catalog = projectModelFacingToolCatalog({
+        packages: [],
+        tools: [{ kind: 'tool', ...definition, definition, status: 'enabled', enabledPreference: true,
+          dependencyIssues: [], revision: 1, updatedAt: 0 }],
+        skills: [{ kind: 'skill', ...skillDefinition, definition: skillDefinition, status: 'enabled',
+          enabledPreference: true, dependencyIssues: [], revision: 1, updatedAt: 0 }],
+      }, 'facade')
+      const createRun = vi.fn().mockResolvedValue({ runId: 'policy-run' })
+      const persistRun = vi.fn()
+      const coordinator = new AgentToolLoopCoordinator({
+        gateway: { createRun, cancelRun: vi.fn(), submitToolResult: vi.fn(), streamEvents: vi.fn() },
+        catalog: { list: async () => catalog },
+        tools: { execute: vi.fn() },
+        skills: { readInstructions: async () => 'Read files.' },
+        profiles: new CatalogAgentProfileResolver({ listLayers: async () => [profile] }),
+        runtimeRuns: {
+          create: persistRun, bindProviderRun: vi.fn(), transition: vi.fn(),
+          getByProviderRunId: vi.fn(), listByRootRunId: vi.fn(),
+          listByParentRunId: vi.fn(), listUnfinished: vi.fn(),
+        },
+        createRuntimeRunId: () => 'policy-run',
+      })
+      await coordinator.createRun({
+        conversationId: 'policy-conversation', messages: [{ role: 'user', content: 'Read my files.' }],
+      }, {
+        providerId: 'remote', providerType: 'openai_completions', baseUrl: 'http://localhost:1234',
+        modelId: 'test', timeoutMs: 1000, maxRetries: 0, maxConcurrency: 1,
+      })
+      expect(createRun.mock.calls[0][2].tools).toEqual([])
+      expect(coordinator.getToolPolicy('policy-run')).toMatchObject({
+        providerId: 'remote', grants: [], digest: expect.stringMatching(/^[a-f0-9]{64}$/),
+      })
+      expect(persistRun.mock.calls[0][0].snapshot.toolPolicy).toEqual(coordinator.getToolPolicy('policy-run'))
+    },
+  )
+
+  it.each(['auto', 'direct', 'required'] as const)('binds a large catalog using the saved %s presentation mode', async (mode) => {
+    const catalog = projectModelFacingToolCatalog({
+      packages: [], skills: [],
+      tools: Array.from({ length: 40 }, (_, index) => {
+        const tool = { ...documentDefinition, id: `builtin.test.read${index}` }
+        return { kind: 'tool' as const, ...tool, definition: tool, enabledPreference: true,
+          status: 'enabled' as const, dependencyIssues: [], revision: 1, updatedAt: 1 }
+      }),
+    }, 'facade')
+    const createRun = vi.fn().mockResolvedValue({ runId: 'directory-run' })
+    const persistRun = vi.fn()
+    const base = getBuiltinAgentProfile('general')
+    const profile = createAgentProfile({
+      ...base, source: 'user', capabilityPolicy: {
+        ...base.capabilityPolicy, modelFacingMode: mode === 'required' ? 'auto' : mode,
+        rules: mode === 'required' ? [{ kind: 'tool', id: 'builtin.test.read0', effect: 'require' }] : [],
+      },
+    })
+    const coordinator = new AgentToolLoopCoordinator({
+      gateway: { createRun, cancelRun: vi.fn(), submitToolResult: vi.fn(), streamEvents: vi.fn() },
+      catalog: { list: async () => catalog }, tools: { execute: vi.fn() },
+      profiles: new CatalogAgentProfileResolver({ listLayers: async () => [profile] }),
+      runtimeRuns: {
+        create: persistRun, bindProviderRun: vi.fn(), transition: vi.fn(),
+        getByProviderRunId: vi.fn(), listByRootRunId: vi.fn(),
+        listByParentRunId: vi.fn(), listUnfinished: vi.fn(),
+      },
+    })
+    await coordinator.createRun({
+      conversationId: 'directory-conversation', workspaceId: 'workspace-1',
+      messages: [{ role: 'user', content: 'Read files.' }],
+    })
+    const names = createRun.mock.calls[0][2].tools.map((tool: { function: { name: string } }) => tool.function.name)
+    expect(names.some((name: string) => name.startsWith('rf_tool_search_'))).toBe(mode !== 'direct')
+    expect(names.some((name: string) => name.startsWith('rf_builtin_test_'))).toBe(mode !== 'auto')
+    if (mode === 'auto') expect(createRun.mock.calls[0][0].systemPrompt).toContain('builtin.test.read0')
+    expect(persistRun.mock.calls[0][0].snapshot).toMatchObject({
+      modelFacing: mode !== 'direct'
+        ? { mode: 'directory', directory: { totalEntries: mode === 'required' ? 39 : 40, digest: expect.any(String) } } : { mode: 'direct' },
+    })
+  })
+
+  it.each(['mode', 'directory', 'binding', 'catalog'] as const)(
+    'rejects changed %s identity before resuming a provider attempt', async (changed) => {
+      const created: AgentRuntimeRun[] = []
+      const save = vi.fn().mockResolvedValue(true)
+      const resumeRun = vi.fn().mockResolvedValue({ runId: 'resumed' })
+      const base = getBuiltinAgentProfile('general')
+      const profile = createAgentProfile({
+        ...base, source: 'user', capabilityPolicy: { ...base.capabilityPolicy, modelFacingMode: 'directory' },
+      })
+      const coordinator = new AgentToolLoopCoordinator({
+        gateway: { createRun: async () => ({ runId: 'provider-directory' }), resumeRun,
+          cancelRun: vi.fn(), submitToolResult: vi.fn(), streamEvents: vi.fn() },
+        catalog: { list: async () => projectModelFacingToolCatalog({
+          packages: [], tools: [], skills: [],
+        }, 'facade') },
+        tools: { execute: vi.fn() },
+        profiles: new CatalogAgentProfileResolver({ listLayers: async () => [profile] }),
+        runtimeRuns: {
+          create: async (run) => { created.push(run) }, bindProviderRun: vi.fn(), bindProviderAttempt: vi.fn(),
+          transition: vi.fn(), getByProviderRunId: vi.fn(), listByRootRunId: vi.fn(),
+          listByParentRunId: vi.fn(), listUnfinished: vi.fn(),
+        },
+        checkpoints: { save, getLatest: vi.fn(), list: vi.fn() },
+      })
+      await coordinator.createRun({
+        conversationId: 'identity', messages: [{ role: 'user', content: 'Continue' }],
+      })
+      const run = structuredClone(created[0])
+      const checkpoint = save.mock.calls.at(-1)![0]
+      expect(await coordinator.inspectRecoveryConfiguration(run, checkpoint)).toMatchObject({ capabilitiesAvailable: true })
+      if (changed === 'mode') run.snapshot.modelFacing!.mode = 'direct'
+      if (changed === 'directory') run.snapshot.modelFacing!.directory!.renderedPromptDirectory += 'changed'
+      if (changed === 'binding') run.snapshot.capabilityBindingDigest = '0'.repeat(64)
+      if (changed === 'catalog') run.snapshot.capabilityCatalogDigest = '0'.repeat(64)
+      expect(await coordinator.inspectRecoveryConfiguration(run, checkpoint)).toMatchObject({ capabilitiesAvailable: false })
+      await expect(coordinator.attachRecoveredRun(run, checkpoint)).rejects.toThrow('model_facing_surface_changed')
+      expect(resumeRun).not.toHaveBeenCalled()
+    },
+  )
+
+  it.each(['none', 'discovered', 'selected'] as const)(
+    'keeps facade-backed primitives off the provider surface unless required by a selected Skill (%s)',
+    async (skillMode) => {
+      const skill = {
+        ...skillDefinition,
+        requiredTools: [{
+          toolId: documentDefinition.id,
+          versionRange: '^1.0.0',
+          required: true,
+        }],
+      }
+      const catalog = projectModelFacingToolCatalog({
+        packages: [],
+        tools: [{
+          kind: 'tool',
+          ...documentDefinition,
+          definition: documentDefinition,
+          enabledPreference: true,
+          status: 'enabled',
+          dependencyIssues: [],
+          revision: 1,
+          updatedAt: 1,
+        }],
+        skills: skillMode === 'none' ? [] : [{
+          kind: 'skill',
+          ...skill,
+          definition: skill,
+          enabledPreference: true,
+          status: 'enabled',
+          dependencyIssues: [],
+          revision: 1,
+          updatedAt: 1,
+        }],
+      }, 'facade')
+      const createRun = vi.fn().mockResolvedValue({ runId: 'compact-run' })
+      const coordinator = new AgentToolLoopCoordinator({
+        gateway: {
+          createRun,
+          cancelRun: vi.fn(),
+          submitToolResult: vi.fn(),
+          streamEvents: vi.fn(),
+        },
+        catalog: { list: vi.fn().mockResolvedValue(catalog) },
+        tools: { execute: vi.fn() },
+        skills: { readInstructions: async () => 'Read the supplied document.' },
+      })
+
+      await coordinator.createRun({
+        conversationId: 'compact-conversation',
+        workspaceId: 'workspace-1',
+        messages: [{ role: 'user', content: 'Read my document' }],
+        ...(skillMode === 'selected' ? {
+          skill: { kind: 'skill' as const, id: skill.id, version: skill.version, digest: skill.definitionDigest },
+        } : {}),
+      })
+
+      const tools = createRun.mock.calls[0][2].tools as Array<{ function: { name: string } }>
+      const names = tools.map(({ function: tool }) => tool.name)
+      expect(names.some((name) => name.startsWith('rf_filesystem_read_'))).toBe(true)
+      expect(names.some((name) => name.startsWith('rf_builtin_documents_read_')))
+        .toBe(skillMode === 'selected')
+      expect(names.some((name) => name.startsWith('rf_document_'))).toBe(false)
+      expect(catalog.tools.some(({ id }) => id === documentDefinition.id)).toBe(true)
+    },
+  )
+
+  it('does not expose a facade or discovered Skill that would bypass denied primitive access', async () => {
+    const secondDocument = { ...documentDefinition, id: 'builtin.files.read' }
+    const skill = {
+      ...skillDefinition,
+      requiredTools: [{
+        toolId: documentDefinition.id, versionRange: '^1.0.0', required: true,
+      }],
+    }
+    const catalog = projectModelFacingToolCatalog({
+      packages: [],
+      tools: [documentDefinition, secondDocument].map((tool) => ({
+        kind: 'tool' as const, ...tool, definition: tool,
+        enabledPreference: true, status: 'enabled' as const,
+        dependencyIssues: [], revision: 1, updatedAt: 1,
+      })),
+      skills: [{
+        kind: 'skill', ...skill, definition: skill, enabledPreference: true,
+        status: 'enabled', dependencyIssues: [], revision: 1, updatedAt: 1,
+      }],
+    }, 'facade')
+    const createRun = vi.fn().mockResolvedValue({ runId: 'restricted-run' })
+    const coordinator = new AgentToolLoopCoordinator({
+      gateway: { createRun, cancelRun: vi.fn(), submitToolResult: vi.fn(), streamEvents: vi.fn() },
+      catalog: { list: vi.fn().mockResolvedValue(catalog) },
+      tools: { execute: vi.fn() },
+      skills: { readInstructions: async () => 'Read document.' },
+      profiles: {
+        resolve: async (input) => {
+          const profile = resolveEffectiveAgentProfile({
+            layers: [getBuiltinAgentProfile(input.scenarioId)],
+            scope: input.scope,
+            capabilities: input.capabilities,
+            businessContext: input.businessContext,
+          })
+          return {
+            ...profile,
+            capabilities: profile.capabilities.filter(({ id }) => id !== documentDefinition.id),
+          }
+        },
+      },
+    })
+
+    await coordinator.createRun({
+      conversationId: 'restricted-conversation',
+      workspaceId: 'workspace-1',
+      messages: [{ role: 'user', content: 'Read allowed files' }],
+    })
+
+    const names = (createRun.mock.calls[0][2].tools as Array<{ function: { name: string } }>)
+      .map(({ function: tool }) => tool.name)
+    expect(names.some((name) => name.startsWith('rf_filesystem_read_'))).toBe(false)
+    expect(names.some((name) => name.startsWith('rf_builtin_files_read_'))).toBe(true)
+    expect(names.some((name) => name.includes('code_review'))).toBe(false)
+  })
+
   it('routes a multi-file conversation to high reasoning and snapshots the decision', async () => {
     const createRun = vi.fn().mockResolvedValue({ runId: 'run-reasoning-high' })
     const createRuntimeRun = vi.fn().mockResolvedValue(undefined)
@@ -272,7 +652,10 @@ describe('AgentToolLoopCoordinator', () => {
         }),
       }),
     )
-    expect(listCatalog).toHaveBeenCalledWith({ modelFacingMode: 'facade' })
+    expect(listCatalog).toHaveBeenCalledWith({
+      modelFacingMode: 'facade',
+      runtimeWorkspaceId: null,
+    })
   })
 
   it('records an explainable off downgrade when the model lacks reasoning support', async () => {
@@ -762,7 +1145,7 @@ describe('AgentToolLoopCoordinator', () => {
     )
   })
 
-  it('projects enabled Connector actions in the active scope as model Tools', async () => {
+  it('defers enabled Connector actions in the active scope behind directory controls', async () => {
     const createRun = vi.fn().mockResolvedValue({ runId: 'run-connector' })
     const connector = createCapabilityDefinition({
       id: 'com.example.docs',
@@ -853,17 +1236,16 @@ describe('AgentToolLoopCoordinator', () => {
       messages: [{ role: 'user', content: 'Search docs' }]
     })
 
-    expect(createRun.mock.calls[0]?.[2]?.tools).toEqual([
-      expect.objectContaining({
-        function: expect.objectContaining({
-          name: expect.stringMatching(/^rf_com_example_docs_search_/),
-          description: 'Search documentation.'
-        })
-      }),
-      expect.objectContaining({
-        function: expect.objectContaining({ name: 'rf_delegate_research' })
-      })
+    const names = createRun.mock.calls[0]?.[2]?.tools.map(
+      (tool: { function: { name: string } }) => tool.function.name,
+    )
+    expect(names).toEqual([
+      expect.stringMatching(/^rf_tool_call_/),
+      expect.stringMatching(/^rf_tool_describe_/),
+      expect.stringMatching(/^rf_tool_search_/),
+      'rf_delegate_research',
     ])
+    expect(createRun.mock.calls[0]?.[0]?.systemPrompt).toContain('com.example.docs.search')
   })
 
   it('discovers all enabled Tools and Skills for a workflow node', async () => {
@@ -953,7 +1335,7 @@ describe('AgentToolLoopCoordinator', () => {
       ),
     ).toEqual(
       expect.arrayContaining([
-        `rf_files_read_${digest.slice(0, 8)}`,
+        expect.stringMatching(/^rf_tool_search_/),
         `rf_uploaded_project_inspect_${uploadedTool.definitionDigest.slice(0, 8)}`,
         `rf_skill_builtin_skill_code_review_${skillDefinition.definitionDigest.slice(0, 8)}`,
         `rf_skill_uploaded_skill_project_assistant_${uploadedSkill.definitionDigest.slice(0, 8)}`,
@@ -1275,6 +1657,7 @@ describe('AgentToolLoopCoordinator', () => {
           capabilityScopes,
         },
       }),
+      expect.any(AbortSignal),
     )
   })
 
@@ -1593,6 +1976,7 @@ describe('AgentToolLoopCoordinator', () => {
         },
         input: { path: 'README.md' },
       }),
+      expect.any(AbortSignal),
     )
     expect(submitToolResult).toHaveBeenCalledWith('run-1', {
       callId: 'call-1',
@@ -1902,6 +2286,7 @@ describe('AgentToolLoopCoordinator', () => {
           toolCallId: 'call-permission',
         }),
       }),
+      expect.any(AbortSignal),
     )
     expect(submitToolResult).not.toHaveBeenCalled()
     expect(saveCheckpoint).toHaveBeenCalledWith(
@@ -2159,6 +2544,104 @@ describe('AgentToolLoopCoordinator', () => {
     ])
   })
 
+  it('cleans terminal run resources after committing the terminal checkpoint', async () => {
+    const order: string[] = []
+    const onTerminal = vi.fn(async () => { order.push('cleanup') })
+    const coordinator = new AgentToolLoopCoordinator({
+      gateway: {
+        createRun: vi.fn().mockResolvedValue({ runId: 'provider-cleanup' }),
+        cancelRun: vi.fn(),
+        submitToolResult: vi.fn(),
+        streamEvents: vi.fn().mockImplementation(async function* () {
+          yield event(1, 'run.started')
+          yield event(2, 'run.completed')
+        })
+      },
+      catalog: {
+        list: vi.fn().mockResolvedValue({
+          packages: [],
+          tools: [],
+          skills: []
+        })
+      },
+      tools: { execute: vi.fn() },
+      checkpoints: {
+        save: vi.fn(async () => {
+          order.push('checkpoint')
+          return true
+        }),
+        getLatest: vi.fn(),
+        list: vi.fn()
+      },
+      onTerminal
+    } as never)
+    const created = await coordinator.createRun({
+      conversationId: 'conversation-cleanup',
+      messages: [{ role: 'user', content: 'Browse' }]
+    })
+
+    for await (const _item of coordinator.streamEvents(
+      created.runId,
+      new AbortController().signal
+    )) {}
+
+    expect(onTerminal).toHaveBeenCalledWith(
+      created.runId,
+      'run.completed'
+    )
+    expect(order.at(-2)).toBe('checkpoint')
+    expect(order.at(-1)).toBe('cleanup')
+  })
+
+  it('cleans run resources for direct cancellation and provider stream failure', async () => {
+    const onTerminal = vi.fn().mockResolvedValue(undefined)
+    const streamEvents = vi.fn().mockImplementation(async function* () {
+      yield event(1, 'run.started')
+      throw new Error('provider stream failed')
+    })
+    const coordinator = new AgentToolLoopCoordinator({
+      gateway: {
+        createRun: vi.fn()
+          .mockResolvedValueOnce({ runId: 'provider-cancelled' })
+          .mockResolvedValueOnce({ runId: 'provider-failed' }),
+        cancelRun: vi.fn(),
+        submitToolResult: vi.fn(),
+        streamEvents
+      },
+      catalog: {
+        list: vi.fn().mockResolvedValue({
+          packages: [],
+          tools: [],
+          skills: []
+        })
+      },
+      tools: { execute: vi.fn() },
+      onTerminal
+    } as never)
+    const cancelled = await coordinator.createRun({
+      conversationId: 'conversation-cancelled',
+      messages: [{ role: 'user', content: 'Cancel' }]
+    })
+    await coordinator.cancelRun(cancelled.runId)
+    const failed = await coordinator.createRun({
+      conversationId: 'conversation-failed',
+      messages: [{ role: 'user', content: 'Fail' }]
+    })
+
+    await expect(async () => {
+      for await (const _item of coordinator.streamEvents(
+        failed.runId,
+        new AbortController().signal
+      )) {}
+    }).rejects.toThrow('provider stream failed')
+
+    expect(onTerminal).toHaveBeenCalledWith(
+      cancelled.runId,
+      'run.cancelled'
+    )
+    expect(onTerminal).toHaveBeenCalledWith(failed.runId, 'run.failed')
+  })
+
   it('keeps the working message window mutable after saving a checkpoint', async () => {
     const saveCheckpoint = vi.fn().mockImplementation(async (checkpoint) => {
       expect(Object.isFrozen(checkpoint.messageWindow)).toBe(true)
@@ -2253,6 +2736,44 @@ describe('AgentToolLoopCoordinator', () => {
     )
   })
 
+  it('checkpoints parallel calls in one assistant message with results in call order', async () => {
+    const save = vi.fn().mockResolvedValue(true)
+    const coordinator = new AgentToolLoopCoordinator({
+      gateway: {
+        createRun: vi.fn().mockResolvedValue({ runId: 'provider-parallel' }),
+        cancelRun: vi.fn(), submitToolResult: vi.fn(),
+        streamEvents: vi.fn().mockImplementation(async function* () {
+          yield event(1, 'run.started')
+          for (const [index, id] of ['call-a', 'call-b'].entries()) {
+            yield event(index + 2, 'tool.call.requested', {
+              agentTurn: 1, toolCall: { index, id, name: 'rf_unknown_deadbeef', arguments: '{}' }
+            })
+          }
+          for (const [index, callId] of ['call-b', 'call-a'].entries()) {
+            yield event(index + 4, 'tool.call.failed', {
+              agentTurn: 1, toolResult: { callId, status: 'failed',
+                errorCode: 'tool_not_found', message: 'Unavailable' }
+            })
+          }
+          yield event(6, 'run.completed')
+        })
+      },
+      catalog: { list: vi.fn().mockResolvedValue({ packages: [], tools: [], skills: [] }) },
+      tools: { execute: vi.fn() },
+      checkpoints: { save, getLatest: vi.fn(), list: vi.fn() }
+    })
+    const run = await coordinator.createRun({
+      conversationId: 'conversation-parallel', messages: [{ role: 'user', content: 'Use tools' }]
+    })
+    for await (const _item of coordinator.streamEvents(run.runId, new AbortController().signal)) {}
+    const messages = save.mock.calls.at(-1)![0].messageWindow
+    const assistants = messages.filter((message: { toolCalls?: unknown[] }) => message.toolCalls)
+    expect(assistants).toHaveLength(1)
+    expect(assistants[0].toolCalls.map((call: { id: string }) => call.id)).toEqual(['call-a', 'call-b'])
+    expect(messages.filter((message: { role: string }) => message.role === 'tool')
+      .map((message: { toolCallId: string }) => message.toolCallId)).toEqual(['call-a', 'call-b'])
+  })
+
   it('persists Agent Turn and Tool activity counters in every safe checkpoint', async () => {
     const saveCheckpoint = vi.fn().mockResolvedValue(true)
     const coordinator = new AgentToolLoopCoordinator({
@@ -2323,13 +2844,14 @@ describe('AgentToolLoopCoordinator', () => {
     )
   })
 
-  it('attaches a recovered provider attempt without resetting sequence or budgets', async () => {
+  it.each([0, 6])('attaches recovery after persisted cursor %s without resetting sequence or budgets', async (persistedCursor) => {
     const saveCheckpoint = vi.fn().mockResolvedValue(true)
+    const persistRun = vi.fn()
     const bindProviderAttempt = vi.fn().mockResolvedValue(undefined)
     const resumeRun = vi.fn().mockResolvedValue({ runId: 'provider-recovered' })
     const coordinator = new AgentToolLoopCoordinator({
       gateway: {
-        createRun: vi.fn(),
+        createRun: vi.fn().mockResolvedValue({ runId: 'original-provider' }),
         resumeRun,
         cancelRun: vi.fn(),
         submitToolResult: vi.fn(),
@@ -2361,7 +2883,7 @@ describe('AgentToolLoopCoordinator', () => {
       },
       tools: { execute: vi.fn() },
       runtimeRuns: {
-        create: vi.fn(),
+        create: persistRun,
         bindProviderRun: vi.fn(),
         bindProviderAttempt,
         transition: vi.fn(),
@@ -2375,40 +2897,16 @@ describe('AgentToolLoopCoordinator', () => {
         getLatest: vi.fn(),
         list: vi.fn(),
       },
+      createRuntimeRunId: () => 'agent-run-recovered',
+      projectionCursor: { get: async () => persistedCursor },
       now: () => 500,
     })
+    await coordinator.createRun({ conversationId: 'recovered', messages: [{ role: 'user', content: 'Continue' }] })
+    saveCheckpoint.mockClear()
     const run: AgentRuntimeRun = {
       id: 'agent-run-recovered',
       status: 'retrying',
-      snapshot: {
-        schemaVersion: 1,
-        runId: 'agent-run-recovered',
-        rootRunId: 'agent-run-recovered',
-        delegationDepth: 0,
-        delegationOrdinal: 0,
-        scenarioId: 'general',
-        pipelineVersion: 'builtin.general.v1',
-        agentProfileId: 'builtin.general',
-        agentProfileVersion: '1.0.0',
-        agentProfileDigest: getBuiltinAgentProfile('general').profileDigest,
-        promptDigest: 'b'.repeat(64),
-        policyDigest: 'c'.repeat(64),
-        capabilityCatalogDigest: 'd'.repeat(64),
-        capabilityBindingDigest: 'e'.repeat(64),
-        permissionSnapshotDigest: 'f'.repeat(64),
-        scope: { kind: 'global' },
-        executionPolicy: { ...DEFAULT_AGENT_EXECUTION_POLICY },
-        budgetLedger: createInitialRunBudgetLedger(
-          DEFAULT_AGENT_EXECUTION_POLICY,
-        ),
-        budgets: {
-          maxToolCalls: 8,
-          maxSubagents: 0,
-          timeoutMs: 900_000,
-          maxRetries: 2,
-        },
-        createdAt: 100,
-      },
+      snapshot: persistRun.mock.calls[0][0].snapshot,
       createdAt: 100,
       updatedAt: 400,
     }
@@ -2457,7 +2955,8 @@ describe('AgentToolLoopCoordinator', () => {
       checkpoint.resumeToken,
       500,
     )
-    expect(observed.map(({ sequence }) => sequence)).toEqual([5, 6, 7])
+    const cursor = Math.max(4, persistedCursor)
+    expect(observed.map(({ sequence }) => sequence)).toEqual([cursor + 1, cursor + 2, cursor + 3])
     expect(saveCheckpoint.mock.calls.map(([value]) => ({
       ordinal: value.ordinal,
       reason: value.reason,
@@ -2467,13 +2966,13 @@ describe('AgentToolLoopCoordinator', () => {
       {
         ordinal: 8,
         reason: 'tool_completed',
-        projectionCursor: 6,
+        projectionCursor: cursor + 2,
         toolCalls: 2,
       },
       {
         ordinal: 9,
         reason: 'terminal',
-        projectionCursor: 7,
+        projectionCursor: cursor + 3,
         toolCalls: 2,
       },
     ])
@@ -2669,6 +3168,7 @@ describe('AgentToolLoopCoordinator', () => {
   })
 
   it('completes with a degraded artifact conclusion when the provider fails after generated artifacts are ready', async () => {
+    const saveCheckpoint = vi.fn().mockResolvedValue(true)
     const resumeRun = vi
       .fn()
       .mockResolvedValue({ runId: 'provider-artifact-2' })
@@ -2779,7 +3279,7 @@ describe('AgentToolLoopCoordinator', () => {
         listUnfinished: vi.fn(),
       },
       checkpoints: {
-        save: vi.fn().mockResolvedValue(true),
+        save: saveCheckpoint,
         getLatest: vi.fn(),
         list: vi.fn(),
       },
@@ -2814,6 +3314,9 @@ describe('AgentToolLoopCoordinator', () => {
       'run.completed',
     ])
     expect(observed.at(-2)?.data.delta).toContain('out/resume.pdf')
+    expect(saveCheckpoint.mock.calls.at(-1)?.[0].messageWindow.at(-1)).toMatchObject({
+      id: `answer:${created.runId}`, role: 'assistant', content: observed.at(-2)?.data.delta
+    })
   })
 
   it('passes safe builtin execution failure details back to the provider', async () => {
@@ -4023,6 +4526,10 @@ describe('AgentToolLoopCoordinator', () => {
   })
 
   it('creates read-only child Runs with durable lineage and aggregates partial results', async () => {
+    const newlyInstalled = {
+      ...definition, id: 'files.new_reader', definitionDigest: '5'.repeat(64),
+    }
+    let includeNewTool = false
     const writeDefinition: ToolDefinition = {
       ...definition,
       id: 'files.write',
@@ -4049,9 +4556,9 @@ describe('AgentToolLoopCoordinator', () => {
         ),
       },
       catalog: {
-        list: vi.fn().mockResolvedValue({
+        list: vi.fn().mockImplementation(async () => ({
           packages: [],
-          tools: [definition, writeDefinition].map((tool) => ({
+          tools: [definition, writeDefinition, ...(includeNewTool ? [newlyInstalled] : [])].map((tool) => ({
             kind: 'tool' as const,
             id: tool.id,
             version: tool.version,
@@ -4064,7 +4571,7 @@ describe('AgentToolLoopCoordinator', () => {
             updatedAt: 1,
           })),
           skills: [],
-        }),
+        })),
       },
       tools: { execute: vi.fn() },
       runtimeRuns: {
@@ -4085,6 +4592,7 @@ describe('AgentToolLoopCoordinator', () => {
       workspaceId: 'workspace-1',
       messages: [{ role: 'user', content: 'Delegate research' }],
     })
+    includeNewTool = true
     for await (const _event of coordinator.streamEvents(
       'provider-root',
       new AbortController().signal,
@@ -4102,6 +4610,7 @@ describe('AgentToolLoopCoordinator', () => {
         (tool: { function: { name: string } }) => tool.function.name,
       )
       expect(names).toContain(`rf_files_read_${digest.slice(0, 8)}`)
+      expect(names).not.toContain(`rf_files_new_reader_${newlyInstalled.definitionDigest.slice(0, 8)}`)
       expect(names).not.toContain(
         `rf_files_write_${writeDefinition.definitionDigest.slice(0, 8)}`,
       )

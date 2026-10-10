@@ -205,6 +205,13 @@ export function WorkspaceUserMenu(): JSX.Element {
               {t("userMenu.modelConfiguration")}
             </MenuLink>
             <MenuLink
+              to="/settings?section=web"
+              icon={<Globe2 size={17} />}
+              onClose={closeMenus}
+            >
+              {t("settings.section.web.label")}
+            </MenuLink>
+            <MenuLink
               to="/settings?section=backup"
               icon={<Archive size={17} />}
               onClose={closeMenus}

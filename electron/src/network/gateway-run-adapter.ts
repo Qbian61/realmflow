@@ -95,6 +95,7 @@ export function createGatewayRunAdapter(
         : undefined
       try {
         const resumed = await getSidecarClient().resumeRun({
+          ...(checkpoint.toolConfiguration?.turnGate ? { turnGate: true } : {}),
           resumeToken: checkpoint.resumeToken,
           conversationId: run.id,
           ...recoveryScope(run.snapshot.scope),

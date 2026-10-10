@@ -26,6 +26,40 @@ afterEach(async () => {
 })
 
 describe('SqliteAgentProfileRepository', () => {
+  it('atomically rejects a stale policy publication without replacing the current revision', async () => {
+    const repository = new SqliteAgentProfileRepository(await createDatabase())
+    const first = profile('user.policy.general', '1.0.0', 'user', 100)
+    const publish = repository.publish.bind(repository) as (
+      value: { scenarioId: 'general'; profile: AgentProfile; expectedDigest: string | null }
+    ) => Promise<boolean>
+    await publish({ scenarioId: 'general', profile: first, expectedDigest: null })
+    await expect(publish({
+      scenarioId: 'general',
+      profile: profile(first.id, '1.0.1', 'user', 101),
+      expectedDigest: null,
+    })).rejects.toThrow('Agent Profile revision conflict')
+    expect(await repository.listLayers({ scenarioId: 'general' })).toEqual([first])
+  })
+
+  it('preserves normalized policy layers in a freshly loaded profile repository', async () => {
+    const database = await createDatabase()
+    const repository = new SqliteAgentProfileRepository(database)
+    const base = profile('user.general', '1.0.0', 'user', 100)
+    const published = createAgentProfile({
+      ...base,
+      capabilityPolicy: {
+        ...base.capabilityPolicy,
+        toolPolicies: [{
+          profile: 'coding', deny: ['builtin.files.remove'],
+          byProvider: { remote: { allow: [] } },
+        }],
+      },
+    })
+    await repository.publish({ scenarioId: 'general', profile: published })
+    const reopened = new SqliteAgentProfileRepository(database)
+    await expect(reopened.listLayers({ scenarioId: 'general' })).resolves.toEqual([published])
+  })
+
   it('publishes immutable user and workspace layers and resolves the latest applicable versions', async () => {
     const repository = new SqliteAgentProfileRepository(
       await createDatabase()

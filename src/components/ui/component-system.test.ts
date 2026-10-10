@@ -473,7 +473,6 @@ describe("frontend component system", () => {
       "pages/UpdatesPage.tsx",
       "features/workbench-hub/system/SystemStatusPage.tsx",
       "features/workbench-hub/memos/MemoWorkbenchPage.tsx",
-      "features/settings/BuiltinProviderDialog.tsx",
       "features/conversation/ConversationShareController.tsx",
       "features/resources/KnowledgeIndexJobDialog.tsx",
     ].map((path) =>

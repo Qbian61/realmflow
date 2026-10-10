@@ -117,6 +117,7 @@ ModelExecutionConfig = GatewayModelExecutionConfig
 
 
 class CreateRunRequest(BaseModel):
+    turnGate: bool = False
     requirementId: str = Field(min_length=1)
     requirementTitle: str = Field(min_length=1)
     stageId: Literal[
@@ -188,6 +189,7 @@ class PendingToolCall(BaseModel):
 
 
 class CreateConversationRunRequest(BaseModel):
+    turnGate: bool = False
     conversationId: str = Field(min_length=1)
     messages: list[ConversationMessage] = Field(min_length=1)
     workspaceId: str | None = Field(default=None, min_length=1)
@@ -208,6 +210,7 @@ class CreateConversationRunRequest(BaseModel):
 class ResumeConversationRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    turnGate: bool = False
     resumeToken: str = Field(pattern=r"^[0-9a-f]{64}$")
     conversationId: str = Field(min_length=1)
     messages: list[ConversationMessage] = Field(min_length=1)
@@ -1021,6 +1024,29 @@ async def cancel_run(run_id: str) -> dict[str, str]:
     except LookupError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     return {"runId": run_id, "status": status}
+
+
+class TurnInstruction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    role: Literal["user"]
+    content: str = Field(min_length=1, max_length=12000)
+
+
+class AcknowledgeTurnRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    turn: int = Field(ge=1, le=180)
+    messages: list[TurnInstruction] = Field(max_length=100)
+
+
+@router.post("/api/v1/runs/{run_id}/turn", tags=["runs"])
+async def acknowledge_turn(run_id: str, request: AcknowledgeTurnRequest) -> dict[str, object]:
+    try:
+        await run_service.acknowledge_turn(run_id, request.model_dump())
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return {"runId": run_id, "turn": request.turn, "status": "accepted"}
 
 
 @router.post("/api/v1/runs/{run_id}/tool-results", tags=["runs"])

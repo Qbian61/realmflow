@@ -159,7 +159,7 @@ export class ToolProjectionRunner {
         }
         const decision = requiredDecision(event.payload.decision)
         projection.status =
-          decision === 'allow_once' ? 'approved' : 'denied'
+          decision === 'deny' ? 'denied' : 'approved'
         projection.decision = decision
         projection.requestRevision = requiredInteger(
           event.payload.requestRevision,
@@ -300,8 +300,9 @@ function requiredInteger(value: unknown, field: string): number {
   return value as number
 }
 
-function requiredDecision(value: unknown): 'allow_once' | 'deny' {
-  if (value !== 'allow_once' && value !== 'deny') {
+function requiredDecision(value: unknown): NonNullable<ToolPermissionRequestProjection['decision']> {
+  if (value !== 'allow_once' && value !== 'deny' &&
+      value !== 'allow_session' && value !== 'allow_always') {
     throw new Error('Tool permission decision is invalid')
   }
   return value

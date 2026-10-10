@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
 import {
   createRunCheckpoint,
   type CheckpointReason,
@@ -19,6 +20,7 @@ import {
   type AgentRunSnapshot,
   type AgentRuntimeRun,
 } from '../../../../domain/agent-runtime'
+import { projectProviderToolSchema } from './provider-tool-schema'
 import type {
   CapabilityDescriptor,
   EffectiveAgentProfile,
@@ -59,6 +61,11 @@ import type {
   ToolDefinitionReference,
 } from '../../../../domain/tool-definition'
 import type { ToolCatalogService } from '../../application/tools/tool-catalog-service'
+import { ModelFacingSurfaceResolver, withDirectoryControls } from '../../application/tools/model-facing-surface-resolver'
+import { ToolPolicyEngine } from '../../application/tools/tool-policy-engine'
+import { projectModelFacingToolCatalog } from '../../application/tools/tool-model-facing-projection'
+import type { ToolPolicyInput, ToolPolicySnapshot } from '../../../../domain/tool-policy'
+import type { RunModelFacingSnapshot } from '../../../../domain/tool-catalog'
 import type {
   ToolExecutionApplicationService,
   ToolExecutionCommand,
@@ -82,6 +89,10 @@ import {
   formatAgentProviderFailureArtifactConclusion,
 } from './agent-degraded-conclusion'
 import { SubagentRuntime } from './subagent-runtime'
+import { collectDelegatedRunResult } from './delegated-run-result'
+import type { RuntimeBudgetStore } from '../../application/agent-runtime/runtime-budget'
+import type { RuntimeDelegationService } from '../../application/agent-runtime/runtime-delegation-service'
+import type { RuntimeDelegation } from '../../application/agent-runtime/runtime-delegation'
 import { compactAgentContext } from '../../application/context/agent-context-compactor'
 import {
   ProviderRoundTextBuffer,
@@ -91,6 +102,9 @@ import {
 } from '../../../../domain/response-language'
 
 type ToolLoopGateway = AiRunGateway & {
+  acknowledgeTurn?(runId: string, input: {
+    turn: number; messages: Array<{ role: 'user'; content: string }>
+  }): Promise<void>
   resumeRun?(
     run: AgentRuntimeRun,
     checkpoint: RunCheckpoint,
@@ -101,6 +115,7 @@ type ToolLoopGateway = AiRunGateway & {
 }
 
 type RunBinding = {
+  turnReceipts?: Map<string, Array<{ role: 'user'; content: string }>>
   context: RunContext
   model?: ModelExecutionConfig
   providerRunId?: string
@@ -150,8 +165,20 @@ type Dependencies = {
   subagents?: Pick<SubagentRuntime, 'execute' | 'cancel'> &
     Partial<Pick<SubagentRuntime, 'release'>>
   profiles?: AgentProfileResolver
+  resolveSandbox?: () => Promise<NonNullable<ToolPolicyInput['sandbox']>>
   runtimeRuns?: AgentRuntimeRunRepository
   checkpoints?: AgentRunCheckpointRepository
+  projectionCursor?: { get(runId: string): Promise<number> }
+  budgets?: RuntimeBudgetStore
+  delegations?: RuntimeDelegationService
+  turnBoundary?: {
+    pending(runId: string): Array<{ id: string; message: string }>
+    commit(checkpoint: RunCheckpoint, instructionIds: string[]): Promise<void>
+  }
+  onTerminal?: (
+    runId: string,
+    eventType: 'run.completed' | 'run.failed' | 'run.cancelled'
+  ) => Promise<void>
   createRuntimeRunId?: () => string
   now?: () => number
   maxToolCalls?: number
@@ -185,11 +212,26 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
     await this.prepareRun(context)
   }
 
+  getToolPolicy(runId: string): ToolPolicySnapshot | undefined {
+    return this.getBinding(runId)?.snapshot?.toolPolicy
+  }
+
   async createRun(
     context: RunContext,
     model?: ModelExecutionConfig,
   ): Promise<{ runId: string }> {
-    const selection = await this.prepareRun(context)
+    return this.createPolicyBoundRun(context, model)
+  }
+
+  private async createPolicyBoundRun(
+    context: RunContext,
+    model?: ModelExecutionConfig,
+    inheritedGrants?: ToolDefinitionReference[],
+    identity?: { runtimeRunId: string; signal: AbortSignal },
+  ): Promise<{ runId: string }> {
+    if (identity?.signal.aborted) throw new Error('request_cancelled')
+    const selection = await this.prepareRun(context, model?.providerId ?? model?.catalogProviderId, inheritedGrants)
+    if (identity?.signal.aborted) throw new Error('request_cancelled')
     const { definitions, skills } = selection
     const reasoningDecision = resolveConversationReasoning(
       selection.context,
@@ -209,6 +251,8 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
       skills.map((definition) => [modelSkillName(definition), definition]),
     )
     const configuration: RunToolConfiguration = {
+      ...(this.dependencies.turnBoundary && this.dependencies.gateway.acknowledgeTurn &&
+        this.dependencies.checkpoints && this.dependencies.runtimeRuns ? { turnGate: true } : {}),
       maxAgentTurns:
         selection.scenario.executionPolicy.maxTurnsPerSegment,
       maxParallelToolsPerTurn:
@@ -222,7 +266,7 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
       ],
     }
     const runtimeRunId =
-      this.dependencies.createRuntimeRunId?.() ?? randomUUID()
+      identity?.runtimeRunId ?? this.dependencies.createRuntimeRunId?.() ?? randomUUID()
     const now = this.dependencies.now?.() ?? Date.now()
     const runtimeSnapshot = createAgentRunSnapshot(selection.context, {
       runId: runtimeRunId,
@@ -231,6 +275,8 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
       agentProfileDigest: selection.profile.profileDigest,
       promptDigest: selection.profile.promptDigest,
       policyDigest: selection.profile.policyDigest,
+      toolPolicy: selection.toolPolicy,
+      modelFacing: selection.modelFacing,
       capabilityCatalogDigest: selection.catalogDigest,
       capabilityBindingDigest: capabilityBindingDigest(definitions, skills),
       permissionSnapshotDigest: permissionSnapshotDigest(selection.context),
@@ -240,21 +286,22 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
       ...(reasoningDecision ? { reasoningDecision } : {}),
       maxToolCalls: selection.maxToolCalls,
       maxSubagents: selection.maxSubagents,
+      ...(context.runtimeDelegation ? { delegationMode: 'research' as const } : {}),
       ...(context.runtimeDelegation || context.runtimeBranch
         ? {
             lineage: {
               rootRunId: (
-                context.runtimeDelegation ?? context.runtimeBranch!
+                context.runtimeBranch ?? context.runtimeDelegation!
               ).rootRunId,
               parentRunId: (
-                context.runtimeDelegation ?? context.runtimeBranch!
+                context.runtimeBranch ?? context.runtimeDelegation!
               ).parentRunId,
               delegationDepth:
-                context.runtimeDelegation?.delegationDepth ??
-                context.runtimeBranch!.depth,
+                context.runtimeBranch?.depth ??
+                context.runtimeDelegation!.delegationDepth,
               delegationOrdinal:
-                context.runtimeDelegation?.delegationOrdinal ??
-                context.runtimeBranch!.ordinal,
+                context.runtimeBranch?.ordinal ??
+                context.runtimeDelegation!.delegationOrdinal,
             },
           }
         : {}),
@@ -287,15 +334,20 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
     }
     let run: { runId: string }
     try {
+      if (identity?.signal.aborted) throw new Error('request_cancelled')
       run = await this.dependencies.gateway.createRun(
         selectedContext,
         model,
         configuration,
       )
+      if (identity?.signal.aborted) {
+        await this.dependencies.gateway.cancelRun(run.runId)
+        throw new Error('request_cancelled')
+      }
     } catch (error) {
       await this.transitionRuntimeRun(
         runtimeRunId,
-        'failed',
+        identity?.signal.aborted ? 'cancelled' : 'failed',
         safeErrorMessage(error),
       )
       throw error
@@ -387,6 +439,8 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
       agentProfileDigest: selection.profile.profileDigest,
       promptDigest: selection.profile.promptDigest,
       policyDigest: selection.profile.policyDigest,
+      toolPolicy: selection.toolPolicy,
+      modelFacing: selection.modelFacing,
       capabilityCatalogDigest: selection.catalogDigest,
       capabilityBindingDigest: capabilityBindingDigest(
         selection.definitions,
@@ -456,7 +510,16 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
       throw new Error('Agent Run attempt repository is unavailable')
     }
     const context = recoveryContext(run, checkpoint)
-    const selection = await this.prepareRun(context)
+    const selection = await this.prepareRun(
+      context, model?.providerId ?? model?.catalogProviderId ?? run.snapshot.toolPolicy?.providerId,
+      run.snapshot.toolPolicy?.inheritedGrants,
+    )
+    if (selection.toolPolicy.digest !== run.snapshot.toolPolicy?.digest) {
+      throw new Error('tool_policy_changed')
+    }
+    if (!recoverySurfaceMatches(selection, run.snapshot)) {
+      throw new Error('model_facing_surface_changed')
+    }
     const resumed = await this.dependencies.gateway.resumeRun(
       run,
       checkpoint,
@@ -533,9 +596,10 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
     const siblings = await this.dependencies.runtimeRuns.listByParentRunId(
       run.id,
     )
-    return this.createRun(
+    return this.createPolicyBoundRun(
       recoveryBranchContext(run, checkpoint, siblings.length + 1),
       model,
+      run.snapshot.toolPolicy?.grants ?? [],
     )
   }
 
@@ -549,7 +613,9 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
   }> {
     try {
       const context = recoveryContext(run, checkpoint)
-      const selection = await this.prepareRun(context)
+      const selection = await this.prepareRun(
+        context, run.snapshot.toolPolicy?.providerId, run.snapshot.toolPolicy?.inheritedGrants,
+      )
       return {
         profileAvailable:
           selection.profile.profileId === run.snapshot.agentProfileId &&
@@ -558,14 +624,9 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
           selection.profile.profileDigest ===
             run.snapshot.agentProfileDigest &&
           selection.profile.promptDigest === run.snapshot.promptDigest &&
-          selection.profile.policyDigest === run.snapshot.policyDigest,
-        capabilitiesAvailable:
-          selection.catalogDigest ===
-            run.snapshot.capabilityCatalogDigest &&
-          capabilityBindingDigest(
-            selection.definitions,
-            selection.skills,
-          ) === run.snapshot.capabilityBindingDigest,
+          selection.profile.policyDigest === run.snapshot.policyDigest &&
+          selection.toolPolicy.digest === run.snapshot.toolPolicy?.digest,
+        capabilitiesAvailable: recoverySurfaceMatches(selection, run.snapshot),
         permissionValid:
           permissionSnapshotDigest(context) ===
           run.snapshot.permissionSnapshotDigest,
@@ -592,6 +653,10 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
     const abort = (): void => abortController?.abort()
     signal.addEventListener('abort', abort, { once: true })
     try {
+      if (binding && publicRunId && this.dependencies.projectionCursor) {
+        binding.projectionCursor = Math.max(binding.projectionCursor,
+          await this.dependencies.projectionCursor.get(publicRunId))
+      }
       let continueStreaming = true
       while (continueStreaming) {
         continueStreaming = false
@@ -603,6 +668,16 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
           providerRunId,
           signal,
         )) {
+          if (providerEvent.type === 'run.turn_ready') {
+            try {
+              if (!binding || !publicRunId) throw new Error('runtime_turn_unavailable')
+              await this.acknowledgeProviderTurn(binding, providerRunId, providerEvent.data.agentTurn, signal)
+            } catch (error) {
+              await this.dependencies.gateway.cancelRun(providerRunId).catch(() => undefined)
+              throw error
+            }
+            continue
+          }
           if (roundText && providerEvent.type === 'answer.delta') {
             firstRoundTextEvent ??= providerEvent
             roundText.append(providerEvent.data.delta ?? '')
@@ -888,6 +963,7 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
                 { delta: degradedConclusion },
                 this.dependencies.now?.() ?? Date.now(),
               )
+              updateCheckpointState(binding, answerEvent)
               await this.projectRuntimeLifecycle(publicRunId, answerEvent)
               yield answerEvent
 
@@ -898,9 +974,13 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
                 {},
                 this.dependencies.now?.() ?? Date.now(),
               )
-              await this.projectRuntimeLifecycle(publicRunId, completedEvent)
-              yield completedEvent
               await this.writeCheckpoint(publicRunId, 'terminal')
+              await this.cleanupTerminal(
+                publicRunId,
+                completedEvent.type
+              )
+              await this.projectRuntimeLifecycle(publicRunId, completedEvent)
+              this.dependencies.delegations?.cancelChildren(publicRunId)
               if (
                 binding.snapshot &&
                 binding.snapshot.runId === binding.snapshot.rootRunId
@@ -908,6 +988,7 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
                 this.subagents.release?.(binding.snapshot.rootRunId)
               }
               this.deleteBinding(publicRunId)
+              yield completedEvent
               return
             }
           }
@@ -923,8 +1004,23 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
             binding.projectionCursor = event.sequence
             updateCheckpointState(binding, event)
           }
+          if (TERMINAL_EVENTS.has(event.type)) {
+            await this.writeCheckpoint(publicRunId ?? runId, 'terminal')
+            await this.cleanupTerminal(
+              publicRunId ?? runId,
+              event.type
+            )
+          }
           await this.projectRuntimeLifecycle(publicRunId ?? runId, event)
+          if (TERMINAL_EVENTS.has(event.type) && publicRunId) {
+            this.dependencies.delegations?.cancelChildren(publicRunId)
+            if (binding?.snapshot?.runId === binding?.snapshot?.rootRunId && binding?.snapshot) {
+              this.subagents.release?.(binding.snapshot.rootRunId)
+            }
+            this.deleteBinding(publicRunId)
+          }
           yield event
+          if (TERMINAL_EVENTS.has(event.type)) return
           if (binding?.progressStopReason && publicRunId) {
             await this.dependencies.gateway.cancelRun(providerRunId)
             await this.transitionRuntimeRun(publicRunId, 'waiting_input')
@@ -978,24 +1074,15 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
               )
             }
           }
-          if (TERMINAL_EVENTS.has(event.type)) {
-            const terminalBinding = publicRunId
-              ? this.runs.get(publicRunId)
-              : undefined
-            if (publicRunId) this.deleteBinding(publicRunId)
-            if (
-              terminalBinding?.snapshot &&
-              terminalBinding.snapshot.runId ===
-                terminalBinding.snapshot.rootRunId
-            ) {
-              this.subagents.release?.(
-                terminalBinding.snapshot.rootRunId,
-              )
-            }
-          }
         }
       }
     } catch (error) {
+      if (!signal.aborted) {
+        await this.cleanupTerminal(
+          publicRunId ?? runId,
+          'run.failed'
+        )
+      }
       if (publicRunId) this.deleteBinding(publicRunId)
       throw error
     } finally {
@@ -1010,7 +1097,8 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
     this.deleteBinding(publicRunId)
     binding?.abortController?.abort()
     if (binding?.snapshot) {
-      this.subagents.cancel(binding.snapshot.rootRunId)
+      if (this.dependencies.delegations) this.dependencies.delegations.cancel(publicRunId)
+      else this.subagents.cancel(binding.snapshot.rootRunId)
     }
     await this.dependencies.tools.cancelByParent?.(publicRunId)
     await this.dependencies.skillRuntime?.cancelByParent(publicRunId)
@@ -1028,9 +1116,10 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
     ) {
       this.subagents.release?.(binding.snapshot.rootRunId)
     }
+    await this.cleanupTerminal(publicRunId, 'run.cancelled')
   }
 
-  private async prepareRun(context: RunContext): Promise<{
+  private async prepareRun(context: RunContext, providerId?: string, inheritedGrants?: ToolDefinitionReference[]): Promise<{
     context: RunContext
     definitions: ToolDefinition[]
     skills: SkillDefinition[]
@@ -1041,12 +1130,19 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
     capabilityScopes: CapabilityScope[]
     catalogDigest: string
     profile: EffectiveAgentProfile
+    toolPolicy: ToolPolicySnapshot
+    modelFacing: RunModelFacingSnapshot
   }> {
-    const [catalog, capabilityScopes] = await Promise.all([
-      this.dependencies.catalog.list({ modelFacingMode: 'facade' }),
+    const [sourceCatalog, capabilityScopes] = await Promise.all([
+      this.dependencies.catalog.list({
+        modelFacingMode: 'facade',
+        runtimeWorkspaceId:
+          'workspaceId' in context ? context.workspaceId : null,
+      }),
       this.dependencies.capabilityScopes?.resolve(context) ??
         Promise.resolve(capabilityScopeChain(context)),
     ])
+    const catalog = withDirectoryControls(sourceCatalog)
     const installedCapabilities =
       (await this.dependencies.capabilities?.resolve(
         capabilityScopes,
@@ -1163,7 +1259,14 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
     })
     const allowedCapabilities = new Set(profile.capabilities.map(capabilityKey))
     const skills = discoveredSkills.filter((skill) =>
-      allowedCapabilities.has(capabilityKey(skillCapabilityDescriptor(skill))),
+      allowedCapabilities.has(capabilityKey(skillCapabilityDescriptor(skill))) &&
+      skill.requiredTools.every((dependency) =>
+        !dependency.required || enabledTools.some((tool) =>
+          tool.id === dependency.toolId &&
+          isToolVersionInRange(tool.version, dependency.versionRange) &&
+          allowedCapabilities.has(capabilityKey(toolCapabilityDescriptor(tool))),
+        ),
+      ),
     )
     if (
       selectedSkill &&
@@ -1198,8 +1301,7 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
         )
       )
     })
-    const requiredTools = [
-      ...skills,
+    const selectedSkillTools = [
       ...(selectedSkill ? [selectedSkill] : []),
     ].flatMap((skill) =>
       skill.requiredTools.flatMap((dependency) => {
@@ -1233,14 +1335,49 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
         return definition ? [definition] : []
       }),
     )
-    const definitions = uniqueDefinitions([
+    const requiredTools = selectedSkillTools.filter((tool) =>
+      selectedSkill?.requiredTools.some((dependency) =>
+        dependency.required && dependency.toolId === tool.id,
+      ),
+    )
+    const authorizedDefinitions = uniqueDefinitions([
       ...allowedContextualTools,
       ...allowedConnectorTools,
-      ...requiredTools,
+      ...selectedSkillTools,
     ]).filter(
       (definition) =>
         !context.runtimeDelegation || isReadOnlyDelegatedTool(definition),
     )
+    const policyInput: ToolPolicyInput = {
+      providerId,
+      inheritedGrants,
+      sandbox: await this.dependencies.resolveSandbox?.(),
+      context: scheduled ? 'schedule' : 'nodeId' in context ? 'workflow'
+        : 'requirementId' in context ? 'requirement' : 'workspaceId' in context && context.workspaceId ? 'space' : 'general',
+      layers: [
+        ...(profile.policy.toolPolicies ?? []),
+        { alsoAllow: profile.policy.rules.filter((rule) =>
+          rule.kind === 'tool' && (rule.effect === 'allow' || rule.effect === 'require'),
+        ).map(({ id }) => id) },
+      ],
+    }
+    const surface = new ModelFacingSurfaceResolver().resolve({
+      catalog,
+      tools: authorizedDefinitions,
+      requiredTools: uniqueDefinitions([
+        ...requiredTools,
+        ...authorizedDefinitions.filter((tool) => profile.policy.rules.some((rule) =>
+          rule.kind === 'tool' && rule.effect === 'require' && rule.id === tool.id,
+        )),
+      ]),
+      skills,
+      policy: policyInput,
+      mode: profile.policy.modelFacingMode ?? 'auto',
+    })
+    const delegationTool = projectModelFacingToolCatalog({
+      packages: [], tools: [], skills: [],
+    }, 'facade').tools.find(({ id }) => id === 'subagents')!.definition
+    const delegationPermitted = new ToolPolicyEngine().resolve([delegationTool], policyInput).grants.length > 0
     const skillContext = selectedSkill
       ? injectSkillInstructions(
           context,
@@ -1260,6 +1397,7 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
       systemPrompt: [
         profile.prompt,
         skillContext.systemPrompt,
+        surface.directory?.renderedPromptDirectory,
         responseLanguagePolicy(responseLanguage)
       ]
         .filter(Boolean)
@@ -1274,7 +1412,7 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
           ...skills.map((skill) => skill.limits.maxToolCalls),
         )
     const maxSubagents =
-      scenario.id === 'general' || scenario.id === 'space'
+      delegationPermitted && (scenario.id === 'general' || scenario.id === 'space')
         ? Math.min(
             profile.budgets.maxSubagents,
             profile.policy.perRunLimits.agent,
@@ -1282,10 +1420,12 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
         : 0
     return {
       context: selectedContext,
-      definitions,
-      skills,
+      definitions: surface.definitions,
+      skills: surface.skills,
       capabilityScopes,
       profile,
+      toolPolicy: surface.policy!,
+      modelFacing: { mode: surface.mode, ...(surface.directory ? { directory: surface.directory } : {}) },
       scenario,
       catalogDigest: capabilityCatalogDigest(catalog, installedCapabilities),
       maxToolCalls: Math.min(
@@ -1323,6 +1463,25 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
     )
   }
 
+  private async cleanupTerminal(
+    runId: string,
+    eventType: AiRunEvent['type']
+  ): Promise<void> {
+    if (!TERMINAL_EVENTS.has(eventType)) return
+    try {
+      await this.dependencies.onTerminal?.(
+        runId,
+        eventType as 'run.completed' | 'run.failed' | 'run.cancelled'
+      )
+    } catch {
+      console.error('Agent terminal resource cleanup failed', {
+        runId,
+        eventType,
+        errorCode: 'terminal_resource_cleanup_failed'
+      })
+    }
+  }
+
   private resolvePublicRunId(runId: string): string | undefined {
     if (this.runs.has(runId)) return runId
     return this.providerRunIds.get(runId)
@@ -1344,6 +1503,38 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
     if (binding?.providerRunId) {
       this.providerRunIds.delete(binding.providerRunId)
     }
+  }
+
+  private async acknowledgeProviderTurn(
+    binding: RunBinding, providerRunId: string, turn: number | undefined, signal: AbortSignal
+  ): Promise<void> {
+    const boundary = this.dependencies.turnBoundary
+    const acknowledge = this.dependencies.gateway.acknowledgeTurn
+    if (!boundary || !acknowledge || !binding.snapshot || !binding.toolConfiguration?.turnGate ||
+        !Number.isSafeInteger(turn) || turn! < 1 || turn! > 180) {
+      throw new Error('runtime_turn_unavailable')
+    }
+    if (signal.aborted || binding.abortController?.signal.aborted) throw new Error('request_cancelled')
+    const key = `${providerRunId}:${turn}`
+    binding.turnReceipts ??= new Map()
+    let messages = binding.turnReceipts.get(key)
+    if (!messages) {
+      const pending = boundary.pending(binding.snapshot.runId)
+      const messageWindow = [...binding.messageWindow, ...pending.map((item) => ({
+        id: `instruction:${item.id}`, role: 'user' as const, content: item.message
+      }))]
+      const checkpoint = checkpointForBinding(
+        { ...binding, messageWindow }, 'turn_ready', () => binding.checkpointOrdinal + 1,
+        this.dependencies.now?.() ?? Date.now()
+      )
+      await boundary.commit(checkpoint, pending.map((item) => item.id))
+      binding.messageWindow = messageWindow
+      binding.checkpointOrdinal = checkpoint.ordinal
+      messages = pending.map((item) => ({ role: 'user' as const, content: item.message }))
+      binding.turnReceipts.set(key, messages)
+    }
+    if (signal.aborted || binding.abortController?.signal.aborted) throw new Error('request_cancelled')
+    await acknowledge(providerRunId, { turn: turn!, messages })
   }
 
   private async writeCheckpoint(
@@ -1449,6 +1640,18 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
       )
       return
     }
+    try {
+      if (binding.abortController?.signal.aborted) throw new Error('request_cancelled')
+      if (binding.snapshot) this.dependencies.budgets?.consume({
+        runId: binding.snapshot.runId,
+        requestId: `tool:${call.id}`,
+        fingerprint: canonicalToolCallFingerprint(call.name, call.arguments),
+        at: this.dependencies.now?.() ?? Date.now(),
+      })
+    } catch (error) {
+      await this.submitFailure(runId, call.id, safeErrorMessage(error), 'Runtime budget or lifecycle does not permit this call')
+      return
+    }
     if (call.name === SUBAGENT_DELEGATION_TOOL_NAME) {
       if (!binding.delegationAllowed || !binding.snapshot) {
         await this.submitFailure(
@@ -1536,7 +1739,7 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
           ? { connectorBindings: binding.context.connectorBindings }
           : {}),
         idempotencyKey: idempotencyKey(runId, call.id),
-      })
+      }, binding.abortController?.signal)
       if (result.outcome === 'permission_required') {
         const pending = binding.pendingCalls.get(call.id)
         if (pending) {
@@ -1597,7 +1800,10 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
   ): Promise<void> {
     const snapshot = binding.snapshot!
     try {
-      const result = await this.subagents.execute({
+      const signal = binding.abortController?.signal ?? new AbortController().signal
+      const result = this.dependencies.delegations
+        ? await this.dependencies.delegations.execute(snapshot.runId, callId, request, signal)
+        : await this.subagents.execute({
         rootRunId: snapshot.rootRunId,
         request,
         policy: {
@@ -1651,10 +1857,22 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
     }
   }
 
+  async runDelegated(record: RuntimeDelegation, signal: AbortSignal): Promise<SubagentTaskResult> {
+    const parent = this.getBinding(record.parentRunId)
+    if (!parent?.snapshot || !parent.delegationAllowed ||
+        parent.snapshot.rootRunId !== record.rootRunId ||
+        !isDeepStrictEqual(parent.snapshot.scope, record.task.scope)) {
+      throw new Error('runtime_scope_denied')
+    }
+    if (signal.aborted || parent.abortController?.signal.aborted) throw new Error('request_cancelled')
+    return this.runDelegatedTask(parent, record.task, signal, record)
+  }
+
   private async runDelegatedTask(
     parent: RunBinding,
     task: ValidatedDelegationTask,
     signal: AbortSignal,
+    identity?: Pick<RuntimeDelegation, 'runId' | 'sessionId'>,
   ): Promise<SubagentTaskResult> {
     const parentSnapshot = parent.snapshot!
     if (!('conversationId' in parent.context)) {
@@ -1662,6 +1880,7 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
     }
     const childContext: RunContext = {
       ...parent.context,
+      ...(identity ? { conversationId: identity.sessionId } : {}),
       messages: [
         {
           role: 'user',
@@ -1679,79 +1898,24 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
           parentSnapshot.budgets,
       },
     }
-    let childRunId: string | undefined
-    let answer = ''
-    let terminal: 'completed' | 'failed' | 'cancelled' = 'failed'
-    let errorCode: string | undefined
-    let failure = 'Subagent task failed'
-    const evidence: SubagentTaskResult['evidence'] = []
-    const artifactIds = new Set<string>()
-    try {
-      childRunId = (await this.createRun(childContext, parent.model)).runId
+    const coordinator = this
+    const events = (async function* () {
+      const childRunId = (await coordinator.createPolicyBoundRun(
+        childContext, parent.model, parentSnapshot.toolPolicy?.grants ?? [],
+        identity ? { runtimeRunId: identity.runId, signal } : undefined,
+      )).runId
       const cancel = (): void => {
-        if (childRunId) void this.cancelRun(childRunId).catch(() => undefined)
+        void coordinator.cancelRun(childRunId).catch(() => undefined)
       }
       signal.addEventListener('abort', cancel, { once: true })
+      if (signal.aborted) cancel()
       try {
-        for await (const event of this.streamEvents(childRunId, signal)) {
-          if (event.type === 'answer.delta') {
-            answer += event.data.delta ?? ''
-          } else if (
-            event.type === 'reference.added' &&
-            event.data.reference
-          ) {
-            evidence.push({
-              title: sanitizeSubagentText(event.data.reference.title),
-              summary: sanitizeSubagentText(event.data.reference.summary),
-              referenceId: event.data.reference.id,
-            })
-          } else if (event.type === 'tool.call.completed') {
-            for (const id of
-              event.data.toolResult?.status === 'completed'
-                ? event.data.toolResult.artifactIds ?? []
-                : []) {
-              artifactIds.add(id)
-            }
-          } else if (event.type === 'run.completed') {
-            terminal = 'completed'
-          } else if (event.type === 'run.cancelled') {
-            terminal = 'cancelled'
-            failure = 'Subagent task was cancelled'
-          } else if (event.type === 'run.failed') {
-            terminal = 'failed'
-            errorCode = event.data.errorCode ?? 'subagent_failed'
-            failure = sanitizeSubagentText(
-              event.data.message ?? 'Subagent task failed',
-            )
-          }
-        }
-        if (signal.aborted) {
-          terminal = 'cancelled'
-          failure = 'Subagent task was cancelled'
-          errorCode = undefined
-        }
+        yield* coordinator.streamEvents(childRunId, signal)
       } finally {
         signal.removeEventListener('abort', cancel)
       }
-    } catch (error) {
-      terminal = signal.aborted ? 'cancelled' : 'failed'
-      errorCode = signal.aborted ? undefined : 'subagent_failed'
-      failure = signal.aborted
-        ? 'Subagent task was cancelled'
-        : sanitizeSubagentText(safeErrorMessage(error))
-    }
-    return {
-      taskId: task.id,
-      status: terminal,
-      summary:
-        terminal === 'completed'
-          ? sanitizeSubagentText(answer.trim() || 'Research task completed')
-          : failure,
-      evidence,
-      unresolved: terminal === 'failed' ? [failure] : [],
-      artifactIds: [...artifactIds],
-      ...(errorCode ? { errorCode } : {}),
-    }
+    })()
+    return collectDelegatedRunResult(task.id, events, signal)
   }
 
   private async loadSkill(
@@ -1973,6 +2137,16 @@ function recoveryContext(
   return {
     conversationId: run.snapshot.conversationId ?? run.id,
     messages,
+    ...(run.snapshot.delegationMode === 'research' && run.snapshot.parentRunId ? {
+      runtimeDelegation: {
+        rootRunId: run.snapshot.rootRunId,
+        parentRunId: run.snapshot.parentRunId,
+        delegationDepth: run.snapshot.delegationDepth,
+        delegationOrdinal: run.snapshot.delegationOrdinal,
+        maxToolCalls: run.snapshot.budgets.maxToolCalls,
+        rootBudgets: run.snapshot.budgets,
+      },
+    } : {}),
     ...(scope.kind === 'folder' ? { folderPath: scope.folderPath } : {}),
     ...('workspaceId' in scope ? { workspaceId: scope.workspaceId } : {}),
     ...(scope.kind === 'requirement-node'
@@ -2048,6 +2222,13 @@ function updateCheckpointState(
   binding: RunBinding,
   event: AiRunEvent,
 ): void {
+  if (event.type === 'answer.delta' && event.data.delta) {
+    const id = `answer:${event.runId}`
+    const answer = binding.messageWindow.find((message) => message.id === id)
+    if (answer) answer.content += event.data.delta
+    else binding.messageWindow.push({ id, role: 'assistant', content: event.data.delta })
+    return
+  }
   if (
     Number.isInteger(event.data.agentTurn) &&
     (event.data.agentTurn ?? 0) > binding.ledger.agentTurns
@@ -2079,17 +2260,13 @@ function updateCheckpointState(
         definition?.invocation.idempotency ?? 'supported',
       status: 'requested',
     })
-    binding.messageWindow.push({
-      id: event.id,
-      role: 'assistant',
-      content: '',
-      toolCalls: [
-        {
-          id: call.id,
-          name: call.name,
-          arguments: call.arguments,
-        },
-      ],
+    const messageId = event.data.agentTurn === undefined
+      ? event.id : `tool-turn:${event.runId}:${event.data.agentTurn}`
+    const message = binding.messageWindow.find(({ id }) => id === messageId)
+    const toolCall = { id: call.id, name: call.name, arguments: call.arguments }
+    if (message?.toolCalls) message.toolCalls.push(toolCall)
+    else binding.messageWindow.push({
+      id: messageId, role: 'assistant', content: '', toolCalls: [toolCall]
     })
     return
   }
@@ -2140,7 +2317,7 @@ function updateCheckpointState(
       ) {
         binding.ledger.sideEffects += 1
       }
-      binding.messageWindow.push({
+      const resultMessage: RunCheckpoint['messageWindow'][number] = {
         id: event.id,
         role: 'tool',
         content: JSON.stringify(
@@ -2154,7 +2331,22 @@ function updateCheckpointState(
         ),
         toolCallId: callId,
         name: pending?.toolName ?? event.data.toolName ?? 'tool',
-      })
+      }
+      const assistantIndex = binding.messageWindow.findIndex(message =>
+        message.toolCalls?.some(call => call.id === callId))
+      if (assistantIndex < 0) binding.messageWindow.push(resultMessage)
+      else {
+        const calls = binding.messageWindow[assistantIndex].toolCalls!
+        const callIndex = calls.findIndex(call => call.id === callId)
+        let insertAt = assistantIndex + 1
+        while (insertAt < binding.messageWindow.length) {
+          const candidate = binding.messageWindow[insertAt]
+          if (candidate.role !== 'tool' ||
+              calls.findIndex(call => call.id === candidate.toolCallId) > callIndex) break
+          insertAt += 1
+        }
+        binding.messageWindow.splice(insertAt, 0, resultMessage)
+      }
       binding.pendingCalls.delete(callId)
     }
   }
@@ -2484,7 +2676,7 @@ function modelToolDefinition(
     function: {
       name: modelToolName(definition),
       description: definition.description,
-      parameters: definition.inputSchema,
+      parameters: projectProviderToolSchema(definition.inputSchema),
     },
   }
 }
@@ -2497,7 +2689,7 @@ function modelSkillDefinition(
     function: {
       name: modelSkillName(definition),
       description: `Load and follow the ${definition.name} Skill. ${definition.description}`,
-      parameters: definition.inputSchema,
+      parameters: projectProviderToolSchema(definition.inputSchema),
     },
   }
 }
@@ -2509,7 +2701,7 @@ function modelDelegationDefinition(): RunToolConfiguration['tools'][number] {
       name: SUBAGENT_DELEGATION_TOOL_NAME,
       description:
         'Delegate independent read-only research tasks and receive a structured aggregate.',
-      parameters: DELEGATION_REQUEST_JSON_SCHEMA,
+      parameters: projectProviderToolSchema(DELEGATION_REQUEST_JSON_SCHEMA),
     },
   }
 }
@@ -2563,16 +2755,6 @@ function delegatedTaskPrompt(task: ValidatedDelegationTask): string {
     ...task.completionCriteria.map((criterion) => `- ${criterion}`),
     'Return a concise evidence-based summary and unresolved questions.',
   ].join('\n')
-}
-
-function sanitizeSubagentText(value: string): string {
-  return value
-    .replace(/(?:\/Users|\/home|\/tmp|[A-Za-z]:\\)[^\s"',}]*/g, '[local path]')
-    .replace(
-      /\b(?:authorization|cookie|password|secret|token|api[_-]?key)\s*[:=]\s*\S+/gi,
-      '[redacted]',
-    )
-    .slice(0, 4_000)
 }
 
 function reference(definition: ToolDefinition): ToolDefinitionReference {
@@ -2771,6 +2953,17 @@ function capabilityScopeChain(context: RunContext): CapabilityScope[] {
     }
   }
   return scopes
+}
+
+function recoverySurfaceMatches(selection: {
+  catalogDigest: string
+  definitions: ToolDefinition[]
+  skills: SkillDefinition[]
+  modelFacing: RunModelFacingSnapshot
+}, snapshot: AgentRunSnapshot): boolean {
+  return selection.catalogDigest === snapshot.capabilityCatalogDigest &&
+    capabilityBindingDigest(selection.definitions, selection.skills) === snapshot.capabilityBindingDigest &&
+    isDeepStrictEqual(selection.modelFacing, snapshot.modelFacing)
 }
 
 function capabilityBindingDigest(

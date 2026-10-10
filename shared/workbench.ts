@@ -12,8 +12,13 @@ export type WebPageState = {
   loading: boolean
   canGoBack: boolean
   canGoForward: boolean
+  managed?: 'agent'
   error?: string
 }
+
+export type AgentBrowserSurfaceEvent =
+  | { type: 'opened'; page: WebPageState & { managed: 'agent' } }
+  | { type: 'closed'; sessionId: string }
 
 export interface WebWorkbenchApi {
   create: (url: string) => Promise<WebPageState>
@@ -27,4 +32,7 @@ export interface WebWorkbenchApi {
   destroy: (id: string) => Promise<void>
   openExternal: (url: string) => Promise<void>
   onStateChange: (listener: (state: WebPageState) => void) => () => void
+  onAgentBrowserSurface: (
+    listener: (event: AgentBrowserSurfaceEvent) => void
+  ) => () => void
 }

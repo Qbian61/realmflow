@@ -21,6 +21,20 @@ const sandboxManifest = {
 }
 
 describe('SidecarClient', () => {
+  it('acknowledges a provider turn and rejects mismatched server receipts', async () => {
+    const fetch = vi.fn().mockImplementation(async () => new Response(
+      JSON.stringify({ runId: 'run-1', turn: 1, status: 'accepted' }), { status: 200 }
+    ))
+    const client = new SidecarClient('http://127.0.0.1:8765', fetch)
+    expect(typeof client.acknowledgeTurn).toBe('function')
+    const payload = { turn: 1, messages: [{ role: 'user' as const, content: 'Updated objective' }] }
+    await client.acknowledgeTurn('run-1', payload)
+    expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:8765/api/v1/runs/run-1/turn',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify(payload) }))
+    await expect(client.acknowledgeTurn('run-1', { turn: 2, messages: [] }))
+      .rejects.toThrow('Invalid Sidecar turn acknowledgment')
+  })
+
   it('reports the Sidecar OS isolation capability', async () => {
     const fetch = vi.fn().mockResolvedValue(
       new Response(
@@ -948,6 +962,21 @@ describe('SidecarClient', () => {
         toolExecutionId: 'execution-1'
       }
     })
+  })
+
+  it.each([1, 0, -1, 1.5])('validates the Main turn gate event number %s', async (agentTurn) => {
+    const fetch = vi.fn().mockResolvedValue(sseResponse([
+      sseEvent('event-1', 1, 'run.turn_ready', { agentTurn }),
+      sseEvent('event-2', 2, 'run.completed', {})
+    ]))
+    const client = new SidecarClient('http://127.0.0.1:8765', fetch)
+    const consume = async () => {
+      const events = []
+      for await (const event of client.streamEvents('run-1', new AbortController().signal)) events.push(event)
+      return events
+    }
+    if (agentTurn === 1) await expect(consume()).resolves.toHaveLength(2)
+    else await expect(consume()).rejects.toThrow('Invalid Sidecar event')
   })
 
   it('rejects malformed Tool Call event payloads', async () => {

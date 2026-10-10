@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "id": "builtin.web.search",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "name": "Search web",
-  "description": "Search the web through an explicitly configured provider and return normalized results.",
+  "description": "Search using the provider saved in Web settings (self-hosted SearXNG or opt-in Brave); return source-attributed results. Provider selection and credentials are controlled by the user.",
   "tags": [
     "web"
   ],
@@ -56,12 +56,6 @@
           "moderate",
           "off"
         ]
-      },
-      "provider": {
-        "type": "string",
-        "enum": [
-          "searxng"
-        ]
       }
     }
   },
@@ -70,10 +64,12 @@
     "additionalProperties": true
   },
   "capabilities": [
-    "network.connect"
+    "network.connect",
+    "credential.use"
   ],
   "effects": [
-    "external.read"
+    "external.read",
+    "local_data.read"
   ],
   "risk": "medium",
   "invocation": {

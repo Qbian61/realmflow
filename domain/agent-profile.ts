@@ -10,6 +10,8 @@ import type {
 } from './agent-runtime'
 import { isToolVersionInRange } from './skill-definition'
 import type { ToolRisk } from './tool-definition'
+import type { ToolModelFacingMode } from './tool-catalog'
+import { normalizeToolPolicyLayers, type ToolPolicyLayer } from './tool-policy'
 
 export { CAPABILITY_KINDS }
 export type { CapabilityKind }
@@ -35,6 +37,8 @@ export type CapabilityPolicyRule = {
 export type CapabilityPolicy = {
   defaultEffect: 'allow' | 'deny'
   maximumRisk: ToolRisk
+  toolPolicies?: ToolPolicyLayer[]
+  modelFacingMode?: ToolModelFacingMode | 'auto'
   rules: CapabilityPolicyRule[]
   scope: {
     pathPrefixes?: string[]
@@ -317,7 +321,16 @@ function tightenPolicy(
           ? 'deny'
           : 'allow',
       maximumRisk,
+      ...((requested.modelFacingMode ?? current.modelFacingMode) ? {
+        modelFacingMode: requested.modelFacingMode ?? current.modelFacingMode,
+      } : {}),
       rules: mergeRules(current.rules, requested.rules),
+      ...((current.toolPolicies || requested.toolPolicies) ? {
+        toolPolicies: normalizeToolPolicyLayers([
+          ...(current.toolPolicies ?? []),
+          ...(requested.toolPolicies ?? []),
+        ]),
+      } : {}),
       scope,
       perRunLimits
     },
@@ -530,6 +543,8 @@ function clonePolicy(policy: CapabilityPolicy): CapabilityPolicy {
   return {
     defaultEffect: policy.defaultEffect,
     maximumRisk: policy.maximumRisk,
+    ...(policy.modelFacingMode ? { modelFacingMode: policy.modelFacingMode } : {}),
+    ...(policy.toolPolicies ? { toolPolicies: normalizeToolPolicyLayers(policy.toolPolicies) } : {}),
     rules: policy.rules.map((rule) => ({ ...rule })).sort(compareRules),
     scope: {
       ...(policy.scope.pathPrefixes
@@ -547,6 +562,10 @@ function clonePolicy(policy: CapabilityPolicy): CapabilityPolicy {
 }
 
 function assertProfileDraft(draft: AgentProfileDraft): void {
+  if (draft.capabilityPolicy.modelFacingMode !== undefined &&
+    !['auto', 'direct', 'facade', 'directory'].includes(draft.capabilityPolicy.modelFacingMode)) {
+    throw new Error('Agent Profile model-facing mode is invalid')
+  }
   if (
     !draft.id ||
     !/^\d+\.\d+\.\d+$/.test(draft.version) ||

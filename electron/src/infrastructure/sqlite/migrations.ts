@@ -1,4 +1,10 @@
 import type Database from 'better-sqlite3'
+import { BROWSER_SESSION_SCHEMA } from './browser-session-schema'
+import { WEB_PROVIDER_SCHEMA } from './web-provider-schema'
+import { AGENT_RUNTIME_STATE_SCHEMA } from './agent-runtime-state-schema'
+import { AGENT_RUNTIME_BUDGET_SCHEMA } from './agent-runtime-budget-schema'
+import { AGENT_DELEGATION_SCHEMA } from './agent-delegation-schema'
+import { SKILL_REGISTRY_SCHEMA } from './skill-registry-schema'
 
 export type SqlMigration = {
   version: number
@@ -6421,6 +6427,46 @@ export const REALMFLOW_MIGRATIONS: readonly SqlMigration[] = [
     version: 99,
     name: 'backfill_no_progress_conclusions',
     up: backfillNoProgressConclusions
+  },
+  {
+    version: 100,
+    name: 'browser_runtime_sessions',
+    up: (database) => database.exec(BROWSER_SESSION_SCHEMA)
+  },
+  {
+    version: 101,
+    name: 'web_provider_configuration',
+    up: (database) => database.exec(WEB_PROVIDER_SCHEMA)
+  },
+  {
+    version: 102,
+    name: 'agent_runtime_orchestration_state',
+    up: (database) => database.exec(AGENT_RUNTIME_STATE_SCHEMA)
+  },
+  {
+    version: 103,
+    name: 'agent_runtime_shared_budget',
+    up: (database) => database.exec(AGENT_RUNTIME_BUDGET_SCHEMA)
+  },
+  {
+    version: 104,
+    name: 'agent_runtime_delegations',
+    up: (database) => database.exec(AGENT_DELEGATION_SCHEMA)
+  },
+  {
+    version: 105,
+    name: 'conversation_generated_artifact_provenance',
+    up: (database) => database.exec(`
+      CREATE TABLE conversation_generated_artifact_runs (
+        run_id TEXT PRIMARY KEY REFERENCES agent_runtime_runs(id) ON DELETE CASCADE,
+        state_json TEXT NOT NULL CHECK (json_valid(state_json))
+      );
+    `)
+  },
+  {
+    version: 106,
+    name: 'skill_registry',
+    up: (database) => database.exec(SKILL_REGISTRY_SCHEMA)
   }
 ]
 

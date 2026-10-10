@@ -1,4 +1,7 @@
 import type Database from 'better-sqlite3'
+import { reconcileTerminalConversations } from './reconcile-terminal-conversations'
+import type { ConversationGeneratedArtifactSource } from '../../../../domain/follow-up-suggestion'
+import type { ConversationGeneratedArtifactService } from '../../application/conversation/conversation-generated-artifacts'
 import {
   createAssistantTurnProjection,
   projectAssistantTurn,
@@ -58,6 +61,119 @@ export class SqliteAssistantRunEventStore {
 
   async flushBuffered(): Promise<number> {
     return this.serialize(() => this.flushBufferedInternal())
+  }
+
+  reconcileTerminalConversations(artifacts?: Pick<ConversationGeneratedArtifactService, 'finalizeRun'>): Promise<void> {
+    return reconcileTerminalConversations(this.database, this, artifacts)
+  }
+
+  async repairRecoveredTerminalDelivery(
+    projection: AssistantTurnProjection,
+    timestamp: number,
+    source?: ConversationGeneratedArtifactSource,
+    recoveredAnswer?: string
+  ): Promise<boolean> {
+    if (!['completed', 'failed', 'cancelled'].includes(projection.status)) {
+      throw new Error('Assistant terminal delivery projection is invalid')
+    }
+    return this.serialize(async () => this.database.transaction(() => {
+      const message = this.database.prepare(
+        `SELECT session_id, status, content, error, completed_at, source_json
+         FROM chat_messages
+         WHERE id = ? AND run_id = ? AND role = 'assistant'`
+      ).get(
+        projection.assistantMessageId,
+        projection.runId
+      ) as {
+        session_id: string
+        status: string
+        content: string
+        error: string | null
+        completed_at: number | null
+        source_json: string | null
+      } | undefined
+      if (!message) return false
+      const completed = projection.status === 'completed'
+      const next = {
+        status: completed ? 'completed' : 'failed',
+        content:
+          (recoveredAnswer ?? projection.answer) ||
+          (completed
+            ? recoveredEmptyAnswer(this.database, message.session_id)
+            : ''),
+        error: completed
+          ? null
+          : projection.status === 'cancelled'
+            ? 'Conversation run cancelled'
+            : 'Conversation run failed',
+        completedAt: timestamp,
+        sourceJson: source
+          ? JSON.stringify(source)
+          : message.source_json
+      }
+      if (
+        message.status === next.status &&
+        message.content === next.content &&
+        message.error === next.error &&
+        message.completed_at === next.completedAt &&
+        message.source_json === next.sourceJson
+      ) {
+        return false
+      }
+      this.database.prepare(
+        `UPDATE chat_messages
+         SET status = ?, content = ?, error = ?, completed_at = ?, source_json = ?
+         WHERE id = ? AND run_id = ?`
+      ).run(
+        next.status,
+        next.content,
+        next.error,
+        next.completedAt,
+        next.sourceJson,
+        projection.assistantMessageId,
+        projection.runId
+      )
+      this.database.prepare(
+        'UPDATE chat_sessions SET revision = revision + 1, updated_at = ? WHERE id = ?'
+      ).run(timestamp, message.session_id)
+      return true
+    })())
+  }
+
+  /** Recovery has no live conversation sender to finish the pending answer.
+   * Its terminal fact and message must either both commit or both fail. */
+  async appendRecoveredAndProject(
+    event: AssistantRunEvent,
+    projection: AssistantTurnProjection,
+    source?: ConversationGeneratedArtifactSource
+  ): Promise<boolean> {
+    assertProjectionMatchesEvent(event, projection)
+    return this.serialize(async () => this.database.transaction(() => {
+      const inserted = this.persist(event, projection)
+      if (!inserted || !['run.resumed', 'run.completed', 'run.failed', 'run.cancelled'].includes(event.type)) return inserted
+      const message = this.database.prepare(
+        `SELECT session_id FROM chat_messages
+         WHERE id = ? AND run_id = ? AND role = 'assistant'`
+      ).get(projection.assistantMessageId, event.runId) as { session_id: string } | undefined
+      if (!message) return inserted
+      const resumed = event.type === 'run.resumed'
+      const completed = event.type === 'run.completed'
+      this.database.prepare(
+        `UPDATE chat_messages SET status = ?, content = ?, error = ?, completed_at = ?,
+           source_json = COALESCE(?, source_json)
+         WHERE id = ? AND run_id = ?`
+      ).run(
+        resumed ? 'pending' : completed ? 'completed' : 'failed',
+        projection.answer || (completed ? recoveredEmptyAnswer(this.database, message.session_id) : ''),
+        resumed || completed ? null : event.type === 'run.cancelled' ? 'Conversation run cancelled' : 'Conversation run failed',
+        resumed ? null : event.timestamp, source ? JSON.stringify(source) : null,
+        projection.assistantMessageId, event.runId
+      )
+      this.database.prepare(
+        'UPDATE chat_sessions SET revision = revision + 1, updated_at = ? WHERE id = ?'
+      ).run(event.timestamp, message.session_id)
+      return inserted
+    })())
   }
 
   private async appendInternal(
@@ -348,6 +464,15 @@ function removeBufferedRun(
     removed += 1
   }
   return removed
+}
+
+function recoveredEmptyAnswer(database: Database.Database, sessionId: string): string {
+  const row = database.prepare(
+    "SELECT content FROM chat_messages WHERE session_id = ? AND role = 'user' ORDER BY sort_order DESC LIMIT 1"
+  ).get(sessionId) as { content: string } | undefined
+  if (/[\u3040-\u30ff]/u.test(row?.content ?? '')) return 'タスクが完了しました。実行詳細を確認してください。'
+  if (/[\u3400-\u9fff]/u.test(row?.content ?? '')) return '任务已完成，请查看执行详情。'
+  return 'Task completed. Check the execution details.'
 }
 
 function isTerminalEvent(event: AssistantRunEvent): boolean {

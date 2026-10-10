@@ -80,7 +80,7 @@ function requirePermissionDecisionCommand(
     ),
     decision: requireEnum(
       command.decision,
-      new Set(['allow_once', 'deny'] as const),
+      new Set(['allow_once', 'deny', 'allow_session', 'allow_always'] as const),
       'Tool permission decision'
     )
   }

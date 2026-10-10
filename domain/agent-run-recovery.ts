@@ -7,6 +7,7 @@ import {
 
 export type CheckpointReason =
   | 'run_started'
+  | 'turn_ready'
   | 'model_round_completed'
   | 'tool_completed'
   | 'skill_completed'
@@ -72,6 +73,7 @@ export type RunCheckpoint = {
     capabilityBinding: string
   }
   toolConfiguration?: {
+    turnGate?: boolean
     tools: Array<{
       type: 'function'
       function: {

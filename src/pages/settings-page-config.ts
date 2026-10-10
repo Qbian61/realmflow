@@ -8,11 +8,13 @@ import type {
 export type ActiveSettingsSection =
   | 'general'
   | 'models'
+  | 'web'
   | 'backup'
 
 export function resolveSettingsSection(search: string): ActiveSettingsSection {
   const section = new URLSearchParams(search).get('section')
   return section === 'models' ||
+    section === 'web' ||
     section === 'backup'
     ? section
     : 'general'

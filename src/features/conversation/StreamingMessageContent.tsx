@@ -79,7 +79,9 @@ export function StreamingMessageContent({
 
   useEffect(() => {
     if (pending) animatedRef.current = true;
-    setVisibleLength((current) => Math.min(current, content.length));
+    setVisibleLength((current) =>
+      animatedRef.current ? Math.min(current, content.length) : content.length,
+    );
   }, [content, pending]);
 
   useEffect(() => {

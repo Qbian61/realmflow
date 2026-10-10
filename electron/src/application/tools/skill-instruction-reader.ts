@@ -7,6 +7,15 @@ import type { ExtensionPackageService } from './extension-package-service'
 type Dependencies = {
   builtins: readonly BuiltinCatalogPackage[]
   local: Pick<ExtensionPackageService, 'readSkillInstructions'>
+  registry?: {
+    listAvailableDefinitions(): SkillDefinition[]
+    readInstructions(
+      definition: Pick<
+        SkillDefinition,
+        'id' | 'version' | 'definitionDigest'
+      >,
+    ): string
+  }
   maxBytes?: number
 }
 
@@ -18,6 +27,18 @@ export class SkillInstructionReader {
   }
 
   async readInstructions(definition: SkillDefinition): Promise<string> {
+    if (
+      this.dependencies.registry
+        ?.listAvailableDefinitions()
+        .some(
+          ({ id, version, definitionDigest }) =>
+            id === definition.id &&
+            version === definition.version &&
+            definitionDigest === definition.definitionDigest,
+        )
+    ) {
+      return this.dependencies.registry.readInstructions(definition)
+    }
     if (definition.origin === 'local_upload') {
       return this.dependencies.local.readSkillInstructions(definition)
     }

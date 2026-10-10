@@ -54,9 +54,14 @@ import { registerConversationAttachmentIpc } from './conversation-attachment-ipc
 import type { ManageConversationAttachments } from '../application/conversation/manage-conversation-attachments'
 import { registerRuntimeGovernanceIpc } from './runtime-governance-ipc'
 import { registerToolPermissionIpc } from './tool-permission-ipc'
+import { registerWebProviderIpc } from './web-provider-ipc'
+import { registerAgentRuntimeIpc } from './agent-runtime-ipc'
+import { registerSkillRegistryIpc } from './skill-registry-ipc'
 
 type RegisterMainIpcOptions = {
   sidecar: { getStatus: () => SidecarStatus }
+  webProviders: Parameters<typeof registerWebProviderIpc>[0]['service']
+  agentRuntime: Omit<Parameters<typeof registerAgentRuntimeIpc>[0], 'ipcMain'>
   aiRuns: {
     executeNode: Pick<ExecuteWorkflowNodeUseCase, 'execute'>
     executeStage: Pick<ExecuteWorkflowStageUseCase, 'execute'>
@@ -70,6 +75,10 @@ type RegisterMainIpcOptions = {
   toolCatalog: Omit<
     Parameters<typeof registerToolCatalogIpc>[0],
     'ipcMain' | 'dialog'
+  >
+  skillRegistry: Omit<
+    Parameters<typeof registerSkillRegistryIpc>[0],
+    'ipcMain'
   >
   toolPermissions: Omit<
     Parameters<typeof registerToolPermissionIpc>[0],
@@ -126,9 +135,12 @@ type RegisterMainIpcOptions = {
 
 export function registerMainIpc({
   sidecar,
+  webProviders,
+  agentRuntime,
   aiRuns,
   business,
   toolCatalog,
+  skillRegistry,
   toolPermissions,
   capabilityCatalog,
   capabilityBuilder,
@@ -188,6 +200,8 @@ export function registerMainIpc({
     }
   )
   registerAiRunIpc({ ...aiRuns, ipcMain })
+  registerWebProviderIpc({ service: webProviders, ipcMain })
+  registerAgentRuntimeIpc({ ...agentRuntime, ipcMain })
   registerWorkbenchLayoutIpc({ service: workbenchLayout, ipcMain })
   registerWorkbenchDashboardIpc({ query: workbenchDashboard, ipcMain })
   registerWorkbenchSystemIpc({ query: workbenchSystem, ipcMain })
@@ -204,6 +218,7 @@ export function registerMainIpc({
   registerWorkbenchMemoIpc({ service: workbenchMemos, ipcMain })
   registerBusinessIpc({ handlers: business, backup, ipcMain, dialog })
   registerToolCatalogIpc({ ...toolCatalog, ipcMain, dialog })
+  registerSkillRegistryIpc({ ...skillRegistry, ipcMain })
   registerToolPermissionIpc({ ...toolPermissions, ipcMain })
   if (capabilityCatalog) {
     registerCapabilityCatalogIpc({

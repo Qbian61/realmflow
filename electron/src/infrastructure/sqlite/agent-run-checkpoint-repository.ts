@@ -1,5 +1,7 @@
 import type Database from 'better-sqlite3'
 import type { RunCheckpoint } from '../../../../domain/agent-run-recovery'
+import { RuntimeStateService } from '../../application/agent-runtime/runtime-state-service'
+import { SqliteAgentRuntimeStateRepository } from './agent-runtime-state-repository'
 
 type CheckpointRow = {
   checkpoint_json: string
@@ -17,6 +19,31 @@ export class SqliteAgentRunCheckpointRepository
   constructor(private readonly database: Database.Database) {}
 
   async save(checkpoint: RunCheckpoint): Promise<boolean> {
+    return this.saveSync(checkpoint)
+  }
+
+  saveWithInstructions(checkpoint: RunCheckpoint, instructionIds: string[]): void {
+    this.database.transaction(() => {
+      const state = new RuntimeStateService(
+        new SqliteAgentRuntimeStateRepository(this.database), () => checkpoint.createdAt
+      )
+      const instructions = state.read(checkpoint.runId).instructions
+      for (const id of instructionIds) {
+        const instruction = instructions.find((item) => item.id === id)
+        if (!instruction || !checkpoint.messageWindow.some((message) =>
+          message.id === `instruction:${id}` && message.role === 'user' &&
+          message.content === instruction.message)) {
+          throw new Error('runtime_instruction_checkpoint_mismatch')
+        }
+      }
+      this.saveSync(checkpoint)
+      if (instructionIds.length) state.applied(checkpoint.runId, `turn:${checkpoint.ordinal}`, {
+        ids: instructionIds, checkpointOrdinal: checkpoint.ordinal
+      })
+    })()
+  }
+
+  private saveSync(checkpoint: RunCheckpoint): boolean {
     return this.database.transaction(() => {
       const current = this.database
         .prepare(

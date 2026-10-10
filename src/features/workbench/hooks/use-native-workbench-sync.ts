@@ -21,6 +21,7 @@ import type {
 export function useNativeWorkbenchSync({
   api,
   dispatch,
+  activateTab,
   panelOpen,
   activeTab,
   panelRef,
@@ -29,6 +30,7 @@ export function useNativeWorkbenchSync({
 }: {
   api?: RealmFlowApi
   dispatch: Dispatch<WorkbenchAction>
+  activateTab: (tab: WorkbenchTab) => void
   panelOpen: boolean
   activeTab?: WorkbenchTab
   panelRef: RefObject<HTMLElement>
@@ -102,6 +104,27 @@ export function useNativeWorkbenchSync({
         dispatch({ type: 'web-state-changed', page })
       }),
     [api, dispatch]
+  )
+
+  useEffect(
+    () =>
+      api?.webWorkbench.onAgentBrowserSurface((event) => {
+        if (event.type === 'closed') {
+          dispatch({
+            type: 'agent-browser-closed',
+            sessionId: event.sessionId
+          })
+          return
+        }
+        activateTab({
+          id: event.page.id,
+          type: 'web',
+          label: event.page.title || event.page.url,
+          page: event.page,
+          managed: 'agent'
+        })
+      }),
+    [activateTab, api, dispatch]
   )
 
   const syncWebView = useCallback(() => {

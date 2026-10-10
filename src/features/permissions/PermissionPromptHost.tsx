@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type {
   PendingToolPermissionView,
-  ToolPermissionApi
+  ToolPermissionApi,
+  ToolPermissionDecision
 } from '../../../shared/tool-permissions'
 import { useLocalization } from '../../localization/LocalizationProvider'
 import { ToolPermissionDialog } from './ToolPermissionDialog'
@@ -13,9 +15,9 @@ export function PermissionPromptHost({
 }): JSX.Element | null {
   const { t } = useLocalization()
   const [requests, setRequests] = useState<PendingToolPermissionView[]>([])
-  const [dismissed, setDismissed] = useState<Set<string>>(() => new Set())
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string>()
+  const [target, setTarget] = useState<HTMLElement | null>(null)
 
   const refresh = useCallback(async () => {
     if (!api) return
@@ -42,23 +44,45 @@ export function PermissionPromptHost({
       requests.find(
         (candidate) =>
           candidate.status === 'requested' &&
-          candidate.expiresAt > Date.now() &&
-          !dismissed.has(requestKey(candidate))
+          candidate.expiresAt > Date.now()
       ),
-    [dismissed, requests]
+    [requests]
   )
+
+  useEffect(() => {
+    const updateTarget = (): void => {
+      const candidates = [...document.querySelectorAll<HTMLElement>('[data-permission-run-ids]')]
+      setTarget(candidates.find(element => {
+        let ids: unknown
+        try { ids = JSON.parse(element.dataset.permissionRunIds ?? '[]') } catch { return false }
+        if (!Array.isArray(ids)) return false
+        return ids.includes(request?.runId ?? '') &&
+          !element.closest('[hidden], [aria-hidden="true"]')
+      }) ?? null)
+    }
+    updateTarget()
+    const observer = new MutationObserver(updateTarget)
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true,
+      attributeFilter: ['data-permission-run-ids', 'hidden', 'aria-hidden'] })
+    return () => observer.disconnect()
+  }, [request?.runId])
+
+  useEffect(() => {
+    const form = target?.parentElement?.querySelector<HTMLFormElement>('form.composer')
+    if (!form || !request) return
+    const wasHidden = form.hidden
+    const wasInert = form.hasAttribute('inert')
+    form.hidden = true
+    form.setAttribute('inert', '')
+    return () => {
+      form.hidden = wasHidden
+      if (!wasInert) form.removeAttribute('inert')
+    }
+  }, [target, request?.id])
 
   if (!api || !request) return null
 
-  const later = (): void => {
-    setError(undefined)
-    setDismissed((current) => {
-      const next = new Set(current)
-      next.add(requestKey(request))
-      return next
-    })
-  }
-  const decide = async (decision: 'allow_once' | 'deny'): Promise<void> => {
+  const decide = async (decision: ToolPermissionDecision): Promise<void> => {
     setPending(true)
     setError(undefined)
     try {
@@ -66,11 +90,6 @@ export function PermissionPromptHost({
         requestId: request.id,
         expectedRevision: request.requestRevision,
         decision
-      })
-      setDismissed((current) => {
-        const next = new Set(current)
-        next.add(requestKey(request))
-        return next
       })
       await refresh()
     } catch (cause) {
@@ -86,18 +105,18 @@ export function PermissionPromptHost({
     }
   }
 
-  return (
+  const card = (
     <ToolPermissionDialog
       request={request}
       pending={pending}
       error={error}
-      onLater={later}
       onAllow={() => void decide('allow_once')}
+      onAllowSession={() => void decide('allow_session')}
+      onAllowAlways={() => void decide('allow_always')}
       onDeny={() => void decide('deny')}
     />
   )
-}
-
-function requestKey(request: PendingToolPermissionView): string {
-  return `${request.id}:${request.requestRevision}`
+  return target ? createPortal(card, target) : (
+    <div className="tool-permission-card-fallback">{card}</div>
+  )
 }

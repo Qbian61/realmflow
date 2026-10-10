@@ -1,4 +1,5 @@
 import {
+  act,
   fireEvent,
   render as testingRender,
   screen,
@@ -202,6 +203,7 @@ function createApi(): RealmFlowApi {
       destroy: vi.fn(),
       openExternal: vi.fn(),
       onStateChange: vi.fn().mockReturnValue(() => undefined),
+      onAgentBrowserSurface: vi.fn().mockReturnValue(() => undefined),
     },
     terminal: {
       create: vi.fn().mockResolvedValue({
@@ -566,6 +568,60 @@ describe("WorkbenchProvider", () => {
       expect(nativeOverlay.show).toHaveBeenCalledTimes(1);
     });
     expect(api.webWorkbench.hideAll).not.toHaveBeenCalled();
+  });
+
+  it("opens a read-only Agent browser tab from Main and removes it on close", async () => {
+    const api = createApi();
+    let listener:
+      | ((event: import("../../../shared/workbench").AgentBrowserSurfaceEvent) => void)
+      | undefined;
+    vi.mocked(api.webWorkbench.onAgentBrowserSurface).mockImplementation(
+      (next) => {
+        listener = next;
+        return () => undefined;
+      },
+    );
+    render(
+      <MemoryRouter>
+        <WorkbenchProvider api={api}>
+          <TestPage />
+        </WorkbenchProvider>
+      </MemoryRouter>,
+    );
+
+    act(() => {
+      listener?.({
+        type: "opened",
+        page: {
+          id: "browser-agent-1",
+          title: "Agent Browser",
+          url: "https://example.com/",
+          loading: false,
+          canGoBack: true,
+          canGoForward: true,
+          managed: "agent",
+        },
+      });
+    });
+
+    expect(screen.getByRole("tab", { name: "Agent Browser" })).toBeVisible();
+    expect(
+      screen.getByRole("complementary", { name: "全局工作区" }),
+    ).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "网页地址" })).toHaveAttribute(
+      "readonly",
+    );
+    expect(screen.getByRole("button", { name: "后退" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "在系统浏览器打开" }),
+    ).toBeDisabled();
+
+    act(() => {
+      listener?.({ type: "closed", sessionId: "browser-agent-1" });
+    });
+    expect(
+      screen.queryByRole("tab", { name: "Agent Browser" }),
+    ).not.toBeInTheDocument();
   });
 
   it("opens the native workbench action menu with Cmd+P", async () => {

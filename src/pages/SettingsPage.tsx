@@ -4,6 +4,7 @@ import type { WorkRootDto } from "../../shared/business";
 import { BackupSettings } from "../features/settings/BackupSettings";
 import { BuiltinProviderDialog } from "../features/settings/BuiltinProviderDialog";
 import { GeneralSettings } from "../features/settings/GeneralSettings";
+import { WebProviderSettings } from "../features/settings/WebProviderSettings";
 import {
   ProfileDeleteDialog,
   ProfileEditor,
@@ -181,6 +182,8 @@ export default function SettingsPage(): JSX.Element {
               }
               onRotateCredentialKey={() => void model.rotateCredentialKey()}
             />
+          ) : activeSection === "web" ? (
+            <WebProviderSettings />
           ) : activeSection === "backup" && business ? (
             <BackupSettings business={business} />
           ) : null}

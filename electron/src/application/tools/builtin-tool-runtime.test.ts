@@ -3,6 +3,9 @@ import { realpath } from 'node:fs/promises'
 import { describe, expect, it, vi } from 'vitest'
 import type { JsonObject } from '../../../../domain/tool-protocol-validation'
 import { BuiltinCatalogLoader } from './builtin-catalog-loader'
+import { BrowserRuntimeService } from '../browser/browser-runtime-service'
+import type { BrowserSession } from '../browser/browser-runtime-port'
+import type { ToolExecutionContext } from './tool-adapter'
 import {
   APPLICATION_TOOL_HANDLER_NAMES,
   createBuiltinToolAdapter,
@@ -10,6 +13,56 @@ import {
 } from './builtin-tool-runtime'
 
 describe('builtin Tool runtime', () => {
+  it('executes browser lifecycle through the adapter with trusted owner/workspace and safe errors', async () => {
+    const records = new Map<string, BrowserSession>()
+    const browser = new BrowserRuntimeService({
+      list: () => [...records.values()], get: (id) => records.get(id),
+      insert: (s) => { records.set(s.id, s) }, update: (s) => { records.set(s.id, s) }
+    }, {
+      open: async () => {}, close: async () => {},
+      execute: async (_session, action) => {
+        if (action === 'navigate') throw new Error('CDP failed secret-token-without-a-url')
+        return { text: 'Ready' }
+      }
+    })
+    const adapter = createBuiltinToolAdapter({ ...dependencies(), browser })
+    const definitions = (await new BuiltinCatalogLoader(join(process.cwd(), 'resources/extensions/builtin')).load()).flatMap((p) => p.tools)
+    const context: ToolExecutionContext = {
+      owner: { type: 'conversation', id: 'one' }, workspaceId: 'workspace-one',
+      correlationId: 'correlation', causationId: 'cause'
+    }
+    const execute = async (action: string, args: JsonObject, ctx = context) => {
+      const definition = definitions.find((d) => d.id === `builtin.browser.${action}`)!
+      const binding = await adapter.resolve(definition, ctx)
+      return adapter.execute(binding, {
+        executionId: `execution-${action}`, idempotencyKey: `key-${action}`, attemptId: 'attempt',
+        attempt: 1, requestedBy: { type: 'model', id: 'model' }, arguments: args, scopeRoots: [], connectorGrants: []
+      }, { emit: async () => {} }, new AbortController().signal)
+    }
+    const created = await execute('create', {})
+    expect(created.outcome).toBe('succeeded')
+    if (created.outcome !== 'succeeded') throw new Error('create failed')
+    const sessionId = created.output.sessionId as string
+    expect(sessionId).toMatch(/^browser-/)
+    expect(created.output).not.toHaveProperty('ownerKey')
+    expect(records.get(sessionId)?.executionId).toBe('execution-create')
+    expect(await execute('snapshot', { sessionId })).toMatchObject({ outcome: 'succeeded', output: { text: 'Ready' } })
+    expect(await execute('snapshot', { sessionId }, { ...context, workspaceId: 'workspace-two' })).toMatchObject({
+      outcome: 'failed', error: { code: 'browser_owner' }
+    })
+    expect(await execute('snapshot', { sessionId }, { ...context, owner: { type: 'conversation', id: 'two' } })).toMatchObject({
+      outcome: 'failed', error: { code: 'browser_owner' }
+    })
+    const failed = await execute('navigate', { sessionId, url: 'https://example.com' })
+    expect(failed).toMatchObject({ outcome: 'failed', error: { code: 'browser_operation_failed' } })
+    expect(JSON.stringify(failed)).not.toContain('secret-token')
+    expect(await execute('close', { sessionId })).toMatchObject({ outcome: 'succeeded', output: { status: 'closed' } })
+    expect(await execute('attach', { profileId: created.output.profileId })).toMatchObject({
+      outcome: 'succeeded', output: { profileId: created.output.profileId, status: 'active' }
+    })
+    await browser.shutdown()
+  })
+
   it('registers every non-computer builtin definition at startup', async () => {
     const catalog = await new BuiltinCatalogLoader(
       join(process.cwd(), 'resources', 'extensions', 'builtin')
@@ -19,7 +72,7 @@ describe('builtin Tool runtime', () => {
 
     expect(
       definitions.filter(({ executor }) => executor.kind === 'builtin')
-    ).toHaveLength(110)
+    ).toHaveLength(124)
     expect(() => adapter.assertDefinitions(definitions)).not.toThrow()
   })
 
@@ -69,11 +122,11 @@ describe('builtin Tool runtime', () => {
         language: { type: 'string', minLength: 2, maxLength: 16 },
         locale: { type: 'string', minLength: 2, maxLength: 32 },
         recency: { type: 'string', enum: ['day', 'week', 'month', 'year', 'any'] },
-        safeSearch: { type: 'string', enum: ['strict', 'moderate', 'off'] },
-        provider: { type: 'string', enum: ['searxng'] }
+        safeSearch: { type: 'string', enum: ['strict', 'moderate', 'off'] }
       }
     })
-    expect(definition?.capabilities).toEqual(['network.connect'])
+    expect(definition?.inputSchema.properties).not.toHaveProperty('provider')
+    expect(definition?.capabilities).toEqual(['credential.use', 'network.connect'])
     expect(() =>
       createBuiltinToolAdapter(dependencies()).assertDefinitions(
         definition ? [definition] : []
