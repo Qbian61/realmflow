@@ -1,4 +1,5 @@
-import { BookOpen, GitBranch, Plus } from "lucide-react";
+import { BookOpen, GitBranch, Plus
+} from "lucide-react";
 import type { FormEvent } from "react";
 import type { ConnectorDto } from "../../../shared/business";
 import {
@@ -8,6 +9,7 @@ import {
   DialogFooter,
   DialogHeader,
   Field,
+  Select,
 } from "../../components/ui";
 import { useLocalization } from "../../localization/LocalizationProvider";
 
@@ -75,7 +77,7 @@ export function ResourceDialog({
         </Field>
         {isDocument ? (
           <Field name="resources-connector" label={t("resources.connector")}>
-            <select
+            <Select
               aria-label={t("resources.connector")}
               value={connectorId}
               onChange={(event) => onConnectorChange(event.target.value)}
@@ -85,7 +87,7 @@ export function ResourceDialog({
                   {connector.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </Field>
         ) : null}
         <Field name="resource-dialog-locator"

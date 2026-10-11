@@ -21,6 +21,7 @@ import { CredentialVault } from '../../models/credential-vault'
 import { EncryptedPendingToolInvocationCheckpointStore } from './pending-tool-invocation-checkpoint-store'
 import { ToolPolicyEngine } from './tool-policy-engine'
 import type { ToolPolicySnapshot } from '../../../../domain/tool-policy'
+import { createApprovalProfileSnapshot, type ApprovalProfileId } from '../../../../domain/approval-profile'
 
 let directory: string
 let database: RealmFlowDatabase
@@ -46,6 +47,7 @@ let runMediaCommand: ReturnType<typeof vi.fn>
 let dispatchPluginHook: ReturnType<typeof vi.fn>
 let registerGeneratedArtifact: ReturnType<typeof vi.fn>
 let runPolicy: ToolPolicySnapshot | undefined
+let approvalProfileId: ApprovalProfileId
 
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), 'realmflow-tool-execution-'))
@@ -61,6 +63,7 @@ beforeEach(async () => {
   await projectionRunner.rebuildCatalogProjection()
   externalDefinition = undefined
   runPolicy = undefined
+  approvalProfileId = 'protected'
   suspendToolCall = vi.fn().mockResolvedValue(undefined)
   submitToolResult = vi.fn().mockResolvedValue(undefined)
   requestUserInput = vi.fn().mockResolvedValue({
@@ -222,6 +225,7 @@ beforeEach(async () => {
     },
     now: () => 200,
     resolveRunPolicy: async () => runPolicy,
+    resolveApprovalProfile: async () => createApprovalProfileSnapshot(approvalProfileId),
     createId: idFactory(),
     resolveDefinition: async (reference) =>
       externalDefinition?.id === reference.id &&
@@ -1055,7 +1059,7 @@ describe('ToolExecutionApplicationService', () => {
   it('resolves secrets to a credential handle without exposing secret values', async () => {
     const control = await runtimeDefinition('secrets')
 
-    const result = await service.execute({
+    const pending = await service.execute({
       definition: reference(control),
       triggerSource: 'model',
       context: {
@@ -1067,7 +1071,13 @@ describe('ToolExecutionApplicationService', () => {
       input: { action: 'resolve', name: 'docs-api', service: 'docs' },
       idempotencyKey: 'secrets-resolve'
     })
-
+    expect(pending.outcome).toBe('permission_required')
+    expect(resolveCredential).not.toHaveBeenCalled()
+    if (pending.outcome !== 'permission_required') throw new Error('Expected approval')
+    const request = await projections.getPermission(String(pending.permissionRequests[0].id))
+    expect(request).toMatchObject({ effectiveRisk: 'L3', maxGrant: 'session' })
+    await service.resolvePermission({ requestId: request!.id, expectedRevision: request!.requestRevision, decision: 'allow_once' })
+    const result = { outcome: 'executed', execution: await projections.getExecution(pending.executionId) }
     expect(result).toMatchObject({
       outcome: 'executed',
       execution: {
@@ -1194,7 +1204,7 @@ describe('ToolExecutionApplicationService', () => {
   it('delegates capability lifecycle commands transactionally', async () => {
     const control = await runtimeDefinition('capabilities')
 
-    const result = await service.execute({
+    const pending = await service.execute({
       definition: reference(control),
       triggerSource: 'model',
       context: {
@@ -1210,7 +1220,12 @@ describe('ToolExecutionApplicationService', () => {
       },
       idempotencyKey: 'capabilities-enable'
     })
-
+    expect(pending.outcome).toBe('permission_required')
+    expect(runCapabilityCommand).not.toHaveBeenCalled()
+    if (pending.outcome !== 'permission_required') throw new Error('Expected approval')
+    const request = await projections.getPermission(String(pending.permissionRequests[0].id))
+    await service.resolvePermission({ requestId: request!.id, expectedRevision: request!.requestRevision, decision: 'allow_once' })
+    const result = { outcome: 'executed', execution: await projections.getExecution(pending.executionId) }
     expect(result).toMatchObject({
       outcome: 'executed',
       execution: {
@@ -1319,7 +1334,7 @@ describe('ToolExecutionApplicationService', () => {
   })
 
   it('audits an exact media definition and registers its successful artifact', async () => {
-    const result = await service.execute({
+    const pending = await service.execute({
       definition: reference(mediaDefinition),
       triggerSource: 'model',
       context: {
@@ -1334,7 +1349,13 @@ describe('ToolExecutionApplicationService', () => {
       input: { prompt: 'local image' },
       idempotencyKey: 'media-image'
     })
-
+    expect(pending.outcome).toBe('permission_required')
+    expect(runMediaCommand).not.toHaveBeenCalled()
+    if (pending.outcome !== 'permission_required') throw new Error('Expected approval')
+    const request = await projections.getPermission(String(pending.permissionRequests[0].id))
+    expect(request).toMatchObject({ effectiveRisk: 'L4', maxGrant: 'once' })
+    await service.resolvePermission({ requestId: request!.id, expectedRevision: request!.requestRevision, decision: 'allow_once' })
+    const result = { outcome: 'executed', execution: await projections.getExecution(pending.executionId) }
     expect(result).toMatchObject({
       outcome: 'executed',
       execution: {
@@ -1361,6 +1382,7 @@ describe('ToolExecutionApplicationService', () => {
     expect(registerGeneratedArtifact).toHaveBeenCalledWith({
       runId: 'run-media',
       toolName: 'image_generate',
+      snapshot: undefined,
       arguments: { prompt: 'local image' },
       scopeRoots: ['/workspace'],
       output: expect.objectContaining({
@@ -1654,11 +1676,121 @@ describe('ToolExecutionApplicationService', () => {
     ])
   })
 
+  it('rejects reusable approval for permanent deletion in Main', async () => {
+    vi.mocked(adapter.planEffects!).mockResolvedValue({
+      outcome: 'planned',
+      effects: [{ kind: 'filesystem.delete', path: '/workspace/old.txt', permanent: true }],
+    })
+    const first = await service.execute({
+      definition: { kind: 'tool', id: definition.id, version: definition.version,
+        digest: definition.definitionDigest },
+      triggerSource: 'model',
+      context: { scope: { kind: 'conversation', conversationId: 'conversation-1' },
+        conversationId: 'conversation-1', parentExecutionId: 'run-1', toolCallId: 'delete-gate' },
+      input: { path: 'README.md' }, idempotencyKey: 'delete-gate',
+    })
+    if (first.outcome !== 'permission_required') throw new Error('Expected permission')
+    await expect(service.resolvePermission({
+      requestId: String(first.permissionRequests[0].id), expectedRevision: 1,
+      decision: 'allow_always',
+    })).rejects.toThrow('permission_grant_ceiling_exceeded')
+    expect(adapter.execute).not.toHaveBeenCalled()
+  })
+
+  it('rejects persistent approval at a space ceiling in Main', async () => {
+    vi.mocked(adapter.planEffects!).mockResolvedValue({
+      outcome: 'planned', effects: [{ kind: 'filesystem.write', path: '/outside/result.txt' }]
+    })
+    const first = await service.execute({
+      definition: reference(definition), triggerSource: 'model',
+      context: { scope: { kind: 'space', workspaceId: 'workspace-1' }, workspaceId: 'workspace-1' },
+      input: { path: 'README.md' }, idempotencyKey: 'space-ceiling',
+    })
+    if (first.outcome !== 'permission_required') throw new Error('Expected permission')
+    await expect(service.resolvePermission({
+      requestId: String(first.permissionRequests[0].id), expectedRevision: 1, decision: 'allow_always',
+    })).rejects.toThrow('permission_grant_ceiling_exceeded')
+    expect(adapter.execute).not.toHaveBeenCalled()
+  })
+
+  it('reuses and revokes exact space approvals through the application service', async () => {
+    vi.mocked(adapter.planEffects!).mockResolvedValue({
+      outcome: 'planned', effects: [{ kind: 'filesystem.write', path: '/outside/result.txt' }]
+    })
+    const command = {
+      definition: reference(definition), triggerSource: 'model' as const,
+      context: { scope: { kind: 'space' as const, workspaceId: 'workspace-1' },
+        workspaceId: 'workspace-1', conversationId: 'chat-1' },
+      input: { path: 'README.md' },
+    }
+    const first = await service.execute({ ...command, idempotencyKey: 'space-first' })
+    if (first.outcome !== 'permission_required') throw new Error('Expected permission')
+    await service.resolvePermission({ requestId: String(first.permissionRequests[0].id),
+      expectedRevision: 1, decision: 'allow_space' })
+    expect((await service.prepare({ ...command,
+      context: { ...command.context, conversationId: 'chat-2' } })).outcome).toBe('ready')
+    const grants = await service.listReusablePermissions()
+    expect(grants).toEqual([expect.objectContaining({ mode: 'allow_space', workspaceId: 'workspace-1' })])
+    await service.revokeReusablePermission(grants[0].id)
+    expect((await service.prepare(command)).outcome).toBe('permission_required')
+  })
+
+  it('blocks a reused grant revoked after enqueue and before dispatch', async () => {
+    approvalProfileId = 'cautious'
+    vi.mocked(adapter.planEffects!).mockResolvedValue({
+      outcome: 'planned', effects: [{ kind: 'filesystem.write', path: '/workspace/result.txt' }]
+    })
+    const command = { definition: reference(definition), triggerSource: 'model' as const,
+      context: { scope: { kind: 'conversation' as const, conversationId: 'chat-1' },
+        conversationId: 'chat-1' }, input: { path: 'README.md' } }
+    const first = await service.execute({ ...command, idempotencyKey: 'revoke-enqueue-first' })
+    if (first.outcome !== 'permission_required') throw new Error('Expected permission')
+    await service.resolvePermission({ requestId: String(first.permissionRequests[0].id),
+      expectedRevision: 1, decision: 'allow_always' })
+    const grant = (await service.listReusablePermissions())[0]
+    const append = events.append.bind(events)
+    vi.spyOn(events, 'append').mockImplementation(async input => {
+      const result = await append(input)
+      if (input.events.some(event => event.eventType === 'tool.authorization_auto_granted' &&
+        Array.isArray(event.payload.grantIds) && event.payload.grantIds.includes(grant.id))) {
+        await service.revokeReusablePermission(grant.id)
+      }
+      return result
+    })
+    await service.execute({ ...command, idempotencyKey: 'revoke-enqueue-repeat' })
+    expect(adapter.execute).toHaveBeenCalledOnce()
+  })
+
+  it('refuses a browser target changed after authorization and before dispatch', async () => {
+    vi.mocked(adapter.planEffects!).mockResolvedValue({
+      outcome: 'planned', effects: [{ kind: 'browser.page.read', sessionId: 'browser-one',
+        origin: 'https://example.com', privateSession: false, targetDigest: 'a'.repeat(64) }]
+    })
+    const append = events.append.bind(events)
+    vi.spyOn(events, 'append').mockImplementation(async input => {
+      const result = await append(input)
+      if (input.events.some(event => event.eventType === 'tool.dispatch_enqueued')) {
+        vi.mocked(adapter.planEffects!).mockResolvedValue({
+          outcome: 'planned', effects: [{ kind: 'browser.page.control', sessionId: 'browser-one',
+            origin: 'https://example.com', semantic: 'publish', targetDigest: 'b'.repeat(64) }]
+        })
+      }
+      return result
+    })
+    await service.execute({
+      definition: reference(definition), triggerSource: 'model', idempotencyKey: 'changed-browser-target',
+      context: { scope: { kind: 'conversation', conversationId: 'chat-1' }, conversationId: 'chat-1' },
+      input: { path: 'README.md' }
+    })
+    expect(adapter.execute).not.toHaveBeenCalled()
+  })
+
   it.each(['allow_session', 'allow_always'] as const)(
     'reuses %s only for matching operations and session boundaries', async decision => {
+      approvalProfileId = 'cautious'
       vi.mocked(adapter.planEffects!).mockResolvedValue({
         outcome: 'planned',
-        effects: [{ kind: 'filesystem.write', path: '/outside/result.txt' }]
+        effects: [{ kind: 'filesystem.write', path: '/workspace/result.txt' }]
       })
       const execute = (key: string, conversationId = 'conversation-1') => service.execute({
         definition: { kind: 'tool' as const, id: definition.id,
@@ -1698,8 +1830,9 @@ describe('ToolExecutionApplicationService', () => {
   )
 
   it('rolls back reusable authorization when outbox insertion fails', async () => {
+    approvalProfileId = 'cautious'
     vi.mocked(adapter.planEffects!).mockResolvedValue({
-      outcome: 'planned', effects: [{ kind: 'filesystem.write', path: '/outside/result.txt' }]
+      outcome: 'planned', effects: [{ kind: 'filesystem.write', path: '/workspace/result.txt' }]
     })
     const command = {
       definition: { kind: 'tool' as const, id: definition.id,
@@ -1746,8 +1879,9 @@ describe('ToolExecutionApplicationService', () => {
 
   it.each(['allow_session', 'allow_always'] as const)(
     'restores only persistent approvals after service/database restart: %s', async decision => {
+      approvalProfileId = 'cautious'
       vi.mocked(adapter.planEffects!).mockResolvedValue({
-        outcome: 'planned', effects: [{ kind: 'filesystem.write', path: '/outside/result.txt' }]
+        outcome: 'planned', effects: [{ kind: 'filesystem.write', path: '/workspace/result.txt' }]
       })
       const command = {
         definition: { kind: 'tool' as const, id: definition.id,
@@ -1772,6 +1906,7 @@ describe('ToolExecutionApplicationService', () => {
         dispatcher: { dispatchBatch: async () => ({ claimed: 0, published: 0, failed: 0 }) }, now: () => 200,
         createId: () => `restart-${crypto.randomUUID()}`,
         resolveScopeRoots: async () => ['/workspace'],
+        resolveApprovalProfile: async () => createApprovalProfileSnapshot(approvalProfileId),
         resolveBoundScopes: async () => [{
           authorizationId: 'bound-scope-1',
           source: { kind: 'requirement', requirementId: 'requirement-1', workspaceId: 'workspace-1' },

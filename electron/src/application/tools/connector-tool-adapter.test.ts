@@ -27,13 +27,13 @@ describe('ConnectorToolAdapter', () => {
     await expect(adapter.prepare(binding, invocation())).resolves.toEqual({
       outcome: 'ready'
     })
-    await expect(adapter.planEffects(binding, invocation())).resolves.toEqual({
+    await expect(adapter.planEffects(binding, { ...invocation(), arguments: {} })).resolves.toEqual({
       outcome: 'planned',
       effects: [
         {
-          kind: 'external',
-          capability: 'connector.use',
-          resourceKey: `${snapshot.installationId}:${snapshot.action.id}`
+          kind: 'network.public_read',
+          origin: 'https://docs.example.com',
+          localDataEgress: false
         }
       ]
     })
@@ -75,6 +75,28 @@ describe('ConnectorToolAdapter', () => {
       'Connector capability snapshot is unavailable'
     )
     expect(gateway.execute).not.toHaveBeenCalled()
+  })
+
+  it('never treats a declared external mutation as a public read', async () => {
+    const snapshot = connectorSnapshot()
+    snapshot.action.effects = ['external.write']
+    const adapter = new ConnectorToolAdapter({
+      snapshots: { resolve: async () => snapshot }, gateway: { execute: vi.fn() }
+    })
+    const binding = await adapter.resolve(definition(), context())
+    expect(await adapter.planEffects(binding, invocation())).toMatchObject({
+      outcome: 'planned', effects: [{ kind: 'external.publish' }]
+    })
+  })
+
+  it('requires approval for parameters whose local-data provenance is unknown', async () => {
+    const adapter = new ConnectorToolAdapter({
+      snapshots: { resolve: async () => connectorSnapshot() }, gateway: { execute: vi.fn() }
+    })
+    const binding = await adapter.resolve(definition(), context())
+    expect(await adapter.planEffects(binding, invocation())).toMatchObject({
+      outcome: 'planned', effects: [{ kind: 'external.publish' }]
+    })
   })
 
   it('maps permission waiting, unknown outcomes, and cancellation without leaking details', async () => {

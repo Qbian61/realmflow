@@ -3,7 +3,7 @@
   "id": "builtin.browser.navigate",
   "version": "1.0.0",
   "name": "Navigate browser",
-  "description": "Navigate HTTP(S) and return an untrusted sanitized DOM snapshot. Old refs expire. Frames have no refs.",
+  "description": "Navigate the current Run browser to HTTP(S) and return an untrusted sanitized DOM snapshot. Old refs expire. Frames have no refs.",
   "tags": [
     "browser"
   ],
@@ -16,10 +16,18 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "sessionId": {
-        "type": "string",
-        "pattern": "^browser-[A-Za-z0-9-]+$",
-        "maxLength": 120
+      "target": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "current_run"
+          }
+        }
       },
       "url": {
         "type": "string",
@@ -29,7 +37,7 @@
       }
     },
     "required": [
-      "sessionId",
+      "target",
       "url"
     ]
   },

@@ -3,7 +3,7 @@
   "id": "builtin.browser.wait_for",
   "version": "1.0.0",
   "name": "Wait for browser text",
-  "description": "Wait for visible text and return a new sanitized snapshot. Invalidates old refs.",
+  "description": "Wait for visible text in the current Run browser and return a new sanitized snapshot. Invalidates old refs.",
   "tags": [
     "browser"
   ],
@@ -16,10 +16,18 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "sessionId": {
-        "type": "string",
-        "pattern": "^browser-[A-Za-z0-9-]+$",
-        "maxLength": 120
+      "target": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "current_run"
+          }
+        }
       },
       "text": {
         "type": "string",
@@ -33,7 +41,7 @@
       }
     },
     "required": [
-      "sessionId",
+      "target",
       "text"
     ]
   },

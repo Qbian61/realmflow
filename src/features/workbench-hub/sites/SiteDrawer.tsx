@@ -1,4 +1,5 @@
-import { ImagePlus, X } from "lucide-react";
+import { ImagePlus, X
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import type {
   WorkbenchSite,
@@ -13,6 +14,7 @@ import {
   DrawerHeader,
   Field,
   IconButton,
+  Select,
 } from "../../../components/ui";
 import { useLocalization } from "../../../localization/LocalizationProvider";
 
@@ -109,7 +111,7 @@ export function SiteDrawer({
             />
           </Field>
           <Field name="workbench-sites-group" label={t("workbenchSites.group")}>
-            <select
+            <Select
               value={draft.groupId}
               onChange={(event) =>
                 setDraft((current) => ({
@@ -123,7 +125,7 @@ export function SiteDrawer({
                   {group.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </Field>
           <fieldset>
             <legend>{t("workbenchSites.openMode")}</legend>

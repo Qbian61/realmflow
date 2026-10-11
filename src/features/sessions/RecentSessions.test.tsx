@@ -124,13 +124,15 @@ describe("RecentSessions", () => {
     fireEvent.click(filterButton);
 
     expect(filterButton).toHaveClass("active");
+    fireEvent.click(screen.getByRole("combobox", { name: "对话上下文" }));
     const folderOption = screen.getByRole("option", { name: "tasks" });
     expect(folderOption).toHaveAttribute("title", "/work/alpha/tasks");
   });
 
   it("distinguishes an empty filtered result from an empty recent list", () => {
     const { rerender } = renderRecentSessions({ sessions: [] });
-    expect(screen.getByText("暂无对话")).toBeInTheDocument();
+    expect(screen.queryByText("暂无对话")).not.toBeInTheDocument();
+    expect(document.querySelector(".recent-empty")).toBeNull();
 
     rerender(
       <LocalizationProvider>
@@ -211,7 +213,7 @@ describe("RecentSessions", () => {
         "Explore Local Agent Capabilities Implementation",
       ),
     ).toBeInTheDocument();
-    expect(within(preview).getByText("本地任务")).toBeInTheDocument();
+    expect(within(preview).getByText("本地文件夹")).toBeInTheDocument();
     expect(
       within(preview).getByText("/Users/example/realmflow/code/realmflow"),
     ).toBeInTheDocument();

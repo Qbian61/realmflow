@@ -61,6 +61,7 @@ export function mapConversation(
     ...(conversation.modelProfileId
       ? { modelProfileId: conversation.modelProfileId }
       : {}),
+    approvalProfileId: conversation.approvalProfileId ?? 'protected',
     title: conversation.title,
     spacePath: conversation.workspaceId
       ? `/spaces/${conversation.workspaceId}`

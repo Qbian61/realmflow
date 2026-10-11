@@ -3,6 +3,7 @@ import type {
   NativeOverlayRequest,
   WorkbenchActionId
 } from '../../../shared/native-overlay'
+import { normalizeApprovalProfile } from '../../../domain/approval-profile'
 import {
   PERSISTENCE_DATASETS,
   type PersistenceDataset
@@ -1246,6 +1247,16 @@ export function requireRelocateSpaceCommand(
   }
 }
 
+function requireConversationApprovalProfile(
+  record: Record<string, unknown>, channel: string
+): { approvalProfileId?: import('../../../domain/approval-profile').ApprovalProfileId } {
+  if (record.approvalProfileId === undefined) return {}
+  if (!['cautious', 'protected', 'trusted'].includes(record.approvalProfileId as string)) {
+    invalidIpcPayload(channel, 'command.approvalProfileId')
+  }
+  return { approvalProfileId: record.approvalProfileId as import('../../../domain/approval-profile').ApprovalProfileId }
+}
+
 export function requireCreateConversationCommand(
   value: unknown,
   channel: string
@@ -1266,6 +1277,8 @@ export function requireCreateConversationCommand(
       'folderBindingId',
       'modelProfileId',
       'reasoningMode',
+      'contextMode',
+      'approvalProfileId',
       'applicationLocale',
       'references',
       'attachments'
@@ -1415,6 +1428,7 @@ export function requireCreateConversationCommand(
             'command.modelProfileId'
           )
         }),
+    ...requireConversationApprovalProfile(record, channel),
     ...(record.reasoningMode === undefined
       ? {}
       : {
@@ -1422,6 +1436,14 @@ export function requireCreateConversationCommand(
             record.reasoningMode,
             channel,
             'command.reasoningMode'
+          )
+        }),
+    ...(record.contextMode === undefined
+      ? {}
+      : {
+          contextMode: requireConversationContextMode(
+            record.contextMode,
+            channel
           )
         }),
     ...(record.applicationLocale === undefined
@@ -1449,6 +1471,7 @@ export function requireAppendConversationMessageCommand(
       'expectedRevision',
       'modelProfileId',
       'reasoningMode',
+      'approvalProfileId',
       'applicationLocale',
       'references',
       'attachments'
@@ -1485,6 +1508,7 @@ export function requireAppendConversationMessageCommand(
             'command.modelProfileId'
           )
         }),
+    ...requireConversationApprovalProfile(record, channel),
     ...(record.reasoningMode === undefined
       ? {}
       : {
@@ -1503,6 +1527,47 @@ export function requireAppendConversationMessageCommand(
           )
         })
   }
+}
+
+export function requireConversationTranscriptSearchQuery(
+  value: unknown,
+  channel: string
+): { sessionId: string; query: string; limit?: number } {
+  const record = requireRecord(value, channel, 'query')
+  requireAllowedFields(
+    record,
+    ['sessionId', 'query', 'limit'],
+    channel,
+    'query'
+  )
+  const limit =
+    record.limit === undefined
+      ? undefined
+      : requireIntegerValue(record.limit, channel, 'query.limit')
+  if (limit !== undefined && (limit < 1 || limit > 50)) {
+    invalidIpcPayload(channel, 'query.limit')
+  }
+  return {
+    sessionId: requireEntityId(record.sessionId, channel, 'query.sessionId'),
+    query: requireString(record.query, channel, 'query.query', {
+      maxLength: 2_000
+    }),
+    ...(limit === undefined ? {} : { limit })
+  }
+}
+
+function requireConversationContextMode(
+  value: unknown,
+  channel: string
+): 'auto' | 'fresh' | 'continuation' {
+  if (
+    value !== 'auto' &&
+    value !== 'fresh' &&
+    value !== 'continuation'
+  ) {
+    throw new Error(`${channel}: command.contextMode is invalid`)
+  }
+  return value
 }
 
 function requireApplicationLocale(
@@ -1530,6 +1595,7 @@ export function requireSendFollowUpSuggestionCommand(
       'expectedSuggestionRevision',
       'modelProfileId',
       'reasoningMode',
+      'approvalProfileId',
       'applicationLocale'
     ],
     channel,
@@ -1564,6 +1630,7 @@ export function requireSendFollowUpSuggestionCommand(
             'command.modelProfileId'
           )
         }),
+    ...requireConversationApprovalProfile(record, channel),
     ...(record.reasoningMode === undefined
       ? {}
       : {
@@ -2892,7 +2959,7 @@ export function requireListScheduleRunsQuery(
   }
   if (record.status !== undefined) {
     if (
-      !['running', 'succeeded', 'failed', 'cancelled', 'interrupted'].includes(
+      !['running', 'waiting_permission', 'succeeded', 'failed', 'cancelled', 'interrupted'].includes(
         String(record.status)
       )
     ) {
@@ -3016,7 +3083,8 @@ function requireScheduleDefinition(
       'executionTarget',
       'skillInput',
       'connectorBindings',
-      'permissions'
+      'permissions',
+      'approvalProfileId'
     ],
     channel,
     'command.definition'
@@ -3109,7 +3177,8 @@ function requireScheduleDefinition(
         'command.definition.skillInput'
       ),
       connectorBindings,
-      permissions
+      permissions,
+      ...(record.approvalProfileId === undefined ? {} : { approvalProfileId: normalizeApprovalProfile(record.approvalProfileId) })
     })
   } catch {
     invalidIpcPayload(channel, 'command.definition')

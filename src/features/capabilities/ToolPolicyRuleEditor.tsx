@@ -1,6 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState
+} from 'react'
 import { TOOL_PROFILES, type ToolPolicyRules } from '../../../domain/tool-policy'
-import { Field } from '../../components/ui'
+import {
+  Field,
+  Select,
+} from '../../components/ui'
 import { useLocalization } from '../../localization/LocalizationProvider'
 
 export function ToolPolicyRuleEditor({ rules, onChange }: {
@@ -10,7 +14,7 @@ export function ToolPolicyRuleEditor({ rules, onChange }: {
   const { t } = useLocalization()
   return <div className="tool-policy-rule-grid">
     <Field name="profile" label={t('toolPolicy.profile')}>
-      <select value={rules.profile ?? ''} onChange={(event) => {
+      <Select value={rules.profile ?? ''} onChange={(event) => {
         const next = { ...rules }
         if (event.target.value) next.profile = event.target.value as ToolPolicyRules['profile']
         else delete next.profile
@@ -18,7 +22,7 @@ export function ToolPolicyRuleEditor({ rules, onChange }: {
       }}>
         <option value="">{t('toolPolicy.profile.inherit')}</option>
         {TOOL_PROFILES.map((profile) => <option key={profile} value={profile}>{t(`toolPolicy.profile.${profile}`)}</option>)}
-      </select>
+      </Select>
     </Field>
     <Field name="allowEnabled" label={t('toolPolicy.allowEnabled')} description={t('toolPolicy.allowHelp')}>
       <input type="checkbox" checked={rules.allow !== undefined} onChange={(event) => {

@@ -1044,3 +1044,49 @@
     animation: none;
   }
 }
+
+/* Shared Select isolation: page input rules must not paint the hit area. */
+.ui-select {
+  width: 100%;
+}
+
+.ui-select-group-label {
+  padding: 6px 7px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.ui-select .ui-select-input {
+  opacity: 0;
+  cursor: pointer;
+}
+
+.ui-select .ui-select-display {
+  display: flex;
+  height: 36px;
+  min-height: 36px;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: none;
+  padding: 0 10px;
+  justify-content: space-between;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--ui-radius-medium);
+}
+
+.ui-select .ui-select-display > span {
+  margin: 0;
+  color: inherit;
+  font: inherit;
+}
+
+.ui-select:has(.ui-select-input:focus-visible) .ui-select-display {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.ui-select:has(.ui-select-input[aria-invalid='true']) .ui-select-display {
+  border-color: var(--color-error);
+}

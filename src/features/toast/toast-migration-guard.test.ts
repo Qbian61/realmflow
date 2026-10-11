@@ -15,6 +15,7 @@ const inlineAlertAllowlist = new Set([
   "features/conversation/ConversationShareController.tsx",
   "features/navigation/RequirementCreateDialog.tsx",
   "features/permissions/ToolPermissionDialog.tsx",
+  "features/settings/PermissionSettings.tsx",
   "features/resources/KnowledgeIndexJobDialog.tsx",
   "features/resources/RepositorySnapshotDialog.tsx",
   "features/resources/RepositorySourceDialog.tsx",

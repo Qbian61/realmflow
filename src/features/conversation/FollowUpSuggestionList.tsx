@@ -42,28 +42,30 @@ export function FollowUpSuggestionList({
             <span className="follow-up-suggestion__text">
               {suggestion.label}
             </span>
-            <IconButton
-              className="follow-up-suggestion__action"
-              variant="ghost"
-              size="default"
-              aria-label={labels.send(suggestion.label)}
-              title={labels.sendTitle}
-              disabled={sending || !onSend}
-              onClick={() => onSend?.(suggestion)}
-            >
-              <ArrowRight aria-hidden="true" size={16} />
-            </IconButton>
-            <IconButton
-              className="follow-up-suggestion__action"
-              variant="ghost"
-              size="default"
-              aria-label={labels.insert(suggestion.label)}
-              title={labels.insertTitle}
-              disabled={sending}
-              onClick={() => onInsert(suggestion)}
-            >
-              <MessageCircle aria-hidden="true" size={16} />
-            </IconButton>
+            <div className="follow-up-suggestion__actions">
+              <IconButton
+                className="follow-up-suggestion__action"
+                variant="ghost"
+                size="default"
+                aria-label={labels.send(suggestion.label)}
+                title={labels.sendTitle}
+                disabled={sending || !onSend}
+                onClick={() => onSend?.(suggestion)}
+              >
+                <ArrowRight aria-hidden="true" size={16} />
+              </IconButton>
+              <IconButton
+                className="follow-up-suggestion__action"
+                variant="ghost"
+                size="default"
+                aria-label={labels.insert(suggestion.label)}
+                title={labels.insertTitle}
+                disabled={sending}
+                onClick={() => onInsert(suggestion)}
+              >
+                <MessageCircle aria-hidden="true" size={16} />
+              </IconButton>
+            </div>
           </div>
         ))}
       </div>

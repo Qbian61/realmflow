@@ -17,6 +17,7 @@ type ConversationMessageFooterProps = {
   content: string;
   timestamp: number;
   modelName?: string;
+  aiGeneratedLabel?: string;
   locale: string;
   labels: ConversationMessageFooterLabels;
   copied: boolean;
@@ -66,6 +67,7 @@ export function ConversationMessageFooter({
   content,
   timestamp,
   modelName,
+  aiGeneratedLabel,
   locale,
   labels,
   copied,
@@ -152,6 +154,11 @@ export function ConversationMessageFooter({
           >
             {formattedTime}
           </time>
+        </span>
+      ) : null}
+      {role === "assistant" && aiGeneratedLabel ? (
+        <span className="chat-message-ai-generated">
+          {aiGeneratedLabel}
         </span>
       ) : null}
     </footer>

@@ -1,11 +1,16 @@
-import { FolderOpen } from 'lucide-react'
+import { FolderOpen
+} from 'lucide-react'
 import type { WorkRootDto } from '../../../shared/business'
 import type {
   ApplicationModelDefault,
   EffectiveModelSnapshot,
   RevisionedApplicationModelDefault
 } from '../../../domain/model'
-import { Button, Field } from '../../components/ui'
+import {
+  Button,
+  Field,
+  Select,
+} from '../../components/ui'
 import { useLocalization } from '../../localization/LocalizationProvider'
 
 type GeneralSettingsProps = {
@@ -67,7 +72,7 @@ export function GeneralSettings({
               : undefined
           }
         >
-          <select
+          <Select
             name="application-default-model"
             autoComplete="off"
             value={selectedValue}
@@ -99,7 +104,7 @@ export function GeneralSettings({
                 ))}
               </optgroup>
             ))}
-          </select>
+          </Select>
         </Field>
       </section>
 

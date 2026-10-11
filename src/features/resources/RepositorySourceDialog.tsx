@@ -1,4 +1,5 @@
-import { FolderGit2, GitBranch, Plus } from "lucide-react";
+import { FolderGit2, GitBranch, Plus
+} from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import type {
   BusinessApi,
@@ -15,6 +16,7 @@ import {
   DialogFooter,
   DialogHeader,
   Field,
+  Select,
 } from "../../components/ui";
 import { useLocalization } from "../../localization/LocalizationProvider";
 import { useToast } from "../toast/ToastProvider";
@@ -268,7 +270,7 @@ export function RepositorySourceDialog({
           ) : (
             <>
               <Field name="resources-connector" label={t("resources.connector")}>
-                <select
+                <Select
                   aria-label={t("resources.connector")}
                   value={connectorId}
                   onChange={(event) => setConnectorId(event.target.value)}
@@ -278,7 +280,7 @@ export function RepositorySourceDialog({
                       {connector.name}
                     </option>
                   ))}
-                </select>
+                </Select>
               </Field>
               <Field name="resources-repository-path" label={t("resources.repository.path")}>
                 <input spellCheck={false}
@@ -291,7 +293,7 @@ export function RepositorySourceDialog({
             </>
           )}
           <Field name="resources-repository-branch" label={t("resources.repository.branch")}>
-            <select
+            <Select
               aria-label={t("resources.repository.branch")}
               value={selectedBranch}
               disabled={loadingBranches || branches.length === 0}
@@ -309,7 +311,7 @@ export function RepositorySourceDialog({
                   {branch.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </Field>
           {error ? <p role="alert">{error}</p> : null}
         </DialogBody>

@@ -20,6 +20,7 @@ type ProcessOwner = Parameters<ManagedProcessPort['list']>[0]
 type ManagedProcess = {
   processId: string
   owner: ProcessOwner
+  runId?: string
   executable: string
   arguments: string[]
   cwd: string
@@ -80,6 +81,17 @@ export class NodeLocalProcessService implements ManagedProcessPort {
       })
   }
 
+  async describe(input: {
+    executable: string
+    arguments: string[]
+    cwd: string
+  }): Promise<{ execution: 'sandboxed' }> {
+    await this.sandboxCommand(
+      await resolveExecutable(input.executable), input.arguments, input.cwd
+    )
+    return { execution: 'sandboxed' }
+  }
+
   async discover(input: {
     names: string[]
     cwd: string
@@ -90,24 +102,9 @@ export class NodeLocalProcessService implements ManagedProcessPort {
       assertNotAborted(input.signal)
       const path = await findExecutable(name)
       if (!path) continue
-      const version = await this.runCommand({
-        executable: path,
-        arguments: ['--version'],
-        cwd: input.cwd,
-        timeoutMs: 2_000,
-        maxOutputBytes: 16 * 1024,
-        signal: input.signal
-      }).catch(() => undefined)
       tools.push({
         name,
-        path,
-        ...(version
-          ? {
-              version:
-                version.stdout.trim().slice(0, 500) ||
-                version.stderr.trim().slice(0, 500)
-            }
-          : {})
+        path
       })
     }
     return tools
@@ -231,6 +228,7 @@ export class NodeLocalProcessService implements ManagedProcessPort {
 
   async start(input: {
     owner: ProcessOwner
+    runId?: string
     executable: string
     arguments: string[]
     cwd: string
@@ -258,6 +256,7 @@ export class NodeLocalProcessService implements ManagedProcessPort {
     const record: ManagedProcess = {
       processId,
       owner: { ...input.owner },
+      runId: input.runId,
       executable,
       arguments: [...input.arguments],
       cwd: input.cwd,
@@ -283,6 +282,14 @@ export class NodeLocalProcessService implements ManagedProcessPort {
     return [...this.processes.values()]
       .filter((process) => sameOwner(process.owner, owner))
       .map(processView)
+  }
+
+  async describeManaged(input: {
+    owner: ProcessOwner; processId: string; runId?: string
+  }): Promise<{ currentRun: boolean; fingerprint: string }> {
+    const record = this.processes.get(input.processId)
+    if (!record || !sameOwner(record.owner, input.owner)) throw new Error('Managed process ownership does not match')
+    return { currentRun: Boolean(input.runId && record.runId === input.runId), fingerprint: record.fingerprint }
   }
 
   async stop(input: {

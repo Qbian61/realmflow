@@ -1,4 +1,5 @@
-import { GripVertical, Plus, X } from "lucide-react";
+import { GripVertical, Plus, X
+} from "lucide-react";
 import { type DragEvent, type RefObject, useRef, useState } from "react";
 import type {
   TaskFilter,
@@ -9,7 +10,12 @@ import type {
   WorkbenchTaskField,
   WorkbenchTaskRecordValue,
 } from "../../../../shared/workbench-tasks";
-import { IconButton, Popover, PopoverContent } from "../../../components/ui";
+import {
+  IconButton,
+  Popover,
+  PopoverContent,
+  Select,
+} from "../../../components/ui";
 import { useLocalization } from "../../../localization/LocalizationProvider";
 import { useNativeListDrag } from "../../drag/use-native-list-drag";
 
@@ -169,7 +175,7 @@ export function TaskViewPopover({
                   <span className="sr-only">
                     {t("workbenchTasks.filterOperator", { index: index + 1 })}
                   </span>
-                  <select name="workbench-tasks-filter-operator" autoComplete="off"
+                  <Select name="workbench-tasks-filter-operator" autoComplete="off"
                     aria-label={t("workbenchTasks.filterOperator", {
                       index: index + 1,
                     })}
@@ -188,7 +194,7 @@ export function TaskViewPopover({
                         {t(`workbenchTasks.operator.${operator}`)}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </label>
                 <FilterValue
                   index={index}
@@ -443,7 +449,7 @@ function FieldSelect({
   return (
     <label>
       <span className="sr-only">{label}</span>
-      <select name="task-view-popover-value" autoComplete="off"
+      <Select name="task-view-popover-value" autoComplete="off"
         aria-label={label}
         value={value}
         onChange={(event) => onChange(event.target.value)}
@@ -456,7 +462,7 @@ function FieldSelect({
             {field.name}
           </option>
         ))}
-      </select>
+      </Select>
     </label>
   );
 }
@@ -535,7 +541,7 @@ function FilterValue({
     return (
       <label>
         <span className="sr-only">{label}</span>
-        <select name={`task-filter-${index}-${field?.id ?? "unknown"}-value`} autoComplete="off"
+        <Select name={`task-filter-${index}-${field?.id ?? "unknown"}-value`} autoComplete="off"
           aria-label={label}
           value={typeof filter.value === "string" ? filter.value : ""}
           onChange={(event) => onChange(event.target.value)}
@@ -546,7 +552,7 @@ function FilterValue({
               {option.label}
             </option>
           ))}
-        </select>
+        </Select>
       </label>
     );
   }
@@ -554,7 +560,7 @@ function FilterValue({
     return (
       <label>
         <span className="sr-only">{label}</span>
-        <select name={`task-filter-${index}-${field?.id ?? "unknown"}-value`} autoComplete="off"
+        <Select name={`task-filter-${index}-${field?.id ?? "unknown"}-value`} autoComplete="off"
           multiple
           aria-label={label}
           value={Array.isArray(filter.value) ? filter.value : []}
@@ -570,7 +576,7 @@ function FilterValue({
               {option.label}
             </option>
           ))}
-        </select>
+        </Select>
       </label>
     );
   }

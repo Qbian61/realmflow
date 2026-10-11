@@ -632,6 +632,7 @@ describe('useWorkspaceController persistence', () => {
       knowledgeScope: { kind: 'none' },
       reasoningMode: 'auto',
       applicationLocale: 'zh-CN',
+      approvalProfileId: 'protected',
       title: 'Committed prompt',
       prompt: 'Committed prompt'
     })
@@ -699,6 +700,7 @@ describe('useWorkspaceController persistence', () => {
       folderBindingId: 'folder-binding-opaque',
       reasoningMode: 'auto',
       applicationLocale: 'zh-CN',
+      approvalProfileId: 'protected',
       title: 'Inspect folder',
       prompt: 'Inspect folder'
     })
@@ -756,6 +758,7 @@ describe('useWorkspaceController persistence', () => {
         knowledgeScope: { kind: 'all_workspaces' },
         reasoningMode: 'auto',
         applicationLocale: 'zh-CN',
+        approvalProfileId: 'protected',
         title: 'Compare rules',
         prompt: 'Compare rules'
       })

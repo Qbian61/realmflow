@@ -20,7 +20,8 @@ import {
   DialogFooter,
   DialogHeader,
   Field,
-  IconButton
+  IconButton,
+  Select,
 } from '../../components/ui'
 import { useLocalization } from '../../localization/LocalizationProvider'
 import type { Translator } from '../../localization/translate'
@@ -390,7 +391,7 @@ function ConnectorEditor({
             />
           </Field>
           <Field name="settings-connector-editor-authentication" label={t('settings.connector.editor.authentication')}>
-            <select
+            <Select
               aria-label={t('settings.connector.editor.authentication')}
               value={draft.authentication.type}
               onChange={(event) =>
@@ -404,7 +405,7 @@ function ConnectorEditor({
               </option>
               <option value="bearer">Bearer Token</option>
               <option value="api_key_header">API Key Header</option>
-            </select>
+            </Select>
           </Field>
           <Field name="settings-connector-editor-base-url"
             className="model-form-wide"

@@ -57,6 +57,7 @@ type AppRoutesProps = {
     modelProfileId?: string,
     reasoningMode?: ReasoningPreference,
     attachments?: ConversationAttachmentSubmission,
+    approvalProfileId?: import("../../domain/approval-profile").ApprovalProfileId,
   ) => void | Promise<void>;
   onAppendMessage: (
     sessionId: string,
@@ -64,6 +65,7 @@ type AppRoutesProps = {
     modelProfileId?: string,
     reasoningMode?: ReasoningPreference,
     attachments?: ConversationAttachmentSubmission,
+    approvalProfileId?: import("../../domain/approval-profile").ApprovalProfileId,
   ) => void | Promise<void>;
   onSendFollowUpSuggestion?: (
     command: SendFollowUpSuggestionCommand,

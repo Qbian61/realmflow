@@ -1,5 +1,5 @@
 import type { MissedRunPolicy } from "../../../domain/schedule";
-import { Field } from "../../components/ui";
+import { Field, Select } from "../../components/ui";
 import { useLocalization } from "../../localization/LocalizationProvider";
 
 export function MissedRunPolicyField({
@@ -13,14 +13,14 @@ export function MissedRunPolicyField({
 
   return (
     <Field name="schedule-form-missed-run-policy" label={t("schedule.form.missedRunPolicy")}>
-      <select
+      <Select
         aria-label={t("schedule.form.missedRunPolicy")}
         value={value}
         onChange={(event) => onChange(event.target.value as MissedRunPolicy)}
       >
         <option value="skip">{t("schedule.policy.skipOption")}</option>
         <option value="run_once">{t("schedule.policy.runOnceOption")}</option>
-      </select>
+      </Select>
     </Field>
   );
 }

@@ -44,8 +44,7 @@ describe('McpToolAdapter', () => {
       outcome: 'planned',
       effects: [
         {
-          kind: 'external',
-          capability: 'connector.use',
+          kind: 'external.publish',
           resourceKey: 'local-search:search'
         }
       ]

@@ -14,6 +14,7 @@ import {
   DialogFooter,
   DialogHeader,
   Field,
+  Select,
 } from "../../components/ui";
 
 type RequirementCreateDialogProps = {
@@ -145,7 +146,7 @@ export function RequirementCreateDialog({
             label={t("requirement.template")}
             disabled={loading || allOptions.length === 0}
           >
-            <select
+            <Select
               value={templateVersionId}
               onChange={(event) => setTemplateVersionId(event.target.value)}
             >
@@ -161,7 +162,7 @@ export function RequirementCreateDialog({
                   {option.label}
                 </option>
               ))}
-            </select>
+            </Select>
           </Field>
           {error ? (
             <p className="name-dialog-error" role="alert">

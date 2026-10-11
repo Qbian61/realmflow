@@ -192,6 +192,7 @@ function runtimeRun(): AgentRuntimeRun {
     status: 'recovery_blocked',
     snapshot: {
       schemaVersion: 1,
+      approvalProfile: { schemaVersion: 1, id: 'protected', policyVersion: '1.0.0', digest: 'a'.repeat(64) },
       runId: 'run-1',
       rootRunId: 'run-1',
       delegationDepth: 0,

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { normalizeApprovalProfile, type ApprovalProfileId } from '../../../../domain/approval-profile'
 import type { AiRunEvent } from '../../../../domain/ai-run'
 import {
   createAssistantTurnProjection,
@@ -8,6 +9,7 @@ import { resolveAgentRunScenario } from '../../../../domain/agent-runtime'
 import {
   ConversationProcessorPipeline,
   createBuiltinConversationProcessors,
+  isConversationClarificationResponse,
   type ConversationProcessingGate,
   type ConversationProcessingSnapshot,
   type ConversationProcessor,
@@ -27,6 +29,8 @@ import type {
   ConversationAttachmentEnvelope
 } from '../../../../domain/conversation-input'
 import type { ConversationGeneratedArtifactSource } from '../../../../domain/follow-up-suggestion'
+import type { CompactedConversationFact } from '../../../../domain/conversation-context-projection'
+import type { RecalledMemoryReference } from '../../../../domain/conversation-context-projection'
 import type { ConversationAttachmentSubmission } from '../../../../shared/conversation-attachments'
 import type { EffectiveModelSelection } from '../../../../domain/model-selection'
 import type { ReasoningPreference } from '../../../../domain/reasoning-router'
@@ -52,6 +56,13 @@ import type {
   RequirementNodeConversationContext
 } from '../../ai-run/application/ports'
 import type { FollowUpSuggestionGenerationInput } from './follow-up-suggestion-coordinator'
+import {
+  ConversationContextProjector
+} from './conversation-context-projector'
+import {
+  TurnContextRouter,
+  type TurnContextHistoryEntry
+} from './turn-context-router'
 
 type BeginTurnInput = Parameters<ChatSessionRepository['beginTurn']>[0]
 type RequirementNodeRunContext = Pick<
@@ -67,6 +78,7 @@ const AUTOMATIC_FALLBACK_ERROR_CODES = new Set<ModelCallErrorCode>([
 
 type Dependencies = {
   sessions: ChatSessionRepository
+  getDefaultApprovalProfile?: () => Promise<ApprovalProfileId>
   timeline?: AssistantRunTimelineRepository
   spaceContext?: {
     assertAvailable: (workspaceId: string) => Promise<void>
@@ -160,6 +172,18 @@ type Dependencies = {
   }
   createId?: () => string
   now?: () => number
+  contextRouter?: Pick<TurnContextRouter, 'route'>
+  contextProjector?: Pick<ConversationContextProjector, 'project'>
+  memory?: {
+    recall(input: {
+      query: string
+      scope: {
+        kind: 'conversation'
+        id: string
+      }
+      limit?: number
+    }): Promise<RecalledMemoryReference[]>
+  }
 }
 
 export class SendConversationMessageUseCase {
@@ -169,11 +193,16 @@ export class SendConversationMessageUseCase {
     ConversationProcessorPipeline,
     'run' | 'version'
   >
+  private readonly contextRouter: Pick<TurnContextRouter, 'route'>
+  private readonly contextProjector: Pick<ConversationContextProjector, 'project'>
 
   constructor(private readonly dependencies: Dependencies) {
     this.createId = dependencies.createId ?? randomUUID
     this.now = dependencies.now ?? Date.now
     this.processing = dependencies.processing
+    this.contextRouter = dependencies.contextRouter ?? new TurnContextRouter()
+    this.contextProjector =
+      dependencies.contextProjector ?? new ConversationContextProjector()
   }
 
   async execute(input: {
@@ -185,6 +214,8 @@ export class SendConversationMessageUseCase {
     modelProfileId?: string
     modelRouting?: 'conversation' | 'fixed'
     reasoningMode?: ReasoningPreference
+    contextMode?: 'auto' | 'fresh' | 'continuation'
+    approvalProfileId?: ApprovalProfileId
     applicationLocale?: 'zh-CN' | 'en' | 'ja'
     context?: string
     requirementNodeContext?: RequirementNodeRunContext
@@ -210,6 +241,10 @@ export class SendConversationMessageUseCase {
     const current =
       persisted ?? (input.session ? { ...input.session, revision: 0 } : undefined)
     if (!current) throw new Error(`Conversation not found: ${input.sessionId}`)
+    const approvalProfileId = normalizeApprovalProfile(
+      input.approvalProfileId ?? current.approvalProfileId ??
+      (!persisted ? await this.dependencies.getDefaultApprovalProfile?.() : undefined) ?? 'protected'
+    )
     if (
       persisted &&
       input.session &&
@@ -227,6 +262,12 @@ export class SendConversationMessageUseCase {
     }
     const timestamp = this.now()
     const previousClarification = findPreviousClarification(current)
+    const clarificationResponse =
+      previousClarification &&
+      isConversationClarificationResponse(
+        previousClarification.processing.semanticUnderstanding,
+        rawContent
+      )
     const scenario = resolveAgentRunScenario({
       conversationId: current.id,
       ...(current.workspaceId ? { workspaceId: current.workspaceId } : {}),
@@ -269,7 +310,7 @@ export class SendConversationMessageUseCase {
           ? { messageReferences: input.messageReferences }
           : {})
       },
-      ...(previousClarification
+      ...(clarificationResponse
         ? {
             previousUnderstanding:
               previousClarification.processing.semanticUnderstanding
@@ -313,19 +354,63 @@ export class SendConversationMessageUseCase {
         ? await this.dependencies.models.resolveExecution(modelProfileId)
         : undefined
     const assistantMessageId = this.createId()
+    const route = this.contextRouter.route({
+      sourceMessageId: userMessageId,
+      content: rawContent,
+      semanticUnderstanding: processing.semanticUnderstanding,
+      ...(input.contextMode && input.contextMode !== 'auto'
+        ? { override: input.contextMode }
+        : {}),
+      referencedMessageIds: referencedConversationMessageIds(
+        current,
+        input.messageReferences
+      ),
+      history: conversationTurnHistory(current),
+      createdAt: timestamp
+    })
+    const recalledMemory = await this.dependencies.memory?.recall({
+      query: processing.semanticUnderstanding.objective,
+      scope: { kind: 'conversation', id: current.id },
+      limit: 8
+    })
+    const projection = this.contextProjector.project({
+      conversationId: current.id,
+      sourceMessage: {
+        id: userMessageId,
+        role: 'user',
+        content: rawContent,
+        sortOrder: current.messages.length
+      },
+      route,
+      ...(recalledMemory ? { recalledMemory } : {}),
+      history: current.messages
+        .filter(
+          (message) =>
+            message.status === 'completed' && message.content.length > 0
+        )
+        .map(({ id, role, content, sortOrder }) => ({
+          id,
+          role,
+          content,
+          sortOrder
+        })),
+      createdAt: timestamp
+    })
     const started = await (
       input.turnStarter ?? this.dependencies.sessions.beginTurn
     )({
-      session:
-        input.modelProfileId &&
-        input.modelProfileId !== current.modelProfileId
-          ? { ...current, modelProfileId: input.modelProfileId }
-          : current,
+      session: {
+        ...current,
+        approvalProfileId,
+        ...(input.modelProfileId ? { modelProfileId: input.modelProfileId } : {})
+      },
       expectedRevision: input.expectedRevision,
       userMessageId,
       assistantMessageId,
       content: rawContent,
       processing,
+      route,
+      projection,
       ...(input.applicationLocale
         ? { applicationLocale: input.applicationLocale }
         : {}),
@@ -372,7 +457,6 @@ export class SendConversationMessageUseCase {
     }
     if (
       previousClarification &&
-      processing.semanticUnderstanding.supersedesMessageId &&
       this.dependencies.gateway.resolveWaitingInputRun
     ) {
       try {
@@ -434,12 +518,9 @@ export class SendConversationMessageUseCase {
 
     const runContext: ConversationContext = {
       conversationId: current.id,
-      messages: history.messages
-        .filter(
-          (message) =>
-            message.status === 'completed' && message.content.length > 0
-        )
-        .map(({ id, role, content }) => ({
+      approvalProfileId,
+      messages: projection.recentMessages.map(
+        ({ messageId: id, role, content }) => ({
           role,
           content:
             id === userMessageId &&
@@ -447,11 +528,14 @@ export class SendConversationMessageUseCase {
             !slashExecution.handled
               ? slashExecution.prompt
               : content
-        })),
+        })
+      ),
       ...(current.workspaceId ? { workspaceId: current.workspaceId } : {}),
       ...(current.folderPath ? { folderPath: current.folderPath } : {}),
       context: [
         formatAgentContext(processing, processing.knowledgeContext?.content),
+        formatCompactedConversationFacts(projection.compactedFacts),
+        formatRecalledConversationMemory(projection.recalledMemory),
         history.compactedContext,
         attachmentContext?.contextText
       ]
@@ -1504,6 +1588,51 @@ function projectAssistantContent(
   }
 }
 
+function conversationTurnHistory(
+  session: Revisioned<ChatSessionRecord>
+): TurnContextHistoryEntry[] {
+  const result: TurnContextHistoryEntry[] = []
+  for (let index = 0; index < session.messages.length; index += 1) {
+    const user = session.messages[index]
+    if (user.role !== 'user' || user.status !== 'completed') continue
+    const assistant = session.messages[index + 1]
+    result.push({
+      userMessageId: user.id,
+      userContent: user.content,
+      ...(user.processing
+        ? { semanticUnderstanding: user.processing.semanticUnderstanding }
+        : {}),
+      ...(assistant?.role === 'assistant' &&
+      assistant.status === 'completed'
+        ? {
+            assistantMessageId: assistant.id,
+            assistantContent: assistant.content
+          }
+        : {})
+    })
+  }
+  return result
+}
+
+function referencedConversationMessageIds(
+  session: Revisioned<ChatSessionRecord>,
+  references: BeginTurnInput['references'] | undefined
+): string[] {
+  if (!references) return []
+  return session.messages
+    .filter(
+      (message) =>
+        (references.questionId &&
+          message.questionId === references.questionId) ||
+        (references.todoId && message.todoId === references.todoId) ||
+        (references.toolCallId &&
+          message.toolCallId === references.toolCallId) ||
+        (references.artifactId &&
+          message.artifactId === references.artifactId)
+    )
+    .map(({ id }) => id)
+}
+
 function findPreviousClarification(
   session: Revisioned<ChatSessionRecord>
 ):
@@ -1554,6 +1683,41 @@ function formatAgentContext(
     context ?? ''
   ]
   return sections.filter(Boolean).join('\n\n')
+}
+
+function formatCompactedConversationFacts(
+  facts: readonly CompactedConversationFact[]
+): string {
+  if (facts.length === 0) return ''
+  return [
+    '## Relevant conversation summary',
+    ...facts.flatMap((fact) => [
+      `Sources: ${fact.sourceMessageIds.join(', ')}`,
+      `Objective: ${fact.objective}`,
+      ...(fact.decisions.length > 0
+        ? [`Decisions:\n${fact.decisions.map((value) => `- ${value}`).join('\n')}`]
+        : []),
+      ...(fact.constraints.length > 0
+        ? [`Constraints:\n${fact.constraints.map((value) => `- ${value}`).join('\n')}`]
+        : []),
+      ...(fact.openItems.length > 0
+        ? [`Open items:\n${fact.openItems.map((value) => `- ${value}`).join('\n')}`]
+        : [])
+    ])
+  ].join('\n\n')
+}
+
+function formatRecalledConversationMemory(
+  memories: readonly RecalledMemoryReference[]
+): string {
+  if (memories.length === 0) return ''
+  return [
+    '## Recalled conversation memory',
+    ...memories.map(
+      (memory) =>
+        `- ${memory.content}\n  Sources: ${memory.sourceMessageIds.join(', ')}`
+    )
+  ].join('\n')
 }
 
 function modelCallSourceForSession(

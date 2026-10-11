@@ -35,8 +35,16 @@ describe('browser tool contract', () => {
     }
     const screenshot = tools.find((t) => t.id.endsWith('.screenshot'))!
     const valid = ajv.compile(screenshot.definition.inputSchema)
-    expect(valid({ sessionId: 'browser-one', path: 'result.png', expectedAbsent: true })).toBe(true)
-    expect(valid({ sessionId: 'browser-one', path: 'result.png' })).toBe(false)
+    expect(valid({
+      target: { kind: 'current_run' },
+      path: 'result.png',
+      expectedAbsent: true
+    })).toBe(true)
+    expect(valid({
+      sessionId: 'browser-one',
+      path: 'result.png',
+      expectedAbsent: true
+    })).toBe(false)
     expect(screenshot.definition.capabilities).toEqual(expect.arrayContaining(['filesystem.write', 'computer.observe']))
     for (const action of ['attach', 'evaluate']) {
       expect(tools.find((t) => t.id.endsWith(`.${action}`))?.definition).toMatchObject({
@@ -52,7 +60,10 @@ describe('browser tool contract', () => {
     expect(facade).toBeDefined()
     const reference = { kind: 'tool' as const, id: 'browser', version: facade!.version, digest: facade!.definitionDigest }
     expect(resolveModelFacingFacadeInvocation(source, reference, {
-      action: 'navigate', arguments: { sessionId: 'browser-one', url: 'https://example.com' }
+      action: 'navigate', arguments: {
+        target: { kind: 'current_run' },
+        url: 'https://example.com'
+      }
     })?.primitiveDefinition.id).toBe('builtin.browser.navigate')
     expect(() => resolveModelFacingFacadeInvocation(source, reference, { action: 'attach', arguments: {} })).toThrow()
     for (const action of ['attach', 'evaluate']) {
@@ -63,14 +74,14 @@ describe('browser tool contract', () => {
     expect(policy.decisions.find((d) => d.id === 'builtin.browser.attach')?.reason).toBe('explicit_grant_required')
   })
 
-  it('requests approval for the exact login profile and independent evaluation permission', async () => {
+  it('requests approval for the exact login profile and reads evaluations in the isolated snapshot sandbox', async () => {
     const plan = await planBuiltinToolEffects({
       handlerName: 'browser.attach', capabilities: ['computer.control', 'credential.use'],
       arguments: { profileId: 'browser-owned' }, scopeRoots: []
     })
     expect(plan).toMatchObject({
       outcome: 'planned', effects: expect.arrayContaining([
-        { kind: 'external', capability: 'credential.use', resourceKey: 'browser-profile:browser-owned' }
+        { kind: 'browser.profile.attach', profileId: 'browser-owned' }
       ])
     })
     if (plan.outcome !== 'planned') throw new Error('missing effects')
@@ -82,11 +93,28 @@ describe('browser tool contract', () => {
     ]) })
     const evaluate = await planBuiltinToolEffects({
       handlerName: 'browser.evaluate', capabilities: ['computer.control'],
-      arguments: { sessionId: 'browser-one', expression: 'snapshot.text' }, scopeRoots: []
-    })
+      arguments: {
+        target: { kind: 'current_run' },
+        expression: 'snapshot.text'
+      },
+      scopeRoots: [],
+      context: {
+        owner: { type: 'conversation', id: 'conversation-one' },
+        conversationId: 'conversation-one',
+        parentExecutionId: 'run-one',
+        correlationId: 'correlation-one',
+        causationId: 'causation-one'
+      }
+    }, { browser: { describe: async () => {
+      throw new Error('sessionId must not be used')
+    }, describeCurrent: async () => ({
+      sessionId: 'browser-one', url: 'https://example.com/',
+      privateSession: false, targetDigest: 'a'.repeat(64), semantic: 'read'
+    }) } })
     expect(evaluate).toMatchObject({
       outcome: 'planned', effects: [
-        { kind: 'computer.control', application: { bundleId: 'realmflow.browser.evaluate', displayName: 'Browser snapshot evaluation' } }
+        { kind: 'browser.page.read', sessionId: 'browser-one', origin: 'https://example.com',
+          privateSession: false, targetDigest: 'a'.repeat(64) }
       ]
     })
   })
@@ -98,21 +126,52 @@ describe('browser tool contract', () => {
       await writeFile(join(root, 'input.txt'), 'input')
       const download = await planBuiltinToolEffects({
         handlerName: 'browser.download', capabilities: ['filesystem.write', 'network.connect', 'computer.observe'],
-        arguments: { sessionId: 'browser-one', path: 'result.txt', expectedAbsent: true, url: 'https://example.com/file?token=secret' },
-        scopeRoots: [root]
-      })
+        arguments: {
+          target: { kind: 'current_run' }, path: 'result.txt',
+          expectedAbsent: true, url: 'https://example.com/file'
+        },
+        scopeRoots: [root],
+        context: browserContext()
+      }, { browser: {
+        describe: async () => { throw new Error('sessionId must not be used') },
+        describeCurrent: async () => ({
+          sessionId: 'browser-one', url: 'https://example.com/',
+          privateSession: false, targetDigest: 'a'.repeat(64), semantic: 'read'
+        })
+      } })
       expect(download).toMatchObject({ outcome: 'planned', effects: expect.arrayContaining([
         { kind: 'filesystem.write', path: join(root, 'result.txt') },
         { kind: 'filesystem.write', path: join(root, 'result.txt.realmflow-browser.json') },
-        { kind: 'external', capability: 'network.connect', resourceKey: 'https://example.com' }
+        { kind: 'network.public_read', localDataEgress: false, origin: 'https://example.com' }
       ]) })
       const upload = await planBuiltinToolEffects({
         handlerName: 'browser.upload', capabilities: ['filesystem.read', 'computer.control'],
-        arguments: { sessionId: 'browser-one', ref: 'n1', path: 'input.txt' }, scopeRoots: [root]
-      })
+        arguments: {
+          target: { kind: 'current_run' }, ref: 'n1', path: 'input.txt'
+        },
+        scopeRoots: [root],
+        context: browserContext()
+      }, { browser: {
+        describe: async () => { throw new Error('sessionId must not be used') },
+        describeCurrent: async () => ({
+          sessionId: 'browser-one', url: 'https://example.com/',
+          privateSession: false, targetDigest: 'a'.repeat(64),
+          semantic: 'sensitive'
+        })
+      } })
       expect(upload).toMatchObject({ outcome: 'planned', effects: expect.arrayContaining([
         { kind: 'filesystem.read', path: join(root, 'input.txt') }
       ]) })
     } finally { await rm(directory, { recursive: true, force: true }) }
   })
 })
+
+function browserContext() {
+  return {
+    owner: { type: 'conversation' as const, id: 'conversation-one' },
+    conversationId: 'conversation-one',
+    parentExecutionId: 'run-one',
+    correlationId: 'correlation-one',
+    causationId: 'causation-one'
+  }
+}

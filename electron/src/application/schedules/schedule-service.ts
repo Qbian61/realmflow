@@ -59,7 +59,7 @@ type ScheduleToolExecutionCommand = {
 
 type PrepareScheduleToolExecutionResult =
   | { outcome: 'ready'; permissionRequests: [] }
-  | { outcome: 'permission_required'; permissionRequests: unknown[] }
+  | { outcome: 'permission_required'; executionId?: string; permissionRequests: unknown[] }
   | { outcome: 'permission_denied'; permissionRequests: unknown[] }
 type ExecuteScheduleToolExecutionResult =
   | Exclude<PrepareScheduleToolExecutionResult, { outcome: 'ready' }>
@@ -90,6 +90,7 @@ type SkillExecutionPort = {
   execute(command: {
     schedule: Schedule
     scheduleRunId: string
+    onPermissionRequired?: (input: { providerRunId: string; executionId: string; requestId: string }) => Promise<void>
   }): Promise<ExecuteScheduleToolExecutionResult>
 }
 
@@ -101,6 +102,13 @@ type Dependencies = {
   now?: () => number
   createId?: (kind: 'schedule' | 'schedule_run' | 'event') => string
   onScheduleChanged?: () => void | Promise<void>
+  getToolExecution?: (id: string) => Promise<{
+    id: string
+    status: string
+    finishedAt?: number
+    error?: Record<string, unknown>
+  } | undefined>
+  getModelExecution?: Dependencies['getToolExecution']
 }
 
 export type ScheduleMutationResult =
@@ -149,8 +157,42 @@ export class ScheduleService {
     return this.dependencies.store.list()
   }
 
-  listRuns(query: ScheduleRunQuery): Promise<ScheduleRun[]> {
+  async listRuns(query: ScheduleRunQuery): Promise<ScheduleRun[]> {
+    await this.reconcilePermissions()
     return this.dependencies.store.listRuns(query)
+  }
+
+  async approvalProfileForRun(id: string) {
+    const runs = await this.dependencies.store.listRuns({ limit: 1000 })
+    return runs.find(run => run.id === id && (run.status === 'running' || run.status === 'waiting_permission'))?.approvalProfile
+  }
+
+  async reconcilePermissions(): Promise<number> {
+    if (!this.dependencies.getToolExecution && !this.dependencies.getModelExecution) return 0
+    const runs = await this.dependencies.store.listRuns({ status: 'waiting_permission', limit: 1000 })
+    let completed = 0
+    for (const run of runs) {
+      if (!run.toolExecutionId) continue
+      let execution = run.providerRunId
+        ? await this.dependencies.getModelExecution?.(run.providerRunId)
+        : await this.dependencies.getToolExecution?.(run.toolExecutionId)
+      const tool = run.providerRunId ? await this.dependencies.getToolExecution?.(run.toolExecutionId) : undefined
+      if (tool?.error?.code === 'permission_denied') execution = tool
+      if (!execution || !['completed', 'succeeded', 'failed', 'cancelled', 'interrupted'].includes(execution.status)) continue
+      const schedule = await this.dependencies.store.get(run.scheduleId)
+      if (!schedule) continue
+      const status = (execution.status === 'completed' ? 'succeeded' : execution.status) as 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
+      const terminal = finishScheduleRun(run, { status, toolExecutionId: run.toolExecutionId,
+        ...(status === 'failed' || status === 'interrupted' ? {
+          errorCode: typeof execution.error?.code === 'string' ? execution.error.code : 'schedule_execution_failed',
+          errorMessage: 'Schedule operation did not complete'
+        } : {}),
+        at: Math.max(execution.finishedAt ?? this.now(), schedule.updatedAt) })
+      const result = await this.finish(schedule, terminal)
+      if (result.outcome === 'executed') completed++
+    }
+    if (completed) this.notifyScheduleChanged()
+    return completed
   }
 
   recoverInterrupted(): Promise<number> {
@@ -646,12 +688,6 @@ export class ScheduleService {
     } catch {
       throw dependencyUnavailable()
     }
-    if (result.outcome === 'permission_required') {
-      throw new ScheduleServiceError(
-        'schedule_permission_required',
-        'Schedule permissions require user approval'
-      )
-    }
     if (result.outcome === 'permission_denied') {
       throw new ScheduleServiceError(
         'schedule_permission_denied',
@@ -666,12 +702,24 @@ export class ScheduleService {
     idempotencyKey: string
   ): Promise<RunScheduleNowResult> {
     let result: ExecuteScheduleToolExecutionResult
+    let currentRun = run
     try {
       result =
         schedule.executionTarget.kind === 'skill'
           ? await this.dependencies.skills.execute({
               schedule,
-              scheduleRunId: run.id
+              scheduleRunId: run.id,
+              onPermissionRequired: async (input) => {
+                const waiting: ScheduleRun = { ...currentRun, status: 'waiting_permission',
+                  providerRunId: input.providerRunId, toolExecutionId: input.executionId,
+                  permissionRequestId: input.requestId, revision: currentRun.revision + 1 }
+                const saved = await this.dependencies.store.finishRun({ run: waiting,
+                  expectedRunRevision: currentRun.revision, schedule,
+                  expectedScheduleRevision: schedule.revision, eventId: this.createId('event'), at: this.now() })
+                if (saved.status !== 'applied') throw new Error('Schedule waiting state could not be saved')
+                currentRun = waiting
+                this.notifyScheduleChanged()
+              }
             })
           : await this.dependencies.tools.execute({
               ...executionCommand(schedule, run.id),
@@ -680,18 +728,25 @@ export class ScheduleService {
     } catch {
       return this.finishFailedRun(
         schedule,
-        run,
+        currentRun,
         'schedule_execution_failed',
         'Schedule execution failed'
       )
     }
     if (result.outcome === 'permission_required') {
-      return this.finishFailedRun(
-        schedule,
-        run,
-        'schedule_permission_required',
-        'Schedule permissions require user approval'
-      )
+      if (!result.executionId) return this.finishFailedRun(schedule, run,
+        'schedule_execution_failed', 'Pending execution identity is unavailable')
+      const request = result.permissionRequests[0] as { id?: string } | undefined
+      const waiting: ScheduleRun = { ...run, status: 'waiting_permission',
+        toolExecutionId: result.executionId, permissionRequestId: request?.id, revision: run.revision + 1 }
+      const saved = await this.dependencies.store.finishRun({
+        run: waiting, expectedRunRevision: run.revision, schedule,
+        expectedScheduleRevision: schedule.revision, eventId: this.createId('event'), at: this.now()
+      })
+      if (saved.status === 'not_found') throw new ScheduleServiceError('schedule_persistence_unavailable', 'Pending schedule could not be saved')
+      this.notifyScheduleChanged()
+      await this.reconcilePermissions()
+      return { outcome: saved.status === 'applied' ? 'executed' : 'conflict', run: saved.run }
     }
     if (result.outcome === 'permission_denied') {
       return this.finishFailedRun(
@@ -705,11 +760,17 @@ export class ScheduleService {
       return { outcome: 'executed', run }
     }
     const execution = result.execution
+    if (currentRun.toolExecutionId && this.dependencies.getToolExecution) {
+      const tool = await this.dependencies.getToolExecution(currentRun.toolExecutionId)
+      if (tool?.error?.code === 'permission_denied') {
+        return this.finishFailedRun(schedule, currentRun, 'permission_denied', 'Schedule operation was denied')
+      }
+    }
     const status = execution.status as Exclude<
       typeof execution.status,
-      'running'
+      'running' | 'waiting_permission'
     >
-    const terminal = finishScheduleRun(run, {
+    const terminal = finishScheduleRun(currentRun, {
       status,
       toolExecutionId: execution.id,
       ...(status === 'failed' || status === 'interrupted'
@@ -820,7 +881,8 @@ function definitionOf(schedule: Schedule): ScheduleDefinition {
     executionTarget: schedule.executionTarget,
     skillInput: schedule.skillInput,
     connectorBindings: schedule.connectorBindings,
-    permissions: schedule.permissions
+    permissions: schedule.permissions,
+    approvalProfileId: schedule.approvalProfile.id
   }
 }
 

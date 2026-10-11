@@ -98,6 +98,7 @@ function AppShell({
     modelProfileId?: string,
     reasoningMode: ReasoningPreference = "auto",
     attachments?: ConversationAttachmentSubmission,
+    approvalProfileId?: import("../domain/approval-profile").ApprovalProfileId,
   ): Promise<void> => {
     return createSession(
       spacePath,
@@ -105,6 +106,7 @@ function AppShell({
       modelProfileId,
       reasoningMode,
       attachments,
+      approvalProfileId,
     ).then(
       (sessionId) => {
         navigate(`/sessions/${sessionId}`);

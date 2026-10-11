@@ -2,13 +2,15 @@ import type {
   CapabilityDefinition,
   CapabilityInstallation,
 } from "../../../domain/capability";
-import { useEffect, useState } from "react";
+import { useEffect, useState
+} from "react";
 import { Trash2 } from "lucide-react";
 import {
   Badge,
   IconButton,
   ListPagination,
   useListPagination,
+  Select,
 } from "../../components/ui";
 import { useLocalization } from "../../localization/LocalizationProvider";
 import type { LocalizedCapabilityDisplay } from "../../../shared/capability-localization";
@@ -150,7 +152,7 @@ function InstalledCapabilityRow({
       </div>
       <span>{scopeLabel(installation)}</span>
       <div className="capability-version-control">
-        <select name={`capability-${definition.id}-version`} autoComplete="off"
+        <Select name={`capability-${definition.id}-version`} autoComplete="off"
           aria-label={t("capabilities.version.label", {
             name: display?.name ?? definition.name,
           })}
@@ -165,7 +167,7 @@ function InstalledCapabilityRow({
                 v{version.version}
               </option>
             ))}
-        </select>
+        </Select>
         {targetVersion !== installation.capabilityVersion && onChangeVersion ? (
           <button
             type="button"

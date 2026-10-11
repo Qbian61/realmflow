@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { createApprovalProfileSnapshot } from '../../domain/approval-profile'
 import { execFile } from 'node:child_process'
 import { readFile, realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -25,6 +26,7 @@ import { NativeOverlayManager } from './overlay/native-overlay-manager'
 import { SqlitePersistenceService } from './persistence/sqlite-persistence-service'
 import { IPC_EVENT_CHANNELS } from '../../shared/ipc-contract'
 import { SidecarManager } from './sidecar/manager'
+import { registerTerminationSignals } from './process/termination-signals'
 import {
   createNodeQdrantProcessPort,
   QdrantProcessManager,
@@ -211,6 +213,10 @@ import { SqliteWebProviderRepository } from './infrastructure/sqlite/web-provide
 import { BrowserRuntimeService } from './application/browser/browser-runtime-service'
 import { ElectronBrowserDriver } from './application/browser/electron-browser-driver'
 import { SqliteBrowserSessionRepository } from './infrastructure/sqlite/browser-session-repository'
+import { RuntimeResourceLeaseService } from './application/tools/runtime-resource-lease-service'
+import { SqliteRuntimeResourceLeaseRepository } from './infrastructure/sqlite/runtime-resource-lease-repository'
+import { ConversationMemoryService } from './application/conversation/conversation-memory-service'
+import { SqliteConversationContextRepository } from './infrastructure/sqlite/conversation-context-repository'
 import { SqliteSkillRegistryRepository } from './infrastructure/sqlite/skill-registry-repository'
 import { SkillRegistryService } from './application/skills/skill-registry-service'
 import { SkillSourceScanner } from './application/skills/skill-source-scanner'
@@ -227,6 +233,8 @@ import {
 } from './application/tools/tool-execution-application-service'
 import { RunToolPolicyResolver } from './application/tools/run-tool-policy-resolver'
 import { ToolPermissionDecisionService } from './application/tools/tool-permission-decision-service'
+import { ApprovalObservabilityService } from './application/tools/approval-observability-service'
+import { SqliteApprovalDefaultRepository } from './infrastructure/sqlite/approval-default-repository'
 import { EncryptedPendingToolInvocationCheckpointStore } from './application/tools/pending-tool-invocation-checkpoint-store'
 import {
   resolveExecutionScopeRoots,
@@ -442,6 +450,18 @@ function requestRendererCloseApproval(): void {
   window.webContents.send(IPC_EVENT_CHANNELS.appCloseRequested)
 }
 
+function conversationMemoryId(noteId: string, version: number): string {
+  return `conversation-memory:${noteId}:v${version}`
+}
+
+function knowledgeNoteMemoryKind(
+  kind: 'conversation_note' | 'decision' | 'retrospective'
+): 'fact' | 'decision' | 'outcome' {
+  if (kind === 'decision') return 'decision'
+  if (kind === 'retrospective') return 'outcome'
+  return 'fact'
+}
+
 function respondToRendererCloseRequest(approved: boolean): void {
   closeRequestPending = false
   if (!approved) return
@@ -519,6 +539,18 @@ function createWindow(): void {
     void window.loadFile(join(moduleDirectory, '../renderer/index.html'))
   }
 }
+
+const hasInstanceLock = app.requestSingleInstanceLock()
+if (!hasInstanceLock) app.exit(0)
+app.on('second-instance', () => {
+  if (mainWindow?.isMinimized()) mainWindow.restore()
+  mainWindow?.show()
+  mainWindow?.focus()
+})
+registerTerminationSignals(process, () => {
+  rendererCloseApproved = true
+  app.quit()
+})
 
 app
   .whenReady()
@@ -741,6 +773,7 @@ app
       skillRegistry,
     })
     const sqliteCoordinator = getSqliteConnectionCoordinator(database)
+    const approvalDefaults = coordinateRepository(new SqliteApprovalDefaultRepository(database), sqliteCoordinator)
     const vectorIndexes = coordinateRepository(
       new SqliteVectorIndexRepository(database),
       sqliteCoordinator,
@@ -1245,6 +1278,14 @@ app
       models: repositories.modelPool,
       tools: deferredToolRuntime,
       skills: deferredModelSkillRuntime,
+      getToolExecution: async (id) => {
+        const state = await toolProjections.getExecution(id)
+        return state ? { id, status: state.status, error: state.error, finishedAt: state.updatedAt } : undefined
+      },
+      getModelExecution: async (id) => {
+        const run = await agentRuntimeRuns.getByProviderRunId(id) ?? await agentRuntimeRuns.getById(id)
+        return run ? { id, status: run.status, finishedAt: run.updatedAt } : undefined
+      },
       onScheduleChanged: () => scheduleScheduler?.refresh(),
     })
     await schedules.recoverInterrupted()
@@ -2117,8 +2158,14 @@ app
       }),
       enabled: () => true,
     })
+    const conversationContexts =
+      new SqliteConversationContextRepository(database)
     const sendConversationMessage = new SendConversationMessageUseCase({
       sessions: repositories.chatSessions,
+      memory: new ConversationMemoryService({
+        repository: conversationContexts
+      }),
+      getDefaultApprovalProfile: async () => (await approvalDefaults.get()).approvalProfileId,
       timeline: assistantTimeline,
       spaceContext: {
         assertAvailable: async (workspaceId) => {
@@ -2551,6 +2598,18 @@ app
       getConversation: {
         execute: ({ sessionId }) => repositories.chatSessions.get(sessionId),
       },
+      getConversationContextDiagnostics: {
+        execute: async ({ sessionId }) =>
+          conversationContexts.getLatestDiagnostics(sessionId),
+      },
+      searchConversationTranscript: {
+        execute: async ({ sessionId, query, limit }) =>
+          conversationContexts.searchTranscript({
+            conversationId: sessionId,
+            query,
+            limit: limit ?? 8
+          }),
+      },
       renameConversation: {
         execute: (command) => manageConversations.rename(command),
       },
@@ -2583,6 +2642,7 @@ app
           }
           return sendConversationMessage.execute({
             sessionId: command.sessionId,
+            ...(command.approvalProfileId ? { approvalProfileId: command.approvalProfileId } : {}),
             content: command.content,
             expectedRevision: command.expectedRevision,
             messageId: command.messageId,
@@ -2594,6 +2654,9 @@ app
               : {}),
             ...(command.reasoningMode
               ? { reasoningMode: command.reasoningMode }
+              : {}),
+            ...(command.contextMode
+              ? { contextMode: command.contextMode }
               : {}),
             ...(command.applicationLocale
               ? { applicationLocale: command.applicationLocale }
@@ -2712,6 +2775,21 @@ app
                     knowledgeNoteService,
                   )
           const created = await create(command)
+          conversationContexts.saveMemory({
+            id: conversationMemoryId(
+              created.note.id,
+              created.version.version
+            ),
+            scope: 'conversation',
+            scopeId: command.sessionId,
+            kind: knowledgeNoteMemoryKind(created.note.kind),
+            content: created.version.content,
+            sourceMessageIds: created.version.sourceMessageIds,
+            sourceDigest: created.version.checksum,
+            importance: 0.9,
+            validFrom: created.version.createdAt,
+            trust: 'user_confirmed'
+          })
           return toKnowledgeNoteDto({
             note: created.note,
             currentVersion: created.version,
@@ -2719,12 +2797,51 @@ app
         },
       },
       editKnowledgeNote: {
-        execute: async (command) =>
-          toKnowledgeNoteDto(await knowledgeNoteService.edit(command)),
+        execute: async (command) => {
+          const edited = await knowledgeNoteService.edit(command)
+          if (edited.note.sessionId) {
+            conversationContexts.replaceMemory(
+              conversationMemoryId(
+                edited.note.id,
+                edited.currentVersion.version - 1
+              ),
+              {
+                id: conversationMemoryId(
+                  edited.note.id,
+                  edited.currentVersion.version
+                ),
+                scope: 'conversation',
+                scopeId: edited.note.sessionId,
+                kind: knowledgeNoteMemoryKind(edited.note.kind),
+                content: edited.currentVersion.content,
+                sourceMessageIds: edited.currentVersion.sourceMessageIds,
+                sourceDigest: edited.currentVersion.checksum,
+                importance: 0.9,
+                validFrom: edited.currentVersion.createdAt,
+                trust: 'user_confirmed'
+              }
+            )
+          }
+          return toKnowledgeNoteDto(edited)
+        },
       },
       archiveKnowledgeNote: {
-        execute: async (command) =>
-          toKnowledgeNoteDto(await knowledgeNoteService.archive(command)),
+        execute: async (command) => {
+          const archived = await knowledgeNoteService.archive(command)
+          if (archived.note.sessionId) {
+            conversationContexts.expireMemory(
+              conversationMemoryId(
+                archived.note.id,
+                archived.currentVersion.version
+              ),
+              Math.max(
+                archived.note.updatedAt,
+                archived.currentVersion.createdAt + 1
+              )
+            )
+          }
+          return toKnowledgeNoteDto(archived)
+        },
       },
       searchKnowledge: {
         execute: (query) => knowledgeSearch.search(query),
@@ -3268,10 +3385,14 @@ app
     webWorkbench = new WebWorkbenchManager(() => mainWindow)
     browserRuntime = new BrowserRuntimeService(
       new SqliteBrowserSessionRepository(database),
-      new ElectronBrowserDriver(webWorkbench)
+      new ElectronBrowserDriver(webWorkbench),
+      new RuntimeResourceLeaseService(
+        new SqliteRuntimeResourceLeaseRepository(database)
+      )
     )
     browserRuntime.recover()
     const builtinToolAdapter = createBuiltinToolAdapter({
+      protectedRoots: [userDataPath],
       browser: browserRuntime,
       web: webProviders,
       resolveSessionPath: (family, sessionId) => {
@@ -3559,6 +3680,7 @@ app
     })
     const runToolPolicies = new RunToolPolicyResolver({
       active: (runId) => runGateway.getToolPolicy(runId),
+      activeApprovalProfile: (runId) => runGateway.getApprovalProfile(runId),
       stored: async (runId) =>
         agentRuntimeRuns.getById(runId) ?? await agentRuntimeRuns.getByProviderRunId(runId),
     })
@@ -3659,7 +3781,8 @@ app
         vault: credentialVault,
       }),
       dispatcher: toolOutboxDispatcher,
-      onPermissionChanged: () => {
+      onPermissionChanged: async () => {
+        await schedules.reconcilePermissions()
         mainWindow?.webContents.send(
           IPC_EVENT_CHANNELS.toolPermissionChanged,
         )
@@ -3693,6 +3816,9 @@ app
       }),
       mediaRuntime,
       resolveRunPolicy: (command) => runToolPolicies.resolve(command),
+      resolveApprovalProfile: async (command) => command.triggerSource === 'schedule' && command.context.scheduleRunId && command.context.scheduleRunId !== 'schedule-preflight'
+        ? await schedules.approvalProfileForRun(command.context.scheduleRunId) ?? createApprovalProfileSnapshot('cautious')
+        : runToolPolicies.resolveApprovalProfile(command),
       resolveScopeRoots: (command) =>
         resolveToolScopeRoots(command, executionScopeDependencies),
       resolveBoundScopes: (command) =>
@@ -3728,6 +3854,7 @@ app
       toolAdapters.health('connector'),
     ])
     await liveToolRuntime.restorePendingPermissions()
+    await schedules.reconcilePermissions()
     while ((await toolOutboxDispatcher.dispatchBatch()).claimed > 0) {
       // Drain persisted Tool dispatches before accepting new work.
     }
@@ -3961,6 +4088,8 @@ app
         },
       },
       toolPermissions: {
+        defaults: approvalDefaults,
+        observability: new ApprovalObservabilityService({ events: toolEvents }),
         permissions: toolProjections,
         decisions: new ToolPermissionDecisionService(liveToolRuntime),
       },

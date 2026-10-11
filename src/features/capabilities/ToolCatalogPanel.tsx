@@ -23,6 +23,7 @@ import {
   ListPagination,
   Toolbar,
   useListPagination,
+  Select,
 } from "../../components/ui";
 import { useLocalization } from "../../localization/LocalizationProvider";
 import {
@@ -452,7 +453,7 @@ function CatalogRow({
         <div className="tool-catalog-row-actions">
           {versionOptions.length > 1 && onChangeVersion ? (
             <div className="capability-version-control">
-              <select
+              <Select
                 name={`extension-package-${name}-version`}
                 autoComplete="off"
                 aria-label={t("capabilities.version.label", { name })}
@@ -469,7 +470,7 @@ function CatalogRow({
                       v{candidate}
                     </option>
                   ))}
-              </select>
+              </Select>
               {targetVersion !== version ? (
                 <button
                   type="button"

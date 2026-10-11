@@ -1,4 +1,5 @@
-import { Paperclip } from "lucide-react";
+import { Paperclip
+} from "lucide-react";
 import {
   Fragment,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -18,7 +19,10 @@ import {
   finishNativeDrag,
 } from "../../drag/native-drag-feedback";
 import { DragHandle } from "../../drag/DragHandle";
-import { DataTable } from "../../../components/ui";
+import {
+  DataTable,
+  Select,
+} from "../../../components/ui";
 import { TaskTableFieldTypeIcon } from "./TaskTableFieldTypeIcon";
 import { TaskMultiSelectTagEditor } from "./TaskMultiSelectTagEditor";
 
@@ -534,7 +538,7 @@ function InlineEditor({
   }
   if (field.fieldType === "single_select") {
     return (
-      <select
+      <Select
         autoFocus
         name={name}
         autoComplete="off"
@@ -553,7 +557,7 @@ function InlineEditor({
             {option.label}
           </option>
         ))}
-      </select>
+      </Select>
     );
   }
   const displayValue =

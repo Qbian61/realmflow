@@ -1,6 +1,7 @@
-import { useRef, useState } from "react";
-import { Plus, Search, Settings2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Plus, Search } from "lucide-react";
 import { Composer } from "../components/Composer";
+import { IconButton } from "../components/ui";
 import {
   CreateTemplateDialog,
   type TemplateDefinition,
@@ -14,6 +15,7 @@ import type { Translator } from "../localization/translate";
 import type { ReasoningPreference } from "../../domain/reasoning-router";
 import type { ConversationAttachmentDescriptor } from "../../domain/conversation-input";
 import type { ConversationAttachmentSubmission } from "../../shared/conversation-attachments";
+import { useDefaultApprovalProfile } from "../features/permissions/use-default-approval-profile";
 
 function createBuiltinTemplates(t: Translator): TemplateDefinition[] {
   return [
@@ -112,6 +114,7 @@ type NewChatPageProps = {
     modelProfileId?: string,
     reasoningMode?: ReasoningPreference,
     attachments?: ConversationAttachmentSubmission,
+    approvalProfileId?: import("../../domain/approval-profile").ApprovalProfileId,
   ) => void | Promise<void>;
 };
 
@@ -122,6 +125,9 @@ export function NewChatPage({
   const { t } = useLocalization();
   const toast = useToast();
   const [prompt, setPrompt] = useState("");
+  const defaultApproval = useDefaultApprovalProfile();
+  const [selectedApproval, setApprovalProfileId] = useState<import("../../domain/approval-profile").ApprovalProfileId>();
+  const approvalProfileId = selectedApproval ?? defaultApproval;
   const [submittedPrompt, setSubmittedPrompt] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [selectedWorkspace, setSelectedWorkspace] = useState("none");
@@ -141,6 +147,8 @@ export function NewChatPage({
   } | null>(null);
   const [activeTemplateTag, setActiveTemplateTag] = useState("all");
   const [templateSearch, setTemplateSearch] = useState("");
+  const [templateSearchExpanded, setTemplateSearchExpanded] = useState(false);
+  const templateSearchInputRef = useRef<HTMLInputElement>(null);
   const [customTemplates, setCustomTemplates] = useState<TemplateDefinition[]>(
     [],
   );
@@ -154,6 +162,14 @@ export function NewChatPage({
     (left, right) => right.uses - left.uses,
   );
   const templateTags = [...new Set(allTemplates.map(({ tag }) => tag))];
+
+  useEffect(() => {
+    if (templateSearch) setTemplateSearchExpanded(true);
+  }, [templateSearch]);
+
+  useEffect(() => {
+    if (templateSearchExpanded) templateSearchInputRef.current?.focus();
+  }, [templateSearchExpanded]);
 
   const fillPrompt = (value: string): void => {
     setPrompt(value);
@@ -185,6 +201,7 @@ export function NewChatPage({
             models.selectedId || undefined,
             "auto",
             submission,
+            approvalProfileId,
           );
         } else {
           await onCreateSession(
@@ -192,6 +209,8 @@ export function NewChatPage({
             nextPrompt,
             models.selectedId || undefined,
             "auto",
+            undefined,
+            approvalProfileId,
           );
         }
         setPrompt("");
@@ -214,6 +233,8 @@ export function NewChatPage({
       <h1 className="sr-only">{t("navigation.newChat")}</h1>
       <section className="chat-launcher" aria-label={t("newChat.region")}>
         <Composer
+          approvalProfileId={approvalProfileId}
+          onApprovalProfileChange={setApprovalProfileId}
           value={prompt}
           textareaRef={textareaRef}
           placeholder={t("newChat.placeholder")}
@@ -316,20 +337,6 @@ export function NewChatPage({
           onSubmit={() => void submitPrompt()}
         />
 
-        {!models.loading && models.groups.length === 0 ? (
-          <div className="new-chat-model-guide" role="status">
-            <span>{t("model.setupRequired")}</span>
-            <button
-              type="button"
-              onClick={() => {
-                window.location.hash = "/settings?section=models";
-              }}
-            >
-              <Settings2 size={14} />
-              {t("model.configure")}
-            </button>
-          </div>
-        ) : null}
         <p className="sr-only" aria-live="polite">
           {submittedPrompt
             ? t("newChat.prepared", { prompt: submittedPrompt })
@@ -356,16 +363,37 @@ export function NewChatPage({
               </button>
             ))}
           </div>
-          <label className="template-filter-search">
-            <Search size={17} />
+          <div
+            className="template-filter-search"
+            data-expanded={templateSearchExpanded}
+            onBlur={(event) => {
+              if (event.currentTarget.contains(event.relatedTarget)) return;
+              if (!templateSearch) setTemplateSearchExpanded(false);
+            }}
+          >
             <input name="template-search" autoComplete="off"
+              ref={templateSearchInputRef}
               type="search"
               value={templateSearch}
               aria-label={t("template.search")}
               placeholder={t("template.search")}
               onChange={(event) => setTemplateSearch(event.target.value)}
+              tabIndex={templateSearchExpanded ? 0 : -1}
             />
-          </label>
+            <IconButton
+              size="compact"
+              variant="ghost"
+              title={t("common.search")}
+              aria-label={t("common.search")}
+              aria-expanded={templateSearchExpanded}
+              onClick={() => {
+                setTemplateSearchExpanded(true);
+                templateSearchInputRef.current?.focus();
+              }}
+            >
+              <Search size={17} aria-hidden="true" />
+            </IconButton>
+          </div>
         </div>
 
         <div className="template-grid">

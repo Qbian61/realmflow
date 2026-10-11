@@ -1,4 +1,5 @@
-import { ArrowDown, ArrowUp, Plus, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Plus, Trash2, X
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import type {
   WorkbenchTaskField,
@@ -13,6 +14,7 @@ import {
   DialogHeader,
   Field,
   IconButton,
+  Select,
 } from "../../../components/ui";
 import { useLocalization } from "../../../localization/LocalizationProvider";
 
@@ -158,8 +160,12 @@ export function TaskFieldManagerDialog({
                 }
               />
             </Field>
-            <Field name="workbench-tasks-field-type" label={t("workbenchTasks.fieldType")}>
-              <select
+            <Field
+              className="workbench-task-field-manager-type"
+              name="workbench-tasks-field-type"
+              label={t("workbenchTasks.fieldType")}
+            >
+              <Select
                 value={draft.fieldType}
                 disabled={Boolean(selected)}
                 onChange={(event) =>
@@ -174,7 +180,7 @@ export function TaskFieldManagerDialog({
                     {t(`workbenchTasks.fieldType.${type}` as never)}
                   </option>
                 ))}
-              </select>
+              </Select>
             </Field>
             {usesOptions ? (
               <Field name="workbench-tasks-options" label={t("workbenchTasks.options")}>

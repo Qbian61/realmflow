@@ -1,21 +1,24 @@
 import {
   type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
   type RefObject,
   useEffect,
+  useId,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
 import {
   ArrowUp,
   Blocks,
+  Check,
   ChevronDown,
   ChevronRight,
   Folder,
   Link2,
   Paperclip,
   Plus,
-  ShieldCheck,
   Square,
   WandSparkles,
   X,
@@ -24,10 +27,12 @@ import {
   ModelSelector,
   type ModelSelectorGroup,
 } from "../features/conversation/ModelSelector";
+import { ApprovalProfileSelector } from "../features/conversation/ApprovalProfileSelector";
 import { useLocalization } from "../localization/LocalizationProvider";
 import type { ConversationAttachmentDescriptor } from "../../domain/conversation-input";
 import {
   IconButton,
+  Button,
   Menu,
   MenuContent,
   MenuItem,
@@ -52,6 +57,11 @@ type ComposerInsertions = {
 };
 
 type ComposerProps = {
+  approvalProfileId?: import("../../domain/approval-profile").ApprovalProfileId;
+  onApprovalProfileChange?: (value: import("../../domain/approval-profile").ApprovalProfileId) => void;
+  contextMode?: "auto" | "fresh" | "continuation";
+  onContextModeChange?: (value: "auto" | "fresh" | "continuation") => void;
+  showContextMode?: boolean;
   value: string;
   permissionRunIds?: readonly string[];
   placeholder: string;
@@ -89,6 +99,11 @@ type ComposerProps = {
 };
 
 export function Composer({
+  approvalProfileId = "protected",
+  onApprovalProfileChange,
+  contextMode = "auto",
+  onContextModeChange,
+  showContextMode = false,
   value,
   permissionRunIds = [],
   placeholder,
@@ -126,10 +141,20 @@ export function Composer({
 }: ComposerProps): JSX.Element {
   const { t } = useLocalization();
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
+  const [workspacePlacement, setWorkspacePlacement] = useState<"up" | "down">(
+    "up",
+  );
+  const [uncontrolledWorkspaceValue, setUncontrolledWorkspaceValue] =
+    useState(defaultWorkspace);
+  const workspaceListboxId = useId();
   const attachmentMenuButtonRef = useRef<HTMLButtonElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const internalTextareaRef = useRef<HTMLTextAreaElement>(null);
   const resolvedTextareaRef = textareaRef ?? internalTextareaRef;
+  const workspaceSelectorRef = useRef<HTMLDivElement>(null);
+  const workspaceTriggerRef = useRef<HTMLButtonElement>(null);
+  const workspaceListRef = useRef<HTMLDivElement>(null);
   const resolvedWorkspaceOptions = workspaceOptions ?? [
     { value: "none", label: t("composer.defaultWorkspace") },
     { value: "realmflow", label: "realmflow" },
@@ -148,6 +173,95 @@ export function Composer({
   useEffect(() => {
     if (autoFocus) resolvedTextareaRef.current?.focus();
   }, [autoFocus, resolvedTextareaRef]);
+
+  useEffect(() => {
+    if (workspaceValue !== undefined) return;
+    setUncontrolledWorkspaceValue(defaultWorkspace);
+  }, [defaultWorkspace, workspaceValue]);
+
+  useEffect(() => {
+    if (!workspaceMenuOpen) return;
+    const close = (event: MouseEvent): void => {
+      if (!workspaceSelectorRef.current?.contains(event.target as Node)) {
+        setWorkspaceMenuOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape") return;
+      setWorkspaceMenuOpen(false);
+      workspaceTriggerRef.current?.focus();
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [workspaceMenuOpen]);
+
+  useLayoutEffect(() => {
+    if (!workspaceMenuOpen) return;
+    workspaceListRef.current
+      ?.querySelector<HTMLButtonElement>("[role='option']:not(:disabled)")
+      ?.focus();
+  }, [workspaceMenuOpen]);
+
+  const selectedWorkspaceValue =
+    workspaceValue ?? uncontrolledWorkspaceValue;
+  const selectedWorkspaceOption =
+    resolvedWorkspaceOptions.find(
+      (option) => option.value === selectedWorkspaceValue,
+    ) ??
+    resolvedWorkspaceOptions[0] ?? { value: defaultWorkspace, label: "" };
+
+  const toggleWorkspaceMenu = (): void => {
+    if (disabled) return;
+    setWorkspaceMenuOpen((open) => {
+      const next = !open;
+      if (next) {
+        const bounds = workspaceSelectorRef.current?.getBoundingClientRect();
+        if (bounds) {
+          const spaceAbove = bounds.top - 8;
+          const spaceBelow = window.innerHeight - bounds.bottom - 8;
+          setWorkspacePlacement(
+            spaceAbove >= 320 || spaceAbove >= spaceBelow ? "up" : "down",
+          );
+        }
+      }
+      return next;
+    });
+  };
+
+  const chooseWorkspace = (nextValue: string): void => {
+    if (workspaceValue === undefined) {
+      setUncontrolledWorkspaceValue(nextValue);
+    }
+    onWorkspaceChange?.(nextValue);
+    setWorkspaceMenuOpen(false);
+  };
+
+  const moveWorkspaceFocus = (
+    event: ReactKeyboardEvent<HTMLDivElement>,
+  ): void => {
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    const options = Array.from(
+      event.currentTarget.querySelectorAll<HTMLButtonElement>(
+        "[role='option']:not(:disabled)",
+      ),
+    );
+    if (options.length === 0) return;
+    const current = options.indexOf(document.activeElement as HTMLButtonElement);
+    const target =
+      event.key === "Home"
+        ? options[0]
+        : event.key === "End"
+          ? options[options.length - 1]
+          : event.key === "ArrowDown"
+            ? options[(Math.max(current, -1) + 1) % options.length]
+            : options[(current <= 0 ? options.length : current) - 1];
+    event.preventDefault();
+    target?.focus();
+  };
 
   const fillPrompt = (nextValue: string): void => {
     onChange(nextValue);
@@ -298,7 +412,7 @@ export function Composer({
               <IconButton
                 ref={attachmentMenuButtonRef}
                 className="icon-action"
-                size="comfortable"
+                size="default"
                 variant="ghost"
                 aria-label={
                   attachmentMenuOpen ? labels.closeMenu : labels.openMenu
@@ -311,7 +425,7 @@ export function Composer({
                 disabled={disabled}
                 onClick={() => setAttachmentMenuOpen((open) => !open)}
               >
-                {attachmentMenuOpen ? <X size={22} /> : <Plus size={22} />}
+                {attachmentMenuOpen ? <X size={18} /> : <Plus size={18} />}
               </IconButton>
               <input name="composer-attachments" aria-label={t("composer.addFile")}
                 ref={fileInputRef}
@@ -322,6 +436,108 @@ export function Composer({
                 disabled={disabled}
               />
             </div>
+            {showContext ? (
+              <div
+                className="model-selector composer-workspace-selector"
+                ref={workspaceSelectorRef}
+              >
+                <button
+                  ref={workspaceTriggerRef}
+                  className="model-selector-trigger composer-workspace-selector-trigger"
+                  type="button"
+                  role="combobox"
+                  aria-label={labels.workspace}
+                  title={labels.workspace}
+                  aria-expanded={workspaceMenuOpen}
+                  aria-controls={workspaceListboxId}
+                  disabled={disabled}
+                  onClick={toggleWorkspaceMenu}
+                >
+                  <Folder size={18} />
+                  <span>{selectedWorkspaceOption.label}</span>
+                  <ChevronDown size={14} />
+                </button>
+                {workspaceMenuOpen ? (
+                  <div
+                    className="model-selector-popover approval-profile-selector-popover composer-workspace-selector-popover ui-menu"
+                    data-placement={workspacePlacement}
+                  >
+                    <div
+                      ref={workspaceListRef}
+                      className="model-selector-list"
+                      id={workspaceListboxId}
+                      role="listbox"
+                      aria-label={labels.workspace}
+                      onKeyDown={moveWorkspaceFocus}
+                    >
+                      {resolvedWorkspaceOptions.map((option) => {
+                        const selected =
+                          option.value === selectedWorkspaceOption.value;
+                        return (
+                          <button
+                            className="ui-menu-item"
+                            type="button"
+                            role="option"
+                            aria-selected={selected}
+                            value={option.value}
+                            key={option.value}
+                            onClick={() => chooseWorkspace(option.value)}
+                          >
+                            <span className="model-selector-option-content">
+                              <Folder
+                                className="model-selector-provider-logo"
+                                size={14}
+                              />
+                              <span className="model-selector-option-label">
+                                {option.label}
+                              </span>
+                            </span>
+                            {selected ? <Check size={13} /> : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            <ApprovalProfileSelector
+              ariaLabel={labels.permission}
+              value={approvalProfileId}
+              labels={{
+                cautious: t("composer.permission.ask"),
+                protected: t("composer.permission.default"),
+                trusted: t("composer.permission.allow"),
+              }}
+              descriptions={{
+                cautious: t("composer.permission.askDescription"),
+                protected: t("composer.permission.defaultDescription"),
+                trusted: t("composer.permission.allowDescription"),
+              }}
+              disabled={disabled}
+              onChange={(nextValue) => onApprovalProfileChange?.(nextValue)}
+            />
+            {showContextMode ? <div
+              className="composer-context-mode"
+              role="radiogroup"
+              aria-label={t("composer.contextMode.label")}
+            >
+              {(["auto", "fresh", "continuation"] as const).map((mode) => (
+                <Button
+                  key={mode}
+                  type="button"
+                  role="radio"
+                  aria-checked={contextMode === mode}
+                  className={contextMode === mode ? "is-active" : ""}
+                  variant="ghost"
+                  size="compact"
+                  disabled={disabled}
+                  onClick={() => onContextModeChange?.(mode)}
+                >
+                  {t(`composer.contextMode.${mode}`)}
+                </Button>
+              ))}
+            </div> : null}
           </div>
           <div className="composer-actions-right">
             {modelControl ?? (
@@ -367,50 +583,12 @@ export function Composer({
                 title={labels.submit}
                 disabled={disabled || !value.trim()}
               >
-                <ArrowUp size={20} />
+                <ArrowUp size={17} />
               </button>
             )}
           </div>
         </div>
       </div>
-
-      {showContext ? (
-        <div className="composer-context composer-context-surface">
-          <label className="select-control">
-            <Folder size={18} />
-            <select name="composer-select" autoComplete="off"
-              aria-label={labels.workspace}
-              {...(workspaceValue === undefined
-                ? { defaultValue: defaultWorkspace }
-                : { value: workspaceValue })}
-              disabled={disabled}
-              onChange={(event) => onWorkspaceChange?.(event.target.value)}
-            >
-              {resolvedWorkspaceOptions.map((option) => (
-                <option value={option.value} key={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            <ChevronDown size={14} />
-          </label>
-          <label className="select-control">
-            <ShieldCheck size={18} />
-            <select name="composer-permission" autoComplete="off"
-              aria-label={labels.permission}
-              defaultValue="default"
-              disabled={disabled}
-            >
-              <option value="default">
-                {t("composer.permission.default")}
-              </option>
-              <option value="ask">{t("composer.permission.ask")}</option>
-              <option value="allow">{t("composer.permission.allow")}</option>
-            </select>
-            <ChevronDown size={14} />
-          </label>
-        </div>
-      ) : null}
     </form>
     </div>
   );

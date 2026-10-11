@@ -9,6 +9,7 @@ const child = spawn(
   {
     cwd: process.cwd(),
     env,
+    detached: process.platform !== 'win32',
     stdio: 'inherit'
   }
 )
@@ -16,3 +17,21 @@ const child = spawn(
 child.once('exit', (code) => {
   process.exit(code ?? 1)
 })
+
+let stopping = false
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, () => {
+    if (stopping) return
+    stopping = true
+    if (!child.pid || child.exitCode !== null) return
+    if (process.platform === 'win32') {
+      child.kill(signal)
+    } else {
+      try {
+        process.kill(-child.pid, signal)
+      } catch (error) {
+        if (error.code !== 'ESRCH') throw error
+      }
+    }
+  })
+}

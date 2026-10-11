@@ -8,7 +8,8 @@ describe('ToolPermissionDecisionService', () => {
       executionId: 'execution-1',
       status: 'approved'
     })
-    const service = new ToolPermissionDecisionService({ resolvePermission })
+    const service = new ToolPermissionDecisionService({ resolvePermission,
+      listReusablePermissions: vi.fn(), revokeReusablePermission: vi.fn() })
     const command = {
       requestId: 'request-1',
       expectedRevision: 1,

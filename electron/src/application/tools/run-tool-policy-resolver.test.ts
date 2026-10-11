@@ -24,6 +24,15 @@ const command: ToolExecutionCommand = {
 }
 
 describe('Main run tool policy lookup', () => {
+  it('freezes the selected approval profile in the run snapshot', () => {
+    const snapshot = createAgentRunSnapshot({
+      conversationId: 'conversation', messages: [], approvalProfileId: 'cautious',
+    } as Parameters<typeof createAgentRunSnapshot>[0], snapshotInput)
+    expect(snapshot).toMatchObject({
+      approvalProfile: { id: 'cautious', schemaVersion: 1, digest: expect.stringMatching(/^[a-f0-9]{64}$/) },
+    })
+  })
+
   it('uses the active run snapshot and ignores caller supplied digest', async () => {
     const stored = vi.fn()
     const resolver = new RunToolPolicyResolver({ active: () => policy, stored })
@@ -39,6 +48,7 @@ describe('Main run tool policy lookup', () => {
     const resolver = new RunToolPolicyResolver({ active: () => undefined, stored })
     await expect(resolver.resolve(command)).resolves.toEqual(policy)
     expect(stored).toHaveBeenCalledWith('runtime')
+    await expect(resolver.resolveApprovalProfile(command)).resolves.toEqual(snapshot.approvalProfile)
   })
 
   it.each(['missing_run', 'missing_parent', 'completed_run'] as const)(

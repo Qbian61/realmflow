@@ -27,6 +27,7 @@ import type {
   ReasoningPreference
 } from '../../../../domain/reasoning-router'
 import type { ToolDefinitionReference } from '../../../../domain/tool-definition'
+import type { ApprovalProfileId } from '../../../../domain/approval-profile'
 import type { ResponseLanguageSnapshot } from '../../../../domain/response-language'
 import type {
   AiGenerateExecutorConfig,
@@ -34,6 +35,7 @@ import type {
 } from '../../../../domain/workflow'
 
 type AgentRuntimeContext = {
+  approvalProfileId?: ApprovalProfileId
   requestedScenarioId?: 'sensitive' | 'management'
   systemPrompt?: string
   contextSnapshotId?: string

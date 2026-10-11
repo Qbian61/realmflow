@@ -171,6 +171,8 @@ export class BuiltinToolAdapter implements ToolAdapter {
       capabilities: handle.capabilities,
       arguments: invocation.arguments,
       scopeRoots: invocation.scopeRoots,
+      context: handle.context,
+      executionId: invocation.executionId,
       ...(handle.webConfiguration ? { webConfiguration: handle.webConfiguration } : {})
     })
   }

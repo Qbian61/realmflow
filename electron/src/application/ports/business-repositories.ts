@@ -5,6 +5,8 @@ import type {
 } from '../../../../domain/assistant-turn'
 import type { ConversationKnowledgeScope } from '../../../../domain/conversation-knowledge-scope'
 import type { ConversationProcessingSnapshot } from '../../../../domain/conversation-processor'
+import type { TurnContextRoute } from '../../../../domain/conversation-context-route'
+import type { ConversationContextProjection } from '../../../../domain/conversation-context-projection'
 import type {
   AssistantMessageFollowUp,
   ConversationMessageSource,
@@ -174,6 +176,7 @@ export type ChatMessageRecord = {
 export type ChatSessionKind = 'general' | 'space' | 'requirement_node'
 
 export type ChatSessionRecord = {
+  approvalProfileId?: import('../../../../domain/approval-profile').ApprovalProfileId
   id: string
   kind: ChatSessionKind
   knowledgeScope?: ConversationKnowledgeScope
@@ -293,6 +296,8 @@ export interface ChatSessionRepository {
     assistantMessageId: string
     content: string
     processing?: ConversationProcessingSnapshot
+    route?: TurnContextRoute
+    projection?: ConversationContextProjection
     modelName?: string
     references?: {
       questionId?: string
@@ -362,6 +367,7 @@ export interface FollowUpSuggestionRepository {
     set: FollowUpSuggestionSet
   ) => Promise<FollowUpSuggestionSet>
   beginSuggestedTurn: (input: {
+    approvalProfileId?: import('../../../../domain/approval-profile').ApprovalProfileId
     sessionId: string
     suggestionSetId: string
     suggestionId: string

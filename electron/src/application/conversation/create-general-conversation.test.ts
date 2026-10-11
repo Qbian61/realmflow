@@ -3,6 +3,14 @@ import type { ChatSessionRecord } from '../ports/business-repositories'
 import { CreateGeneralConversationUseCase } from './create-general-conversation'
 
 describe('CreateGeneralConversationUseCase', () => {
+  it('forwards the approval mode to the authoritative sender', async () => {
+    const execute = vi.fn().mockImplementation(async ({ session }) => ({ ...session, revision: 1 }))
+    await new CreateGeneralConversationUseCase({ sender: { execute } }).execute({
+      ...command(), approvalProfileId: 'trusted'
+    })
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ approvalProfileId: 'trusted' }))
+  })
+
   it('creates a trimmed context-free general conversation with a stable first message id', async () => {
     const execute = vi.fn().mockImplementation(async (input) => ({
       ...input.session,

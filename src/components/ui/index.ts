@@ -15,5 +15,6 @@ export * from "./Metric";
 export * from "./Motion";
 export * from "./Page";
 export * from "./Popover";
+export * from "./Select";
 export * from "./Tabs";
 export * from "./Toolbar";

@@ -197,8 +197,9 @@ export class McpToolAdapter implements ToolAdapter {
       outcome: 'planned' as const,
       effects: [
         {
-          kind: 'external' as const,
-          capability: 'connector.use' as const,
+          // Remote annotations are not enforcement evidence. Unknown MCP
+          // effects remain once-only, including remote send/delete operations.
+          kind: 'external.publish' as const,
           resourceKey: `${handle.serverId}:${handle.remoteToolName}`
         }
       ]

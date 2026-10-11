@@ -1,7 +1,11 @@
-import { Plus, Sparkles, Square } from "lucide-react";
+import { Plus, Sparkles, Square
+} from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { Navigate, useParams, useSearchParams } from "react-router-dom";
-import { Spinner } from "../components/ui";
+import {
+  Spinner,
+  Select,
+} from "../components/ui";
 import type { AiRunController } from "../app/hooks/use-ai-run-controller";
 import type {
   RequirementNode,
@@ -618,7 +622,7 @@ export default function RequirementDetailPage({
                           ) : null}
                           {getAllowedNodeTodoTransitions(todo.status).length >
                           0 ? (
-                            <select name={`requirement-todo-${todo.id}-status`} autoComplete="off"
+                            <Select name={`requirement-todo-${todo.id}-status`} autoComplete="off"
                               aria-label={t(
                                 "requirementDetail.updateTodoAria",
                                 { title: todo.title },
@@ -668,7 +672,7 @@ export default function RequirementDetailPage({
                                   </option>
                                 ),
                               )}
-                            </select>
+                            </Select>
                           ) : (
                             <span className={`node-todo-status ${todo.status}`}>
                               {nodeTodoStatusLabel(t, todo.status)}

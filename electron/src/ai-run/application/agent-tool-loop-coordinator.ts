@@ -216,6 +216,10 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
     return this.getBinding(runId)?.snapshot?.toolPolicy
   }
 
+  getApprovalProfile(runId: string) {
+    return this.getBinding(runId)?.snapshot?.approvalProfile
+  }
+
   async createRun(
     context: RunContext,
     model?: ModelExecutionConfig,
@@ -1356,6 +1360,9 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
         : 'requirementId' in context ? 'requirement' : 'workspaceId' in context && context.workspaceId ? 'space' : 'general',
       layers: [
         ...(profile.policy.toolPolicies ?? []),
+        ...(selectedSkill ? [{ alsoAllow: selectedSkillTools.filter(tool =>
+          selectedSkill.requiredTools.some(dependency => dependency.required && dependency.toolId === tool.id),
+        ).map(tool => tool.id) }] : []),
         { alsoAllow: profile.policy.rules.filter((rule) =>
           rule.kind === 'tool' && (rule.effect === 'allow' || rule.effect === 'require'),
         ).map(({ id }) => id) },
@@ -1880,6 +1887,7 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
     }
     const childContext: RunContext = {
       ...parent.context,
+      approvalProfileId: parentSnapshot.approvalProfile.id,
       ...(identity ? { conversationId: identity.sessionId } : {}),
       messages: [
         {
@@ -2115,6 +2123,7 @@ function recoveryContext(
     }
     return {
       requirementId: scope.requirementId,
+      approvalProfileId: run.snapshot.approvalProfile.id,
       requirementTitle: scope.requirementId,
       nodeId: scope.nodeId ?? 'recovered-node',
       ...(scope.nodeRunId ? { nodeRunId: scope.nodeRunId } : {}),
@@ -2136,6 +2145,9 @@ function recoveryContext(
   }
   return {
     conversationId: run.snapshot.conversationId ?? run.id,
+    approvalProfileId: run.snapshot.approvalProfile.id,
+    ...(run.snapshot.selectedSkill ? { skill: run.snapshot.selectedSkill } : {}),
+    ...(run.snapshot.connectorBindings ? { connectorBindings: run.snapshot.connectorBindings } : {}),
     messages,
     ...(run.snapshot.delegationMode === 'research' && run.snapshot.parentRunId ? {
       runtimeDelegation: {

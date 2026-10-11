@@ -89,6 +89,23 @@ export function installBrowserPage() {
         truncated: truncated || text.length > 16_000
       }
     },
+    describe(ref: string) {
+      const el = target(ref)
+      const form = 'form' in el ? (el as HTMLInputElement).form : el.closest('form')
+      const submits = (el instanceof HTMLButtonElement && el.type === 'submit') ||
+        (el instanceof HTMLInputElement && ['submit', 'image'].includes(el.type))
+      secretValues = secrets()
+      return {
+        tag: el.tagName, type: el.getAttribute('type') ?? '',
+        role: el.getAttribute('role') ?? '',
+        label: clean(el.getAttribute('aria-label') || textOf(el, 200), 200),
+        sensitive: isSensitive(el), submits: Boolean(submits && form),
+        formPresent: Boolean(form), formMethod: form?.method ?? '',
+        formAction: form ? clean(form.action, 500) : '',
+        href: el instanceof HTMLAnchorElement ? clean(el.href, 500) : '',
+        disabled: el.matches(':disabled')
+      }
+    },
     fill(ref: string, value: string) {
       const el = editable(ref)
       el.focus()

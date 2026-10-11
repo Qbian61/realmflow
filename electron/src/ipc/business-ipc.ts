@@ -122,6 +122,7 @@ import {
   requireSetModelProfilesEnabledCommand,
   requireSetKnowledgeRefreshPolicyCommand,
   requireSessionIdCommand,
+  requireConversationTranscriptSearchQuery,
   requireSkipWorkflowNodeCommand,
   requireSyncOnlineDocumentSourceCommand,
   requireTemplateMigrationPreviewQuery,
@@ -747,6 +748,26 @@ export function registerBusinessIpc(options: {
     handlers.getConversation.execute(
       requireSessionIdCommand(value, IPC_QUERY_CHANNELS.conversationGet)
     )
+  )
+  ipcMain.handle(
+    IPC_QUERY_CHANNELS.conversationContextDiagnosticsGet,
+    (_event, value) =>
+      handlers.getConversationContextDiagnostics.execute(
+        requireSessionIdCommand(
+          value,
+          IPC_QUERY_CHANNELS.conversationContextDiagnosticsGet
+        )
+      )
+  )
+  ipcMain.handle(
+    IPC_QUERY_CHANNELS.conversationTranscriptSearch,
+    (_event, value) =>
+      handlers.searchConversationTranscript.execute(
+        requireConversationTranscriptSearchQuery(
+          value,
+          IPC_QUERY_CHANNELS.conversationTranscriptSearch
+        )
+      )
   )
   ipcMain.handle(IPC_COMMAND_CHANNELS.conversationRename, (_event, value) =>
     handlers.renameConversation.execute(

@@ -170,11 +170,13 @@ describe('SqliteFollowUpSuggestionRepository', () => {
       expectedSuggestionRevision: 1,
       userMessageId: 'user-suggested',
       assistantMessageId: 'assistant-pending',
+      approvalProfileId: 'cautious',
       createdAt: 110
     })
 
     expect(result.status).toBe('started')
     expect(result.entity).toMatchObject({
+      approvalProfileId: 'cautious',
       revision: 2,
       messages: [
         {},

@@ -55,6 +55,18 @@ function terminal(
 }
 
 describe('ModelSkillExecutionRuntime', () => {
+  it('reports a waiting tool to the schedule while retaining the model stream', async () => {
+    const waiting = vi.fn()
+    const runtime = new ModelSkillExecutionRuntime({ models: { resolveExecution: async () => model },
+      gateway: { prepare: vi.fn(), cancelRun: vi.fn(), createRun: async () => ({ runId: 'run-1' }),
+        streamEvents: async function* () {
+          yield { ...terminal('run.completed'), type: 'tool.call.permission_required', data: { toolExecutionId: 'tool-wait', requestId: 'approval-wait' } }
+          yield terminal('run.completed')
+        } } })
+    await runtime.execute({ schedule, scheduleRunId: 'schedule-run-1', onPermissionRequired: waiting })
+    expect(waiting).toHaveBeenCalledWith({ providerRunId: 'run-1', executionId: 'tool-wait', requestId: 'approval-wait' })
+  })
+
   it('preflights the selected model and Skill without starting a run', async () => {
     const resolveExecution = vi.fn().mockResolvedValue(model)
     const prepare = vi.fn().mockResolvedValue(undefined)
@@ -79,6 +91,7 @@ describe('ModelSkillExecutionRuntime', () => {
         conversationId: 'schedule:schedule-1:schedule-preflight',
         workspaceId: 'workspace-1',
         scheduleRunId: 'schedule-preflight',
+        approvalProfileId: 'protected',
         skill: schedule.executionTarget
       })
     )

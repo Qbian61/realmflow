@@ -13,7 +13,6 @@ import {
   Settings,
   Sun,
 } from "lucide-react";
-import type { SidecarStatus } from "../../../shared/types";
 import { Menu, MenuContent } from "../../components/ui";
 import { useLocalization } from "../../localization/LocalizationProvider";
 import {
@@ -49,7 +48,6 @@ export function WorkspaceUserMenu(): JSX.Element {
   const { locale, setLocale, t } = useLocalization();
   const { preference, setTheme } = useTheme();
   const toast = useToast();
-  const [sidecarStatus, setSidecarStatus] = useState<SidecarStatus>("starting");
   const [open, setOpen] = useState(false);
   const [activePreferenceMenu, setActivePreferenceMenu] =
     useState<PreferenceMenu>();
@@ -88,9 +86,6 @@ export function WorkspaceUserMenu(): JSX.Element {
   };
 
   useEffect(() => {
-    const refreshStatus = (): void => {
-      void window.realmflow?.getSidecarStatus().then(setSidecarStatus);
-    };
     const closeOnOutsideClick = (event: MouseEvent): void => {
       const target = event.target as Node;
       if (
@@ -104,12 +99,9 @@ export function WorkspaceUserMenu(): JSX.Element {
       if (event.key === "Escape") closeMenus();
     };
 
-    refreshStatus();
-    const interval = window.setInterval(refreshStatus, 1000);
     document.addEventListener("mousedown", closeOnOutsideClick);
     document.addEventListener("keydown", closeOnEscape);
     return () => {
-      window.clearInterval(interval);
       document.removeEventListener("mousedown", closeOnOutsideClick);
       document.removeEventListener("keydown", closeOnEscape);
     };
@@ -293,15 +285,15 @@ export function WorkspaceUserMenu(): JSX.Element {
           setOpen(true);
         }}
       >
-        <span className="avatar">Q</span>
+        <span className="avatar" aria-hidden="true">Q</span>
         <span className="user-copy">
           <strong>Qbian61</strong>
-          <small>
-            <i data-status={sidecarStatus} />
-            {t("userMenu.edition")}
-          </small>
         </span>
-        <ChevronRight className="user-chevron" size={16} />
+        <ChevronRight
+          className="user-chevron"
+          size={16}
+          aria-hidden="true"
+        />
       </button>
     </div>
   );

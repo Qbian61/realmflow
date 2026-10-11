@@ -1,4 +1,5 @@
-import { Node, mergeAttributes, type JSONContent } from '@tiptap/core'
+import { Node, mergeAttributes, type JSONContent
+} from '@tiptap/core'
 import Image from '@tiptap/extension-image'
 import Link from '@tiptap/extension-link'
 import {
@@ -45,7 +46,8 @@ import {
   DialogBody,
   DialogFooter,
   DialogHeader,
-  Field
+  Field,
+  Select,
 } from '../../../components/ui'
 import { useLocalization } from '../../../localization/LocalizationProvider'
 import type { MemoEditorSurfaceProps } from './MemoWorkbenchPage'
@@ -252,7 +254,7 @@ export default function MemoEditorSurface({
           <span className="sr-only">
             {t('workbenchHub.memo.toolbar.textStyle')}
           </span>
-          <select name="workbench-hub-memo-toolbar-text-style" autoComplete="off"
+          <Select name="workbench-hub-memo-toolbar-text-style" autoComplete="off"
             aria-label={t('workbenchHub.memo.toolbar.textStyle')}
             value={
               editor.isActive('heading', { level: 1 })
@@ -281,7 +283,7 @@ export default function MemoEditorSurface({
             <option value="heading-2">
               {t('workbenchHub.memo.toolbar.heading2')}
             </option>
-          </select>
+          </Select>
         </label>
         <ToolButton
           label={t('workbenchHub.memo.toolbar.bold')}

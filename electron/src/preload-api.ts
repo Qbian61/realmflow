@@ -284,6 +284,16 @@ export function createRealmFlowApi(
         invoke(IPC_QUERY_CHANNELS.conversationListByWorkspace, command),
       getConversation: (command) =>
         invoke(IPC_QUERY_CHANNELS.conversationGet, command),
+      getConversationContextDiagnostics: (command) =>
+        invoke(
+          IPC_QUERY_CHANNELS.conversationContextDiagnosticsGet,
+          command
+        ),
+      searchConversationTranscript: (query) =>
+        invoke(
+          IPC_QUERY_CHANNELS.conversationTranscriptSearch,
+          query
+        ),
       renameConversation: (command) =>
         invoke(IPC_COMMAND_CHANNELS.conversationRename, command),
       deleteConversation: (command) =>
@@ -489,6 +499,11 @@ export function createRealmFlowApi(
         invoke(IPC_COMMAND_CHANNELS.skillRegistrySetActivation, command)
     },
     toolPermissions: {
+      getDefault: () => invoke(IPC_QUERY_CHANNELS.toolPermissionGetDefault),
+      setDefault: (command) => invoke(IPC_COMMAND_CHANNELS.toolPermissionSetDefault, command),
+      history: (query) => invoke(IPC_QUERY_CHANNELS.toolPermissionHistory, query),
+      listGrants: () => invoke(IPC_QUERY_CHANNELS.toolPermissionListGrants),
+      revokeGrant: (grantId) => invoke(IPC_COMMAND_CHANNELS.toolPermissionRevokeGrant, grantId),
       listPending: () =>
         invoke(IPC_QUERY_CHANNELS.toolPermissionListPending),
       resolve: (command) =>

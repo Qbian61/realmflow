@@ -35,6 +35,7 @@ export class SendFollowUpSuggestionUseCase {
     return this.dependencies.sender.execute({
       sessionId: command.sessionId,
       messageId: this.createId(),
+      ...(command.approvalProfileId ? { approvalProfileId: command.approvalProfileId } : {}),
       content: suggestion.prompt,
       expectedRevision: command.expectedSessionRevision,
       ...(command.modelProfileId
@@ -50,6 +51,7 @@ export class SendFollowUpSuggestionUseCase {
       turnStarter: (turn) =>
         this.dependencies.suggestions.beginSuggestedTurn({
           sessionId: command.sessionId,
+          ...(turn.session.approvalProfileId ? { approvalProfileId: turn.session.approvalProfileId } : {}),
           suggestionSetId: command.suggestionSetId,
           suggestionId: command.suggestionId,
           expectedSessionRevision: turn.expectedRevision,

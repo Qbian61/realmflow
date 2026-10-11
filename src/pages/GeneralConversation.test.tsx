@@ -156,6 +156,7 @@ describe("general conversation pages", () => {
           allowImageEgress: true,
           draftId: expect.any(String),
         }),
+        "protected",
       ),
     );
   });
@@ -266,6 +267,7 @@ describe("general conversation pages", () => {
         expectedSessionRevision: 2,
         expectedSuggestionRevision: 2,
         applicationLocale: "zh-CN",
+        approvalProfileId: "protected",
       }),
     );
     expect(onAppendMessage).not.toHaveBeenCalled();
@@ -285,24 +287,69 @@ describe("general conversation pages", () => {
     expect(heading).toHaveClass("chat-session-title-text");
     expect(
       heading.closest(".chat-session-header")?.querySelector("p"),
-    ).toHaveTextContent("不使用空间知识 · AI 生成内容请核实");
-    expect(
-      heading.closest(".chat-session-header")?.querySelector("p"),
     ).toHaveClass("chat-session-subtitle-text");
-    expect(screen.getByText(/AI 生成内容请核实/)).not.toHaveClass("sr-only");
+    expect(screen.queryByText(/AI 生成内容请核实/)).not.toBeInTheDocument();
     expect(
       view.container.querySelector(".chat-session-page > .chat-session-header"),
     ).not.toBeInTheDocument();
   });
 
-  it("shows the persisted all-workspaces knowledge scope in history", () => {
+  it.each([
+    {
+      name: "ordinary conversation",
+      scope: { kind: "none" } as const,
+      fixture: {},
+      expected: "通用对话",
+    },
+    {
+      name: "all-workspaces knowledge conversation",
+      scope: { kind: "all_workspaces" } as const,
+      fixture: {},
+      expected: "全部空间知识对话",
+    },
+    {
+      name: "local folder conversation",
+      scope: { kind: "none" } as const,
+      fixture: {
+        session: { folderPath: "/Users/test/realmflow-project" },
+      },
+      expected: "本地文件夹 · realmflow-project",
+    },
+    {
+      name: "workspace conversation",
+      scope: { kind: "workspace", workspaceId: "workspace-1" } as const,
+      fixture: {
+        session: {
+          kind: "space" as const,
+          spacePath: "/spaces/workspace-1",
+        },
+        spaces: [
+          {
+            id: "workspace-1",
+            path: "/spaces/workspace-1",
+            label: "产品空间",
+            description: "产品空间描述",
+          },
+        ],
+      },
+      expected: "空间对话 · 产品空间",
+    },
+  ])("shows the $name context in the conversation header", ({
+    scope,
+    fixture,
+    expected,
+  }) => {
     renderSession(
       [completedMessage()],
       vi.fn(),
-      { kind: "all_workspaces" },
+      scope,
+      undefined,
+      fixture,
     );
 
-    expect(screen.getByText(/全部空间知识/)).not.toHaveClass("sr-only");
+    expect(screen.getByText(expected)).toHaveClass(
+      "chat-session-subtitle-text",
+    );
   });
 
   it("uses the compact composer variant for continuing a conversation", () => {
@@ -316,16 +363,37 @@ describe("general conversation pages", () => {
     ).toHaveAttribute("role", "toolbar");
   });
 
-  it("exposes the new-chat context controls as a stable composer surface", () => {
+  it("keeps the new-chat workspace control inside the composer before approval", () => {
     const view = render(<NewChatPage onCreateSession={vi.fn()} />);
+    const toolbar = view.container.querySelector(".composer-toolbar");
+    const workspace = screen.getByRole("combobox", { name: "工作空间" });
+    const approval = screen.getByRole("combobox", { name: "权限模式" });
 
-    expect(view.container.querySelector(".composer-toolbar")).toHaveAttribute(
-      "role",
-      "toolbar",
-    );
+    expect(toolbar).toHaveAttribute("role", "toolbar");
+    expect(toolbar).toContainElement(workspace);
+    expect(toolbar).toContainElement(approval);
     expect(
-      view.container.querySelector(".composer-context-surface"),
-    ).toHaveClass("composer-context");
+      workspace.compareDocumentPosition(approval) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(view.container.querySelector(".composer-context-surface")).toBeNull();
+    expect(screen.queryByRole("listbox", { name: "工作空间" })).toBeNull();
+    fireEvent.click(workspace);
+    expect(
+      screen.getByRole("listbox", { name: "工作空间" }).closest(
+        ".composer-workspace-selector-popover",
+      ),
+    ).toHaveClass(
+      "model-selector-popover",
+      "approval-profile-selector-popover",
+      "ui-menu",
+    );
+    expect(screen.getByRole("option", { name: "通用对话" })).toHaveValue(
+      "none",
+    );
+    expect(screen.getByRole("option", { name: "本地文件夹" })).toHaveValue(
+      "local-folder",
+    );
   });
 
   it("keeps the new-chat prompt and publishes a safe Toast after rejection", async () => {
@@ -355,9 +423,9 @@ describe("general conversation pages", () => {
     render(<NewChatPage onCreateSession={onCreateSession} />);
     const workspace = screen.getByRole("combobox", { name: "工作空间" });
 
-    fireEvent.change(workspace, { target: { value: "local-folder" } });
-    await screen.findByRole("option", { name: "task-folder" });
-    expect(workspace).toHaveValue("folder:folder-binding-1");
+    fireEvent.click(workspace);
+    fireEvent.click(screen.getByRole("option", { name: "本地文件夹" }));
+    await waitFor(() => expect(workspace).toHaveTextContent("task-folder"));
 
     fireEvent.change(screen.getByRole("textbox", { name: "对话内容" }), {
       target: { value: "Inspect this folder" },
@@ -370,6 +438,8 @@ describe("general conversation pages", () => {
       "Inspect this folder",
       undefined,
       "auto",
+      undefined,
+      "protected",
     );
     expect(onCreateSession.mock.calls[0][0]).not.toContain("/private/tmp");
   });
@@ -379,10 +449,11 @@ describe("general conversation pages", () => {
     render(<NewChatPage onCreateSession={onCreateSession} />);
     const workspace = screen.getByRole("combobox", { name: "工作空间" });
 
+    fireEvent.click(workspace);
     expect(
       screen.getByRole("option", { name: "全部空间" }),
     ).toBeInTheDocument();
-    fireEvent.change(workspace, { target: { value: "all-workspaces" } });
+    fireEvent.click(screen.getByRole("option", { name: "全部空间" }));
     fireEvent.change(screen.getByRole("textbox", { name: "对话内容" }), {
       target: { value: "Compare release rules" },
     });
@@ -394,6 +465,8 @@ describe("general conversation pages", () => {
         "Compare release rules",
         undefined,
         "auto",
+        undefined,
+        "protected",
       ),
     );
   });
@@ -404,11 +477,12 @@ describe("general conversation pages", () => {
     render(<NewChatPage onCreateSession={onCreateSession} />);
     const workspace = screen.getByRole("combobox", { name: "工作空间" });
 
-    fireEvent.change(workspace, { target: { value: "local-folder" } });
+    fireEvent.click(workspace);
+    fireEvent.click(screen.getByRole("option", { name: "本地文件夹" }));
 
     await act(async () => undefined);
     expect(chooseFolder).toHaveBeenCalledOnce();
-    expect(workspace).toHaveValue("none");
+    expect(workspace).toHaveTextContent("通用对话");
     expect(onCreateSession).not.toHaveBeenCalled();
   });
 
@@ -425,8 +499,9 @@ describe("general conversation pages", () => {
     const workspace = screen.getByRole("combobox", { name: "工作空间" });
     const textarea = screen.getByRole("textbox", { name: "对话内容" });
 
-    fireEvent.change(workspace, { target: { value: "local-folder" } });
-    await screen.findByRole("option", { name: "retry-folder" });
+    fireEvent.click(workspace);
+    fireEvent.click(screen.getByRole("option", { name: "本地文件夹" }));
+    await waitFor(() => expect(workspace).toHaveTextContent("retry-folder"));
     fireEvent.change(textarea, { target: { value: "Retry safely" } });
     fireEvent.click(screen.getByRole("button", { name: "发送消息" }));
 
@@ -435,7 +510,7 @@ describe("general conversation pages", () => {
       screen.queryByText("文件夹授权已失效，请重新选择"),
     ).not.toBeInTheDocument();
     expect(document.querySelector(".conversation-command-error")).toBeNull();
-    expect(workspace).toHaveValue("folder:folder-binding-retry");
+    expect(workspace).toHaveTextContent("retry-folder");
     expect(textarea).toHaveValue("Retry safely");
   });
 
@@ -730,7 +805,11 @@ describe("general conversation pages", () => {
     );
 
     expect(screen.queryByLabelText("推荐追问")).not.toBeInTheDocument();
-    expect(screen.queryByText("由 AI 生成")).not.toBeInTheDocument();
+    const aiGenerated = screen.getByText("由 AI 生成");
+    expect(aiGenerated).toHaveClass("chat-message-ai-generated");
+    expect(aiGenerated.closest(".chat-message-footer")?.lastElementChild).toBe(
+      aiGenerated,
+    );
     expect(screen.getByText("DeepSeek V4 Pro")).toHaveClass(
       "chat-message-model",
     );
@@ -760,6 +839,9 @@ describe("general conversation pages", () => {
       "session-1",
       "Retry this question",
       undefined,
+      "auto",
+      undefined,
+      "protected",
       "auto",
     );
     expect(screen.getByText("Generated answer")).toBeInTheDocument();
@@ -816,6 +898,7 @@ describe("general conversation pages", () => {
     expect(screen.getByText("2026/09/18 14:19:10")).toBeInTheDocument();
     expect(screen.getByText("昨天 14:19:29")).toBeInTheDocument();
     expect(screen.getByText("今天 14:19:30")).toBeInTheDocument();
+    expect(screen.getAllByText("由 AI 生成")).toHaveLength(1);
 
     const retryButtons = screen.getAllByRole("button", {
       name: "重新生成回答",
@@ -1219,6 +1302,10 @@ function renderSession(
   onSendFollowUpSuggestion?: Parameters<
     typeof ChatSessionPage
   >[0]["onSendFollowUpSuggestion"],
+  fixture: {
+    session?: Partial<ChatSession>;
+    spaces?: Parameters<typeof ChatSessionPage>[0]["spaces"];
+  } = {},
 ) {
   return render(
     sessionView(
@@ -1226,6 +1313,7 @@ function renderSession(
       onAppendMessage,
       knowledgeScope,
       onSendFollowUpSuggestion,
+      fixture,
     ),
   );
 }
@@ -1237,6 +1325,10 @@ function sessionView(
   onSendFollowUpSuggestion?: Parameters<
     typeof ChatSessionPage
   >[0]["onSendFollowUpSuggestion"],
+  fixture: {
+    session?: Partial<ChatSession>;
+    spaces?: Parameters<typeof ChatSessionPage>[0]["spaces"];
+  } = {},
 ) {
   return (
     <MemoryRouter initialEntries={["/sessions/session-1"]}>
@@ -1257,9 +1349,10 @@ function sessionView(
                   revision: 2,
                   createdAt: 1,
                   updatedAt: 1,
+                  ...fixture.session,
                 },
               ]}
-              spaces={[]}
+              spaces={fixture.spaces ?? []}
               onAppendMessage={onAppendMessage}
               onSendFollowUpSuggestion={onSendFollowUpSuggestion}
             />

@@ -5,6 +5,12 @@ export function highestSequence(values: string[], pattern: RegExp): number {
   }, 0)
 }
 
+export function updateListMembership<T>(current: T[], item: T, included: boolean): T[] {
+  const exists = current.includes(item)
+  if (included === exists) return current
+  return included ? [...current, item] : current.filter(value => value !== item)
+}
+
 export function moveBefore<T>(
   items: T[],
   sourceKey: string,

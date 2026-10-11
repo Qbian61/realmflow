@@ -243,6 +243,36 @@ describe('AssistantExecutionTimeline', () => {
       .toHaveAttribute('aria-expanded', 'false')
   })
 
+  it('auto-collapses an open task when it completes and allows reopening', () => {
+    const { rerender } = render(
+      <AssistantExecutionTimeline
+        execution={projection({ status: 'running' })}
+      />
+    )
+    const runningTask = screen.getByRole('button', { name: /任务耗时/ })
+    fireEvent.click(runningTask)
+    fireEvent.click(runningTask)
+    expect(runningTask).toHaveAttribute('aria-expanded', 'true')
+
+    rerender(
+      <AssistantExecutionTimeline
+        execution={projection({
+          status: 'completed',
+          completedAt: 2_600
+        })}
+      />
+    )
+
+    const completedTask = screen.getByRole('button', {
+      name: '任务耗时 2.5 秒'
+    })
+    expect(completedTask).toHaveAttribute('aria-expanded', 'false')
+
+    fireEvent.click(completedTask)
+    expect(completedTask).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('任务完成')).toBeInTheDocument()
+  })
+
   it('keeps duration frozen while a Run is waiting for input', () => {
     vi.useFakeTimers()
     vi.setSystemTime(10_000)

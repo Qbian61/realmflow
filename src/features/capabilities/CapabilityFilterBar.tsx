@@ -1,5 +1,9 @@
-import { Search } from "lucide-react";
-import { Toolbar } from "../../components/ui";
+import { Search
+} from "lucide-react";
+import {
+  Toolbar,
+  Select,
+} from "../../components/ui";
 import { useLocalization } from "../../localization/LocalizationProvider";
 
 export type CapabilityFilters = {
@@ -38,7 +42,7 @@ export function CapabilityFilterBar({
           onChange={(event) => update("query", event.target.value)}
         />
       </label>
-      <select
+      <Select
         name="capabilities-source"
         autoComplete="off"
         aria-label={t("capabilities.source")}
@@ -51,8 +55,8 @@ export function CapabilityFilterBar({
         <option value="manual">Manual</option>
         <option value="generated">Generated</option>
         <option value="mcp">MCP</option>
-      </select>
-      <select
+      </Select>
+      <Select
         name="capabilities-scope"
         autoComplete="off"
         aria-label={t("capabilities.scope")}
@@ -67,8 +71,8 @@ export function CapabilityFilterBar({
         <option value="requirement">
           {t("capabilities.scope.requirement")}
         </option>
-      </select>
-      <select
+      </Select>
+      <Select
         name="capabilities-status"
         autoComplete="off"
         aria-label={t("capabilities.status")}
@@ -78,8 +82,8 @@ export function CapabilityFilterBar({
         <option value="all">{t("capabilities.filter.statusAll")}</option>
         <option value="enabled">{t("capabilities.status.enabled")}</option>
         <option value="disabled">{t("capabilities.status.disabled")}</option>
-      </select>
-      <select
+      </Select>
+      <Select
         name="capabilities-risk"
         autoComplete="off"
         aria-label={t("capabilities.risk")}
@@ -91,7 +95,7 @@ export function CapabilityFilterBar({
         <option value="medium">{t("capabilities.risk.medium")}</option>
         <option value="high">{t("capabilities.risk.high")}</option>
         <option value="critical">{t("capabilities.risk.critical")}</option>
-      </select>
+      </Select>
     </Toolbar>
   );
 }

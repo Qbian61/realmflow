@@ -1,5 +1,6 @@
 import {
   Bot,
+  Box,
   ChevronDown,
   MessageCirclePlus,
   PackageOpen,
@@ -12,7 +13,6 @@ import type {
   McpServerDto,
   ToolCatalogDto,
   ToolCatalogSourceType,
-  ToolModelFacingMode,
 } from "../../shared/tool-catalog";
 import type {
   CapabilityCatalogSnapshotDto,
@@ -20,14 +20,14 @@ import type {
 } from "../../shared/capability-catalog";
 import type { CapabilityInstallation } from "../../domain/capability";
 import { WorkspaceHeaderPortal } from "../features/navigation/WorkspaceLayout";
-import { ToolCatalogPanel } from "../features/capabilities/ToolCatalogPanel";
 import { ToolPolicyPanel } from "../features/capabilities/ToolPolicyPanel";
-import { SkillRegistryPanel } from "../features/capabilities/SkillRegistryPanel";
 import { ConnectorCatalogPanel } from "../features/capabilities/ConnectorCatalogPanel";
 import { CapabilityImportDialog } from "../features/capabilities/CapabilityImportDialog";
 import { InstalledCapabilityList } from "../features/capabilities/InstalledCapabilityList";
 import { filterCapabilitySnapshot } from "../features/capabilities/filter-capability-snapshot";
 import { CapabilityBuilderDialog } from "../features/capabilities/CapabilityBuilderDialog";
+import { ProductCapabilityDirectory } from "../features/capabilities/ProductCapabilityDirectory";
+import { CatalogManagementDialog } from "../features/capabilities/CatalogManagementDialog";
 import {
   CapabilityFilterBar,
   type CapabilityFilters,
@@ -58,7 +58,6 @@ import {
 } from "../components/ui";
 
 type CapabilityTab = "tools" | "skills" | "agents" | "connectors";
-type ToolCatalogView = "primitive" | "model-facing" | "directory";
 export default function CapabilitiesPage(): JSX.Element {
   const { locale, t } = useLocalization();
   const toast = useToast();
@@ -76,9 +75,8 @@ export default function CapabilitiesPage(): JSX.Element {
     tools: [],
     skills: [],
   });
-  const [toolCatalogView, setToolCatalogView] =
-    useState<ToolCatalogView>("primitive");
   const [mcpServers, setMcpServers] = useState<McpServerDto[]>([]);
+  const [catalogManagementOpen, setCatalogManagementOpen] = useState(false);
   const [busyTarget, setBusyTarget] = useState<string>();
   const [importing, setImporting] = useState<ToolCatalogSourceType>();
   const [addMenuOpen, setAddMenuOpen] = useState(false);
@@ -114,15 +112,8 @@ export default function CapabilitiesPage(): JSX.Element {
     () => filterCapabilitySnapshot(capabilitySnapshot, filters),
     [capabilitySnapshot, filters],
   );
-  const currentCatalogQuery = (): {
-    locale: typeof locale;
-    modelFacingMode?: ToolModelFacingMode;
-  } =>
-    toolCatalogView === "model-facing"
-      ? { locale, modelFacingMode: "facade" }
-      : toolCatalogView === "directory"
-        ? { locale, modelFacingMode: "directory" }
-      : { locale };
+  const currentCatalogQuery = () =>
+    ({ locale, modelFacingMode: "facade" as const });
 
   useEffect(() => {
     if (!business || !toolCatalog) {
@@ -151,7 +142,7 @@ export default function CapabilitiesPage(): JSX.Element {
       .finally(() => {
         if (request === toolCatalogRequest.current) setLoading(false);
       });
-  }, [business, locale, t, toolCatalog, toolCatalogView]);
+  }, [business, locale, t, toolCatalog]);
 
   useEffect(() => {
     if (!capabilityCatalog) return;
@@ -452,6 +443,17 @@ export default function CapabilitiesPage(): JSX.Element {
                   <Settings2 size={15} aria-hidden="true" />
                   {t("capabilities.add.manual")}
                 </MenuItem>
+                <MenuItem
+                  onSelect={() => {
+                    if (toolCatalog) {
+                      void toolCatalog.list({ locale }).then(setCatalog);
+                    }
+                    setCatalogManagementOpen(true);
+                  }}
+                >
+                  <Box size={15} aria-hidden="true" />
+                  {t("capabilities.add.catalogManagement")}
+                </MenuItem>
               </MenuContent>
             </Menu>
           </div>
@@ -467,57 +469,47 @@ export default function CapabilitiesPage(): JSX.Element {
               title={<span className="model-page-error">{error}</span>}
             />
           ) : null}
-          <CapabilityFilterBar
-            value={filters}
-            onChange={(key, value) => {
-              if (key === "query") {
-                setQuery(value, { replace: true });
-              } else if (key === "source") {
-                setSource(value as typeof source);
-              } else if (key === "scope") {
-                setScope(value as typeof scope);
-              } else if (key === "status") {
-                setStatus(value as typeof status);
-              } else {
-                setRisk(value as typeof risk);
-              }
-            }}
-          />
+          {activeTab === "agents" || activeTab === "connectors" ? (
+            <CapabilityFilterBar
+              value={filters}
+              onChange={(key, value) => {
+                if (key === "query") {
+                  setQuery(value, { replace: true });
+                } else if (key === "source") {
+                  setSource(value as typeof source);
+                } else if (key === "scope") {
+                  setScope(value as typeof scope);
+                } else if (key === "status") {
+                  setStatus(value as typeof status);
+                } else {
+                  setRisk(value as typeof risk);
+                }
+              }}
+            />
+          ) : null}
 
-          {business && activeTab === "tools" ? (
+          {toolCatalog && activeTab === "tools" ? (
             <div
               id="capabilities-tools-panel"
               role="tabpanel"
               aria-labelledby="capabilities-tools-tab"
             >
-              <InstalledCapabilityList
+              <ProductCapabilityDirectory
                 kind="tool"
-                {...filteredCapabilitySnapshot}
+                catalog={catalog}
+                capabilities={capabilitySnapshot}
+                loading={loading}
+                query={query}
+                busyTarget={busyTarget}
                 busyInstallationId={busyInstallationId}
-                onSetEnabled={(installation, enabled) =>
+                skillRegistry={skillRegistry}
+                onQueryChange={(value) => setQuery(value, { replace: true })}
+                onCatalogToggle={(command) => void toggleActivation(command)}
+                onNativeToggle={(installation, enabled) =>
                   void setCapabilityEnabled(installation, enabled)
                 }
-                onChangeVersion={(installation, version, operation) =>
-                  void changeCapabilityVersion(installation, version, operation)
-                }
-                onDelete={(installation) => void deleteCapability(installation)}
+                onRefresh={refreshCapabilityDirectory}
               />
-              {toolCatalog ? (
-                <ToolCatalogPanel
-                  activeTab="tools"
-                  catalog={catalog}
-                  catalogView={toolCatalogView}
-                  loading={loading}
-                  busyTarget={busyTarget}
-                  importing={importing}
-                  onCatalogViewChange={setToolCatalogView}
-                  onToggle={(command) => void toggleActivation(command)}
-                  onChangePackageVersion={(command) =>
-                    void changeExtensionPackageVersion(command)
-                  }
-                  onImport={(sourceType) => void importPackage(sourceType)}
-                />
-              ) : null}
             </div>
           ) : null}
 
@@ -527,37 +519,22 @@ export default function CapabilitiesPage(): JSX.Element {
               role="tabpanel"
               aria-labelledby="capabilities-skills-tab"
             >
-              {skillRegistry ? (
-                <SkillRegistryPanel api={skillRegistry} />
-              ) : null}
-              <InstalledCapabilityList
+              <ProductCapabilityDirectory
                 kind="skill"
-                {...filteredCapabilitySnapshot}
+                catalog={catalog}
+                capabilities={capabilitySnapshot}
+                loading={loading}
+                query={query}
+                busyTarget={busyTarget}
                 busyInstallationId={busyInstallationId}
-                onSetEnabled={(installation, enabled) =>
+                skillRegistry={skillRegistry}
+                onQueryChange={(value) => setQuery(value, { replace: true })}
+                onCatalogToggle={(command) => void toggleActivation(command)}
+                onNativeToggle={(installation, enabled) =>
                   void setCapabilityEnabled(installation, enabled)
                 }
-                onChangeVersion={(installation, version, operation) =>
-                  void changeCapabilityVersion(installation, version, operation)
-                }
-                onDelete={(installation) => void deleteCapability(installation)}
+                onRefresh={refreshCapabilityDirectory}
               />
-              {toolCatalog ? (
-                <ToolCatalogPanel
-                  activeTab="skills"
-                  catalog={catalog}
-                  catalogView={toolCatalogView}
-                  loading={loading}
-                  busyTarget={busyTarget}
-                  importing={importing}
-                  onCatalogViewChange={setToolCatalogView}
-                  onToggle={(command) => void toggleActivation(command)}
-                  onChangePackageVersion={(command) =>
-                    void changeExtensionPackageVersion(command)
-                  }
-                  onImport={(sourceType) => void importPackage(sourceType)}
-                />
-              ) : null}
             </div>
           ) : null}
 
@@ -627,6 +604,34 @@ export default function CapabilitiesPage(): JSX.Element {
           ) : null}
         </PageContainer>
       </PageBody>
+      <CatalogManagementDialog
+        open={catalogManagementOpen}
+        catalog={catalog}
+        loading={loading}
+        busyTarget={busyTarget}
+        importing={importing}
+        onOpenChange={(open) => {
+          setCatalogManagementOpen(open);
+          if (!open) void refreshCapabilityDirectory();
+        }}
+        onCatalogViewChange={(view) => {
+          if (!toolCatalog) return;
+          const query =
+            view === "primitive"
+              ? { locale }
+              : {
+                  locale,
+                  modelFacingMode:
+                    view === "model-facing" ? "facade" as const : "directory" as const,
+                };
+          void toolCatalog.list(query).then(setCatalog);
+        }}
+        onToggle={(command) => void toggleActivation(command)}
+        onChangePackageVersion={(command) =>
+          void changeExtensionPackageVersion(command)
+        }
+        onImport={(sourceType) => void importPackage(sourceType)}
+      />
       {proposal ? (
         <CapabilityImportDialog
           proposal={proposal}
@@ -643,15 +648,23 @@ export default function CapabilitiesPage(): JSX.Element {
           onInstalled={(installed) => {
             setActiveTab(`${installed.definition.kind}s` as CapabilityTab);
             if (capabilityCatalog) {
-              void capabilityCatalog
-                .list(currentCatalogQuery())
-                .then(setCapabilitySnapshot);
+                void capabilityCatalog.list({ locale }).then(setCapabilitySnapshot);
             }
           }}
         />
       ) : null}
     </div>
   );
+
+  async function refreshCapabilityDirectory(): Promise<void> {
+    if (!toolCatalog) return;
+    const [nextCatalog, nextCapabilities] = await Promise.all([
+      toolCatalog.list(currentCatalogQuery()),
+      capabilityCatalog?.list({ locale }),
+    ]);
+    setCatalog(nextCatalog);
+    if (nextCapabilities) setCapabilitySnapshot(nextCapabilities);
+  }
 }
 
 function capabilityBuilderPlatform(

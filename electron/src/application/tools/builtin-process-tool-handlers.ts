@@ -32,6 +32,10 @@ class ProcessToolError extends Error {
 }
 
 export type ManagedProcessPort = {
+  describeManaged?(input: { owner: ProcessOwner; processId: string; runId?: string }): Promise<{ currentRun: boolean; fingerprint: string }>
+  describe?(input: {
+    executable: string; arguments: string[]; cwd: string
+  }): Promise<{ execution: 'sandboxed' | 'host' }>
   discover(input: {
     names: string[]
     cwd: string
@@ -47,6 +51,7 @@ export type ManagedProcessPort = {
   }): Promise<JsonObject>
   start(input: {
     owner: ProcessOwner
+    runId?: string
     executable: string
     arguments: string[]
     cwd: string
@@ -127,6 +132,7 @@ async function start(
 ): Promise<JsonObject> {
   return processes.start({
     owner: input.context.owner,
+    runId: input.context.parentExecutionId,
     executable: normalizeExecutable(input.arguments),
     arguments: normalizeArguments(input.arguments),
     cwd: await resolveCwd(input),

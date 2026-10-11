@@ -3,7 +3,7 @@
   "id": "builtin.browser.upload",
   "version": "1.0.0",
   "name": "Upload browser file",
-  "description": "Upload a regular file up to 32 MiB from authorized roots using a current file-input ref.",
+  "description": "Upload a regular file up to 32 MiB from authorized roots using a current file-input ref in the current Run browser.",
   "tags": [
     "browser"
   ],
@@ -16,10 +16,18 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "sessionId": {
-        "type": "string",
-        "pattern": "^browser-[A-Za-z0-9-]+$",
-        "maxLength": 120
+      "target": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "current_run"
+          }
+        }
       },
       "ref": {
         "type": "string",
@@ -33,7 +41,7 @@
       }
     },
     "required": [
-      "sessionId",
+      "target",
       "ref",
       "path"
     ]

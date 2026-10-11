@@ -72,8 +72,8 @@ export const componentSystemGuardAllowlist = [
   baseline(
     "control-size",
     "src/styles.css",
-    48,
-    "8ad959f7a632c2a288c35223e77555121bb6eb770c4eefbebfd2f0ec2d9b7acb",
+    46,
+    "4ab06f22e02615b7c06aa8e7ef6df25efb45bdadd683df5be1d0dae3406ee345",
   ),
   baseline(
     "error-color-only",
@@ -156,8 +156,8 @@ export const componentSystemGuardAllowlist = [
   baseline(
     "primitive-visual-copy",
     "src/styles.css",
-    129,
-    "251c74b2fb26e110fd9975024f89821416b8bd995913fac81aaf960b870e038d",
+    127,
+    "38493614ea482d71775c7bdc6841db996c7bc49e21903aaba1e6d5055b5026f8",
   ),
   baseline(
     "tone-token",

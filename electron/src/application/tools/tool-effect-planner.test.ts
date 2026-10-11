@@ -21,6 +21,132 @@ afterEach(async () => {
 })
 
 describe('planBuiltinToolEffects', () => {
+  it.each(['.env', '.env.local', '.ssh/id_rsa', '.aws/credentials', '.git/config'])(
+    'marks %s as sensitive even inside the workspace', async path => {
+      await mkdir(join(root, path, '..'), { recursive: true })
+      await writeFile(join(root, path), 'private')
+      expect(await planBuiltinToolEffects({
+        handlerName: 'files.read', capabilities: ['filesystem.read'],
+        arguments: { path }, scopeRoots: [root]
+      })).toMatchObject({ outcome: 'planned', effects: [{ sensitivity: 'sensitive' }] })
+    })
+
+  it.each(['.git/config', '.realmflow/state.db', '.trae/rules/security.md', '.agents/skills/auth.md'])(
+    'rejects raw mutation of protected path %s', async path => {
+      expect(await planBuiltinToolEffects({
+        handlerName: 'files.write', capabilities: ['filesystem.write'],
+        arguments: { path }, scopeRoots: [root]
+      })).toMatchObject({ outcome: 'unresolved' })
+    })
+
+  it('rejects an alias into a Main-owned protected directory', async () => {
+    expect(await planBuiltinToolEffects({
+      handlerName: 'files.write', capabilities: ['filesystem.write'],
+      arguments: { path: join(outside, 'database.db') }, scopeRoots: [root]
+    }, { protectedRoots: [outside] } as never)).toMatchObject({ outcome: 'unresolved' })
+  })
+
+  it.each(['process.list', 'process.discover'])('plans %s as a bounded read rather than execution', async handlerName => {
+    const result = await planBuiltinToolEffects({
+      handlerName, capabilities: ['process.discover'],
+      arguments: { names: ['node'] }, scopeRoots: [root]
+    })
+    expect(result).toMatchObject({ outcome: 'planned', effects: [{ kind: 'process.inspect' }] })
+  })
+
+  it('requires Main evidence that a stopped process belongs to the current Run', async () => {
+    const input = { handlerName: 'process.stop', capabilities: ['process.manage'] as const,
+      arguments: { processId: 'child-one', currentRun: true }, scopeRoots: [root],
+      context: { owner: { type: 'conversation' as const, id: 'chat-1' }, parentExecutionId: 'run-1',
+        correlationId: 'c', causationId: 'c' } }
+    expect(await planBuiltinToolEffects(input)).toMatchObject({ outcome: 'unresolved' })
+    expect(await planBuiltinToolEffects(input, {
+      managedProcesses: { describeManaged: async () => ({ currentRun: true, fingerprint: 'a'.repeat(64) }) }
+    } as never)).toMatchObject({ outcome: 'planned', effects: [{ kind: 'process.manage', currentRun: true }] })
+  })
+
+  it('uses Main page evidence for public browser reads and refuses model claimed evidence', async () => {
+    const input = { handlerName: 'browser.snapshot', capabilities: ['computer.observe'] as const,
+      arguments: { sessionId: 'browser-one', public: true }, scopeRoots: [root] }
+    const dependencies = { browser: { describe: async () => ({
+      url: 'https://example.com/', privateSession: false, targetDigest: 'a'.repeat(64), semantic: 'read'
+    }) }, context: undefined }
+    const plan = await planBuiltinToolEffects(input, dependencies as never)
+    expect(plan).toMatchObject({ outcome: 'planned', effects: [{ kind: 'browser.page.read', privateSession: false }] })
+    expect((await planBuiltinToolEffects(input)).outcome).toBe('unresolved')
+  })
+
+  it('plans a real submit target as external publication regardless of supplied safe label', async () => {
+    const result = await planBuiltinToolEffects({
+      handlerName: 'browser.click', capabilities: ['computer.control'],
+      arguments: { sessionId: 'browser-one', ref: 'ref1', label: 'Read more' }, scopeRoots: [root]
+    }, { browser: { describe: async () => ({
+      url: 'https://example.com/pay', privateSession: true, targetDigest: 'b'.repeat(64), semantic: 'publish'
+    }) } } as never)
+    expect(result).toMatchObject({ outcome: 'planned', effects: [{ kind: 'browser.page.control', semantic: 'publish' }] })
+  })
+
+  it('uses trusted process isolation evidence instead of model supplied safety', async () => {
+    const result = await planBuiltinToolEffects({
+      handlerName: 'process.run', capabilities: ['process.execute'],
+      arguments: { executable: 'node', arguments: ['--eval', 'deleteEverything()'],
+        cwd: '', execution: 'sandboxed', commandClass: 'safe' },
+      scopeRoots: [root]
+    })
+    expect(result).toMatchObject({ outcome: 'planned', effects: [{
+      kind: 'process.execute', execution: 'host', commandClass: 'unknown'
+    }] })
+  })
+
+  it.each([
+    ['npm', ['test'], 'safe'],
+    ['npm', ['run', 'build'], 'safe'],
+    ['node', ['--eval', 'console.log(1)'], 'unknown'],
+    ['sh', ['-c', 'rm -rf .'], 'dangerous'],
+    ['git', ['push'], 'dangerous'],
+    ['curl', ['https://example.com'], 'dangerous']
+  ] as const)('classifies %s from Main evidence', async (executable, args, commandClass) => {
+    const result = await planBuiltinToolEffects({
+      handlerName: 'process.run', capabilities: ['process.execute'],
+      arguments: { executable, arguments: [...args], cwd: '' }, scopeRoots: [root]
+    }, { processIsolation: {
+      describe: async () => ({ execution: 'sandboxed' })
+    } })
+    expect(result).toMatchObject({ outcome: 'planned', effects: [{
+      kind: 'process.execute', execution: 'sandboxed', commandClass
+    }] })
+  })
+
+  it('separates isolated browser creation from operating-system control', async () => {
+    await expect(planBuiltinToolEffects({
+      handlerName: 'browser.create', capabilities: ['computer.control'],
+      arguments: {}, scopeRoots: [root],
+    })).resolves.toEqual({
+      outcome: 'planned',
+      effects: [{ kind: 'browser.session.create', profile: 'isolated' }],
+    })
+  })
+
+  it('plans local Git commit as a repository-local mutation', async () => {
+    await expect(planBuiltinToolEffects({
+      handlerName: 'git.commit', capabilities: ['repository.modify'],
+      arguments: {}, scopeRoots: [root],
+    })).resolves.toEqual({
+      outcome: 'planned',
+      effects: [{ kind: 'repository.local_write', repositoryRoot: await realpath(root) }],
+    })
+  })
+
+  it('plans a public fetch without an external-write permission', async () => {
+    await expect(planBuiltinToolEffects({
+      handlerName: 'web.fetch', capabilities: ['network.connect'],
+      arguments: { url: 'https://example.com/article' }, scopeRoots: [root],
+    })).resolves.toEqual({
+      outcome: 'planned',
+      effects: [{ kind: 'network.public_read', origin: 'https://example.com', localDataEgress: false }],
+    })
+  })
+
   it('expands every source and destination for file and archive operations', async () => {
     await writeFile(join(root, 'source.txt'), 'source')
     await writeFile(join(root, 'second.txt'), 'second')
@@ -316,6 +442,8 @@ describe('planBuiltinToolEffects', () => {
           kind: 'process.execute',
           executableDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
           executableDisplayName: 'node',
+          execution: 'host',
+          commandClass: 'dangerous',
           argsFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
           workingDirectory: await realpath(root)
         }
@@ -324,7 +452,7 @@ describe('planBuiltinToolEffects', () => {
     expect(JSON.stringify(result)).not.toContain('secret')
   })
 
-  it('plans web fetch as a sanitized network connection', async () => {
+  it('rejects embedded credentials in a public web fetch', async () => {
     await expect(
       planBuiltinToolEffects({
         handlerName: 'web.fetch',
@@ -335,14 +463,8 @@ describe('planBuiltinToolEffects', () => {
         scopeRoots: [root]
       })
     ).resolves.toEqual({
-      outcome: 'planned',
-      effects: [
-        {
-          kind: 'external',
-          capability: 'network.connect',
-          resourceKey: 'https://example.com'
-        }
-      ]
+      outcome: 'unresolved',
+      error: { code: 'tool_effects_unresolved', message: 'Tool effects could not be resolved', retryable: false },
     })
   })
 
@@ -367,15 +489,16 @@ describe('planBuiltinToolEffects', () => {
       outcome: 'planned',
       effects: [
         {
-          kind: 'external',
-          capability: 'network.connect',
-          resourceKey: 'https://search.example.com'
+          kind: 'network.public_read',
+          localDataEgress: false,
+          providerId: 'searxng',
+          origin: 'https://search.example.com'
         }
       ]
     })
   })
 
-  it('reports missing web search provider configuration during planning', async () => {
+  it('plans a public browser fallback when search provider is unconfigured', async () => {
     await expect(
       planBuiltinToolEffects({
         handlerName: 'web.search',
@@ -386,12 +509,13 @@ describe('planBuiltinToolEffects', () => {
         scopeRoots: [root]
       })
     ).resolves.toEqual({
-      outcome: 'unresolved',
-      error: {
-        code: 'provider_unconfigured',
-        message: 'Web search is disabled. Configure a search provider in Settings before using web search.',
-        retryable: false
-      }
+      outcome: 'planned',
+      effects: [{
+        kind: 'network.public_read',
+        localDataEgress: false,
+        providerId: 'browser',
+        origin: 'https://www.google.com'
+      }]
     })
   })
 

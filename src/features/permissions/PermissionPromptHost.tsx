@@ -113,6 +113,8 @@ export function PermissionPromptHost({
       onAllow={() => void decide('allow_once')}
       onAllowSession={() => void decide('allow_session')}
       onAllowAlways={() => void decide('allow_always')}
+      onAllowRequirement={() => void decide('allow_requirement')}
+      onAllowSpace={() => void decide('allow_space')}
       onDeny={() => void decide('deny')}
     />
   )

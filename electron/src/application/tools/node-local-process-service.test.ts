@@ -1,11 +1,31 @@
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { NodeLocalProcessService } from './node-local-process-service'
 
 const owner = { type: 'application' as const, id: 'realmflow' }
 
 describe('NodeLocalProcessService', () => {
+  it('discovers executables without running an unapproved version probe', async () => {
+    const service = new NodeLocalProcessService({ sandboxExecutable: null })
+    const execute = vi.spyOn(service as never, 'runCommand')
+    const found = await service.discover({
+      names: ['node'], cwd: process.cwd(), signal: new AbortController().signal
+    })
+    expect(found).toEqual([{ name: 'node', path: expect.any(String) }])
+    expect(execute).not.toHaveBeenCalled()
+  })
+  it('proves isolation during effect planning using the execution sandbox', async () => {
+    const service = new NodeLocalProcessService()
+    await expect(service.describe({
+      executable: process.execPath, arguments: ['--version'], cwd: process.cwd()
+    })).resolves.toEqual({ execution: 'sandboxed' })
+    const unavailable = new NodeLocalProcessService({ sandboxExecutable: null })
+    await expect(unavailable.describe({
+      executable: process.execPath, arguments: ['--version'], cwd: process.cwd()
+    })).rejects.toMatchObject({ code: 'tool_sandbox_unavailable' })
+  })
+
   it('runs argv directly and captures bounded output', async () => {
     const service = new NodeLocalProcessService()
 
@@ -161,6 +181,14 @@ describe('NodeLocalProcessService', () => {
     await expect(service.list(owner)).resolves.toEqual([
       expect.objectContaining({ processId, status: 'running' })
     ])
+    const inspect = (service as unknown as {
+      describeManaged(input: { owner: typeof owner; processId: string; runId?: string }): Promise<unknown>
+    }).describeManaged
+    expect(inspect).toBeTypeOf('function')
+    await expect(inspect.call(service, { owner, processId, runId: 'different-run' }))
+      .resolves.toMatchObject({ currentRun: false })
+    await expect(inspect.call(service, { owner: { ...owner, id: 'stranger' }, processId }))
+      .rejects.toThrow('ownership')
     await expect(
       service.stop({
         owner: { type: 'application', id: 'another-owner' },

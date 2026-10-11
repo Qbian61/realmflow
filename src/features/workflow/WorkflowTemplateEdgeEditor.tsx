@@ -1,4 +1,5 @@
-import { useState, type FormEvent } from "react";
+import { useState, type FormEvent
+} from "react";
 import { Plus, Trash2 } from "lucide-react";
 import type {
   BusinessApi,
@@ -9,6 +10,7 @@ import {
   ConfirmDialog,
   Field,
   IconButton,
+  Select,
 } from "../../components/ui";
 import { useLocalization } from "../../localization/LocalizationProvider";
 import { useToast } from "../toast/ToastProvider";
@@ -84,7 +86,7 @@ export function WorkflowTemplateEdgeEditor({
     <div className="workflow-edge-editor">
       <form className="workflow-edge-form" onSubmit={addEdge}>
         <Field name="workflow-edge-source" label={t("workflowEdge.source")}>
-          <select
+          <Select
             aria-label={t("workflowEdge.source")}
             value={sourceNodeId}
             onChange={(event) => setSourceNodeId(event.target.value)}
@@ -94,10 +96,10 @@ export function WorkflowTemplateEdgeEditor({
                 {node.name}
               </option>
             ))}
-          </select>
+          </Select>
         </Field>
         <Field name="workflow-edge-target" label={t("workflowEdge.target")}>
-          <select
+          <Select
             aria-label={t("workflowEdge.target")}
             value={targetNodeId}
             onChange={(event) => setTargetNodeId(event.target.value)}
@@ -107,7 +109,7 @@ export function WorkflowTemplateEdgeEditor({
                 {node.name}
               </option>
             ))}
-          </select>
+          </Select>
         </Field>
         <Button
           type="submit"

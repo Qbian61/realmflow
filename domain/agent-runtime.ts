@@ -1,7 +1,9 @@
 import type { ReasoningDecision } from './reasoning-router'
 import type { ResponseLanguageSnapshot } from './response-language'
 import type { ToolPolicySnapshot } from './tool-policy'
+import { createApprovalProfileSnapshot, type ApprovalProfileId, type ApprovalProfileSnapshot } from './approval-profile'
 import type { RunModelFacingSnapshot } from './tool-catalog'
+import type { ToolDefinitionReference } from './tool-definition'
 
 export const AGENT_RUN_SCENARIO_IDS = [
   'general',
@@ -136,6 +138,8 @@ export type AgentRunSnapshot = {
   runId: string
   conversationId?: string
   scheduleRunId?: string
+  selectedSkill?: ToolDefinitionReference
+  connectorBindings?: unknown[]
   contextSnapshotId?: string
   triggerBindingId?: string
   triggerEventId?: string
@@ -153,6 +157,7 @@ export type AgentRunSnapshot = {
   promptDigest: string
   policyDigest: string
   toolPolicy?: ToolPolicySnapshot
+  approvalProfile: ApprovalProfileSnapshot
   modelFacing?: RunModelFacingSnapshot
   capabilityCatalogDigest: string
   capabilityBindingDigest: string
@@ -178,6 +183,7 @@ export type AgentRuntimeRun = {
 }
 
 type AgentRunContext = {
+  approvalProfileId?: ApprovalProfileId
   conversationId?: string
   messages?: readonly unknown[]
   workspaceId?: string
@@ -186,6 +192,8 @@ type AgentRunContext = {
   nodeId?: string
   nodeRunId?: string
   scheduleRunId?: string
+  skill?: ToolDefinitionReference
+  connectorBindings?: unknown[]
   contextSnapshotId?: string
   triggerBindingId?: string
   triggerEventId?: string
@@ -244,6 +252,7 @@ const LIFECYCLE_TRANSITIONS: Record<
   ]),
   waiting_permission: new Set([
     'running',
+    'retrying',
     'recovery_blocked',
     'completed',
     'failed',
@@ -352,6 +361,8 @@ export function createAgentRunSnapshot(
     ...(context.scheduleRunId
       ? { scheduleRunId: context.scheduleRunId }
       : {}),
+    ...(context.skill ? { selectedSkill: structuredClone(context.skill) } : {}),
+    ...(context.connectorBindings ? { connectorBindings: structuredClone(context.connectorBindings) } : {}),
     ...(context.contextSnapshotId
       ? { contextSnapshotId: context.contextSnapshotId }
       : {}),
@@ -373,6 +384,7 @@ export function createAgentRunSnapshot(
     agentProfileDigest: input.agentProfileDigest,
     promptDigest: input.promptDigest,
     policyDigest: input.policyDigest,
+    approvalProfile: createApprovalProfileSnapshot(context.approvalProfileId),
     ...(input.toolPolicy ? { toolPolicy: structuredClone(input.toolPolicy) } : {}),
     ...(input.modelFacing ? { modelFacing: structuredClone(input.modelFacing) } : {}),
     capabilityCatalogDigest: input.capabilityCatalogDigest,
@@ -499,7 +511,7 @@ export function resolveAgentRunScope(
   if (scenarioId === 'folder' && context.folderPath) {
     return { kind: 'folder', folderPath: context.folderPath }
   }
-  if (scenarioId === 'space' && context.workspaceId) {
+  if ((scenarioId === 'space' || scenarioId === 'scheduled') && context.workspaceId) {
     return { kind: 'workspace', workspaceId: context.workspaceId }
   }
   return { kind: 'global' }

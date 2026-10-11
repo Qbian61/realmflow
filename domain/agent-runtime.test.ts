@@ -4,11 +4,19 @@ import {
   AGENT_RUN_SCENARIO_IDS,
   createAgentRunSnapshot,
   resolveAgentRunScenario,
+  resolveAgentRunScope,
   transitionAgentRunLifecycle,
   type AgentRunLifecycleStatus
 } from './agent-runtime'
 
 describe('Agent runtime', () => {
+  it('keeps scheduled execution bound to its workspace for recovery', () => {
+    expect(resolveAgentRunScope({
+      conversationId: 'schedule:1', workspaceId: 'workspace-1',
+      scheduleRunId: 'scheduled-run-1', messages: []
+    }, 'scheduled')).toEqual({ kind: 'workspace', workspaceId: 'workspace-1' })
+  })
+
   it('registers every built-in AI execution scenario', () => {
     expect(AGENT_RUN_SCENARIO_IDS).toEqual([
       'general',
@@ -267,6 +275,7 @@ describe('Agent runtime', () => {
     ['preparing', 'running'],
     ['running', 'waiting_permission'],
     ['waiting_permission', 'running'],
+    ['waiting_permission', 'retrying'],
     ['running', 'waiting_input'],
     ['waiting_input', 'running'],
     ['running', 'retrying'],

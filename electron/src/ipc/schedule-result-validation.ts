@@ -6,6 +6,7 @@ import type {
   ScheduleRunDto
 } from '../../../shared/business'
 import { normalizeScheduleDefinition } from '../../../domain/schedule'
+import { createApprovalProfileSnapshot } from '../../../domain/approval-profile'
 
 export function requireScheduleListResult(
   value: unknown,
@@ -121,6 +122,8 @@ function requireSchedule(
       'skillInput',
       'connectorBindings',
       'permissions',
+      'approvalProfile',
+      ...(record.approvalProfileId === undefined ? [] : ['approvalProfileId']),
       'status',
       'revision',
       'createdAt',
@@ -208,6 +211,7 @@ function requireSchedule(
   return {
     id: scheduleId,
     ...definition,
+    approvalProfile: approvalSnapshot(record.approvalProfile, channel, `${field}.approvalProfile`),
     status: record.status,
     revision: scheduleRevision,
     createdAt: timestamp(record.createdAt, channel, `${field}.createdAt`),
@@ -322,6 +326,9 @@ function requireScheduleRun(
       'startedAt',
       'revision',
       ...(record.toolExecutionId === undefined ? [] : ['toolExecutionId']),
+      ...(record.permissionRequestId === undefined ? [] : ['permissionRequestId']),
+      ...(record.providerRunId === undefined ? [] : ['providerRunId']),
+      ...(record.approvalProfile === undefined ? [] : ['approvalProfile']),
       ...(record.errorCode === undefined ? [] : ['errorCode']),
       ...(record.errorMessage === undefined ? [] : ['errorMessage']),
       ...(record.scheduledFor === undefined ? [] : ['scheduledFor']),
@@ -334,7 +341,7 @@ function requireScheduleRun(
     invalid(channel, `${field}.triggerSource`)
   }
   if (
-    !['running', 'succeeded', 'failed', 'cancelled', 'interrupted'].includes(
+    !['running', 'waiting_permission', 'succeeded', 'failed', 'cancelled', 'interrupted'].includes(
       String(record.status)
     )
   ) {
@@ -375,6 +382,9 @@ function requireScheduleRun(
     scheduleName: text(record.scheduleName, channel, `${field}.scheduleName`),
     triggerSource: record.triggerSource,
     status: record.status as ScheduleRunDto['status'],
+    ...(record.approvalProfile === undefined ? {} : { approvalProfile: approvalSnapshot(record.approvalProfile, channel, `${field}.approvalProfile`) }),
+    ...(record.permissionRequestId === undefined ? {} : { permissionRequestId: id(record.permissionRequestId, channel, `${field}.permissionRequestId`) }),
+    ...(record.providerRunId === undefined ? {} : { providerRunId: id(record.providerRunId, channel, `${field}.providerRunId`) }),
     ...(scheduledFor === undefined ? {} : { scheduledFor }),
     startedAt,
     revision: positive(record.revision, channel, `${field}.revision`),
@@ -430,6 +440,15 @@ function bindings(
       )
     }
   })
+}
+
+function approvalSnapshot(value: unknown, channel: string, field: string) {
+  const record = object(value, channel, field)
+  try {
+    const expected = createApprovalProfileSnapshot(record.id as never)
+    if (record.schemaVersion !== expected.schemaVersion || record.digest !== expected.digest || record.policyVersion !== expected.policyVersion) invalid(channel, field)
+    return expected
+  } catch { return invalid(channel, field) }
 }
 
 function permissions(

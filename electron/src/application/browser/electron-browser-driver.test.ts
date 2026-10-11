@@ -29,6 +29,7 @@ vi.mock('electron', () => ({
         setWindowOpenHandler: vi.fn(),
         getURL: () => 'https://example.test/?token=private',
         session: Object.assign(new EventEmitter(), {
+          cookies: { get: vi.fn(async () => []) },
           setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn(),
           webRequest: { onBeforeRequest: vi.fn() },
           fetch: vi.fn(async () => new Response('download'))
@@ -65,6 +66,22 @@ describe('Electron browser driver', () => {
     const wc = boundary.windows[0].webContents
     expect(wc.setWindowOpenHandler.mock.calls[0][0]({ url: 'https://evil.test' })).toEqual({ action: 'deny' })
     expect(wc.session.setPermissionCheckHandler.mock.calls[0][0]()).toBe(false)
+  })
+
+  it('classifies actual submit controls and treats cookie-bearing profiles as private', async () => {
+    await driver.open(session, signal)
+    const wc = boundary.windows[0].webContents
+    wc.session.cookies.get.mockResolvedValue([{ name: 'session', value: 'private-cookie' }])
+    const send = wc.debugger.sendCommand
+    const original = send.getMockImplementation()!
+    send.mockImplementation(async (method: string, params: any) =>
+      method === 'Runtime.evaluate' && params.expression.includes('.describe(')
+        ? { result: { value: { tag: 'BUTTON', label: 'Buy', submits: true, sensitive: false } } }
+        : original(method, params))
+    const evidence = await driver.describe(session, 'click', { ref: 's1:1', label: 'Read' }, signal)
+    expect(evidence).toMatchObject({ privateSession: true, semantic: 'publish', targetDigest: expect.stringMatching(/^[a-f0-9]{64}$/) })
+    expect(JSON.stringify(evidence)).not.toContain('private-cookie')
+    expect(wc.debugger.sendCommand).not.toHaveBeenCalledWith('Input.dispatchMouseEvent', expect.anything())
   })
 
   it('uses the right-workbench surface host without creating a separate window', async () => {

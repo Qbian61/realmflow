@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { ToolDefinition } from '../../../../domain/tool-definition'
+import type { ToolEffect } from '../../../../domain/tool-authorization'
 import type {
   ConnectorGateway,
   ConnectorGatewayResult,
@@ -85,18 +86,22 @@ export class ConnectorToolAdapter implements ToolAdapter {
 
   async planEffects(
     binding: ResolvedToolBinding,
-    _invocation: PreparedToolInvocation
+    invocation: PreparedToolInvocation
   ) {
     const snapshot = this.requireHandle(binding).snapshot
+    const protocol = snapshot.action.protocol
+    const publicRead = protocol.kind === 'http' && snapshot.action.operation === 'read'
+      && snapshot.action.effects.every(effect => effect === 'external.read')
+      && ['GET', 'HEAD'].includes(protocol.method)
+      && protocol.authentication.type === 'none'
+      && Object.keys(snapshot.credentialHandles).length === 0
+      && Object.keys(invocation.arguments).length === 0
+    const effects: ToolEffect[] = publicRead
+      ? [{ kind: 'network.public_read', origin: new URL(protocol.baseUrl).origin, localDataEgress: false }]
+      : [{ kind: 'external.publish', resourceKey: `${snapshot.installationId}:${snapshot.action.id}` }]
     return {
       outcome: 'planned' as const,
-      effects: [
-        {
-          kind: 'external' as const,
-          capability: 'connector.use' as const,
-          resourceKey: `${snapshot.installationId}:${snapshot.action.id}`
-        }
-      ]
+      effects
     }
   }
 

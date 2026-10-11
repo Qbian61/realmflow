@@ -1,4 +1,5 @@
-import { FilePlus2, MessageSquarePlus, RefreshCw } from "lucide-react";
+import { FilePlus2, MessageSquarePlus, RefreshCw
+} from "lucide-react";
 import { Link } from "react-router-dom";
 import type {
   DashboardExceptionRow,
@@ -6,7 +7,12 @@ import type {
   DashboardRangeHours,
 } from "../../../../shared/workbench-dashboard";
 import type { WorkbenchHubApi } from "../../../../shared/workbench-hub";
-import { IconButton, InlineAlert, Metric } from "../../../components/ui";
+import {
+  IconButton,
+  InlineAlert,
+  Metric,
+  Select,
+} from "../../../components/ui";
 import { useLocalization } from "../../../localization/LocalizationProvider";
 import type { TranslationKey } from "../../../localization/translate";
 import { useDashboardSnapshot } from "../hooks/use-dashboard-snapshot";
@@ -82,7 +88,7 @@ export function WorkbenchDashboardPage({
             <span className="sr-only">
               {t("workbenchDashboard.filter.space")}
             </span>
-            <select name="workbench-dashboard-filter-space" autoComplete="off"
+            <Select name="workbench-dashboard-filter-space" autoComplete="off"
               aria-label={t("workbenchDashboard.filter.space")}
               value={workspaceId}
               onChange={(event) => setWorkspaceId(event.target.value)}
@@ -95,13 +101,13 @@ export function WorkbenchDashboardPage({
                   {space.label}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           <label>
             <span className="sr-only">
               {t("workbenchDashboard.filter.range")}
             </span>
-            <select name="workbench-dashboard-filter-range" autoComplete="off"
+            <Select name="workbench-dashboard-filter-range" autoComplete="off"
               aria-label={t("workbenchDashboard.filter.range")}
               value={rangeHours}
               onChange={(event) =>
@@ -113,7 +119,7 @@ export function WorkbenchDashboardPage({
                   {t(`workbenchDashboard.range.${hours}` as TranslationKey)}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           <IconButton
             size="default"
@@ -184,7 +190,7 @@ export function WorkbenchDashboardPage({
           label={t("workbenchDashboard.metric.completion")}
           value={
             snapshot?.summary.completionRate === undefined
-              ? t("workbenchDashboard.metric.noSample")
+              ? 0
               : `${Math.round(snapshot.summary.completionRate * 100)}%`
           }
           detail={t("workbenchDashboard.metric.completionDetail", {

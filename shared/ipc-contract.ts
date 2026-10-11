@@ -31,6 +31,9 @@ export const IPC_QUERY_CHANNELS = {
   conversationListRecent: 'conversation:list-recent',
   conversationListByWorkspace: 'conversation:list-by-workspace',
   conversationGet: 'conversation:get',
+  conversationContextDiagnosticsGet:
+    'conversation-context-diagnostics:get',
+  conversationTranscriptSearch: 'conversation-transcript:search',
   knowledgeSourceList: 'knowledge-source:list',
   knowledgeSourceEventList: 'knowledge-source:list-events',
   onlineDocumentSnapshotGet: 'knowledge-source:get-online-document-snapshot',
@@ -54,6 +57,9 @@ export const IPC_QUERY_CHANNELS = {
   webProviderGet: 'web-provider:get',
   toolPolicyPreview: 'tool-policy:preview',
   toolPermissionListPending: 'tool-permission:list-pending',
+  toolPermissionListGrants: 'tool-permission:list-grants',
+  toolPermissionGetDefault: 'tool-permission:get-default',
+  toolPermissionHistory: 'tool-permission:history',
   capabilityCatalogList: 'capability-catalog:list',
   capabilityBuilderGet: 'capability-builder:get',
   mcpServerList: 'mcp-server:list',
@@ -216,6 +222,8 @@ export const IPC_COMMAND_CHANNELS = {
   toolPolicySave: 'tool-policy:save',
   webProviderSave: 'web-provider:save',
   toolPermissionResolve: 'tool-permission:resolve',
+  toolPermissionRevokeGrant: 'tool-permission:revoke-grant',
+  toolPermissionSetDefault: 'tool-permission:set-default',
   capabilityPackageChooseAndPrepare:
     'capability-package:choose-and-prepare',
   capabilityPackageInstall: 'capability-package:install',

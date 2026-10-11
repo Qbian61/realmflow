@@ -1,8 +1,14 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState
+} from 'react'
 import type {
   WebProviderApi, WebProviderConfiguration, WebSearchProviderId
 } from '../../../shared/web-provider'
-import { Button, Field, InlineAlert } from '../../components/ui'
+import {
+  Button,
+  Field,
+  InlineAlert,
+  Select,
+} from '../../components/ui'
 import { useLocalization } from '../../localization/LocalizationProvider'
 import type { TranslationKey } from '../../localization/translate'
 import './WebProviderSettings.css'
@@ -94,11 +100,11 @@ export function WebProviderSettings({ api = window.realmflow?.webProviders }: {
       {loading ? <p role="status">{t('webSettings.loading')}</p> : draft ? (
         <form className="web-provider-settings-form" onSubmit={(event) => { event.preventDefault(); void save() }}>
           <Field name="web-provider" label={t('webSettings.provider')} disabled={saving}>
-            <select value={draft.searchProvider} onChange={(event) =>
+            <Select value={draft.searchProvider} onChange={(event) =>
               update({ searchProvider: event.target.value as WebSearchProviderId })}>
               {(['disabled', 'searxng', 'brave'] as const).map((provider) =>
                 <option key={provider} value={provider}>{t(providerLabels[provider])}</option>)}
-            </select>
+            </Select>
           </Field>
           {draft.searchProvider === 'searxng' ? (
             <Field name="web-searxng-url" label={t('webSettings.endpoint')}

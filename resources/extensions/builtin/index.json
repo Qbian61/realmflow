@@ -27,7 +27,7 @@
       "packageId": "realmflow.builtin.browser",
       "version": "1.0.0",
       "path": "browser/extension.json",
-      "sourceDigest": "fdd011b0ce03cafb1a000c5c2dce01bdb22c782eca5d4d4f86f7952e6c87e230",
+      "sourceDigest": "d895ddc1fba3b9f7b835b918e194a5f9e7cfd9d27f6f45baecfb8c44c02a0946",
       "toolDefinitions": [
         {
           "id": "builtin.browser.attach",

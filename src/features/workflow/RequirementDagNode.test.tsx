@@ -64,6 +64,21 @@ describe('RequirementDagNodeView', () => {
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
   })
 
+  it('hides execution details on mouse leave even when the node keeps focus', () => {
+    renderNode({ status: 'running' })
+    const card = screen.getByRole('group')
+
+    fireEvent.focus(card)
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+
+    fireEvent.mouseEnter(card)
+    expect(screen.getByRole('tooltip')).toBeVisible()
+
+    fireEvent.mouseLeave(card)
+
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+  })
+
   it.each(['pending', 'ready'] as const)(
     'shows no start time for a %s node even when its run has a creation timestamp',
     (status) => {
@@ -73,7 +88,7 @@ describe('RequirementDagNodeView', () => {
       })
 
       const card = screen.getByRole('group')
-      fireEvent.focus(card)
+      fireEvent.mouseEnter(card)
 
       const tooltip = screen.getByRole('tooltip')
       expect(tooltip).toHaveTextContent('执行状态未开始')
@@ -81,7 +96,7 @@ describe('RequirementDagNodeView', () => {
       expect(tooltip).toHaveTextContent('结束时间--')
       expect(tooltip).toHaveTextContent('执行角色--')
 
-      fireEvent.blur(card)
+      fireEvent.mouseLeave(card)
       expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
     }
   )

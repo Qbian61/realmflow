@@ -10,6 +10,7 @@ import { ConversationMessageList } from "../features/conversation/ConversationMe
 import { FollowUpSuggestionList } from "../features/conversation/FollowUpSuggestionList";
 import { ConversationShareController } from "../features/conversation/ConversationShareController";
 import { KnowledgeNoteCapture } from "../features/conversation/KnowledgeNoteCapture";
+import { ConversationContextDiagnostics } from "../features/conversation/ConversationContextDiagnostics";
 import { WorkspaceHeaderPortal } from "../features/navigation/WorkspaceLayout";
 import { useToast } from "../features/toast/ToastProvider";
 import { useOptionalWorkbench } from "../features/workbench/WorkbenchProvider";
@@ -28,6 +29,8 @@ type ChatSessionPageProps = {
     modelProfileId?: string,
     reasoningMode?: ReasoningPreference,
     attachments?: ConversationAttachmentSubmission,
+    approvalProfileId?: import("../../domain/approval-profile").ApprovalProfileId,
+    contextMode?: "auto" | "fresh" | "continuation",
   ) => void | Promise<void>;
   onSendFollowUpSuggestion?: (command: {
     sessionId: string;
@@ -36,6 +39,7 @@ type ChatSessionPageProps = {
     expectedSessionRevision: number;
     expectedSuggestionRevision: number;
     applicationLocale?: "zh-CN" | "en" | "ja";
+    approvalProfileId?: import("../../domain/approval-profile").ApprovalProfileId;
   }) => void | Promise<void>;
 };
 
@@ -64,7 +68,15 @@ export default function ChatSessionPage({
   const [copiedMessageId, setCopiedMessageId] = useState("");
   const [sendingSuggestionSetId, setSendingSuggestionSetId] = useState("");
   const [cancellingRunId, setCancellingRunId] = useState("");
+  const [contextMode, setContextMode] = useState<
+    "auto" | "fresh" | "continuation"
+  >("auto");
   const session = sessions.find((item) => item.id === sessionId);
+  const [selectedApproval, setSelectedApproval] = useState<{
+    sessionId?: string; value: import("../../domain/approval-profile").ApprovalProfileId
+  }>();
+  const approvalProfileId = selectedApproval && selectedApproval.sessionId === sessionId
+    ? selectedApproval.value : session?.approvalProfileId ?? "protected";
   const models = useModelProfiles(session?.modelProfileId);
 
   if (!session) {
@@ -94,7 +106,9 @@ export default function ChatSessionPage({
                 t("chat.local"),
             })
           : t("chat.knowledgeNone")
-        : space?.label ?? t("chat.local");
+        : t("chat.knowledgeWorkspace", {
+            name: space?.label ?? t("chat.local"),
+          });
   const activeRunId = [...session.messages]
     .reverse()
     .find(
@@ -128,6 +142,8 @@ export default function ChatSessionPage({
           models.selectedId || undefined,
           "auto",
           submission,
+          approvalProfileId,
+          contextMode,
         );
       } else {
         await onAppendMessage(
@@ -135,8 +151,12 @@ export default function ChatSessionPage({
           content,
           models.selectedId || undefined,
           "auto",
+          undefined,
+          approvalProfileId,
+          contextMode,
         );
       }
+      setContextMode("auto");
       if (clearPrompt) {
         setPrompt("");
         setAttachments([]);
@@ -187,7 +207,7 @@ export default function ChatSessionPage({
               {session.title}
             </h1>
             <p className="chat-session-subtitle-text">
-              {contextLabel} · {t("chat.verifyAi")}
+              {contextLabel}
             </p>
           </div>
         </Toolbar>
@@ -243,6 +263,12 @@ export default function ChatSessionPage({
                         content={message.content}
                         timestamp={messageTimestamp}
                         modelName={message.modelName}
+                        aiGeneratedLabel={
+                          message.role === "assistant" &&
+                          messageIndex === latestAssistantIndex
+                            ? t("chat.aiGenerated")
+                            : undefined
+                        }
                         locale={locale}
                         labels={{
                           copied: t("chat.copied"),
@@ -307,6 +333,7 @@ export default function ChatSessionPage({
                                         expectedSuggestionRevision:
                                           message.followUp!.revision,
                                         applicationLocale: locale,
+                                        approvalProfileId,
                                       }),
                                     )
                                       .catch(() => toast.error("chat.sendFailed"))
@@ -345,7 +372,13 @@ export default function ChatSessionPage({
           )}
         </ConversationShareController>
         <div className="chat-session-composer">
+          <ConversationContextDiagnostics sessionId={session.id} />
           <Composer
+            approvalProfileId={approvalProfileId}
+            onApprovalProfileChange={(value) => setSelectedApproval({ sessionId, value })}
+            contextMode={contextMode}
+            onContextModeChange={setContextMode}
+            showContextMode
             permissionRunIds={session.messages.flatMap(message => message.runId ? [message.runId] : [])}
             value={prompt}
             placeholder={t("chat.placeholder")}

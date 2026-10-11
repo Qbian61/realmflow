@@ -11,7 +11,6 @@ import {
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import {
   memo,
-  type FocusEvent,
   type KeyboardEvent,
   type MouseEvent,
   useRef,
@@ -65,8 +64,7 @@ function RequirementDagNodeComponent({
   const duration = formatNodeDuration(data)
   const nodeRef = useRef<HTMLDivElement>(null)
   const [hovered, setHovered] = useState(false)
-  const [focused, setFocused] = useState(false)
-  const tooltipOpen = hovered || focused
+  const tooltipOpen = hovered
   const tooltipId = `requirement-dag-node-tooltip-${id}`
   const accessibleDetails = [
     data.name,
@@ -106,13 +104,8 @@ function RequirementDagNodeComponent({
         data-responding={data.responding === true}
         onMouseEnter={(event) => setHovered(!isNodeMenuTarget(event.target))}
         onMouseMove={(event) => setHovered(!isNodeMenuTarget(event.target))}
-        onMouseLeave={() => setHovered(false)}
-        onFocus={(event) => {
-          if (event.target === event.currentTarget) setFocused(true)
-        }}
-        onBlur={(event: FocusEvent<HTMLDivElement>) => {
-          if (event.currentTarget.contains(event.relatedTarget)) return
-          setFocused(false)
+        onMouseLeave={() => {
+          setHovered(false)
         }}
         onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
           if (event.key === 'Enter' || event.key === ' ') {
@@ -153,7 +146,6 @@ function RequirementDagNodeComponent({
             aria-label={t('requirement.itemActions', { name: data.name })}
             title={t("tooltip.moreActions")}
             aria-haspopup="menu"
-            onFocus={() => setFocused(false)}
             onClick={openMenu}
             onKeyDown={(event) => {
               if (event.key === 'Enter' || event.key === ' ') {

@@ -28,6 +28,7 @@ export type ChatSessionMessage = {
 }
 
 export type ChatSession = {
+  approvalProfileId?: import("../../domain/approval-profile").ApprovalProfileId
   id: string
   kind?: 'general' | 'space' | 'requirement_node'
   knowledgeScope?: ConversationKnowledgeScope

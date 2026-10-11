@@ -87,7 +87,11 @@ describe('RealmFlow navigation', () => {
         toolPermissions: {
           listPending: vi.fn().mockResolvedValue([
             {
-              schemaVersion: 2,
+              schemaVersion: 3,
+              approvalProfileId: 'protected',
+              approvalProfileDigest: 'c'.repeat(64),
+              effectiveRisk: 'L3',
+              maxGrant: 'session',
               id: 'permission-1',
               executionId: 'execution-1',
               runId: 'run-1',
@@ -197,31 +201,71 @@ describe('RealmFlow navigation', () => {
     }
   })
 
-  it('shows title tooltips immediately for keyboard focus and closes on Escape', () => {
+  it('does not show title tooltips for keyboard focus', () => {
     render(<App />)
     const trigger = screen.getByRole('button', { name: '打开工作区' })
 
+    fireEvent.keyDown(document, { key: 'Tab' })
     fireEvent.focusIn(trigger)
-    expect(screen.getByRole('tooltip')).toHaveTextContent('打开工作区')
 
-    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+    expect(trigger).toHaveAttribute('title', '打开工作区')
+  })
+
+  it('dismisses a hover title tooltip when a focused trigger loses hover', () => {
+    vi.useFakeTimers()
+    try {
+      render(<App />)
+      const trigger = screen.getByRole('button', { name: '打开工作区' })
+
+      fireEvent.focusIn(trigger)
+      fireEvent.pointerOver(trigger)
+      act(() => {
+        vi.advanceTimersByTime(350)
+      })
+      expect(screen.getByRole('tooltip')).toHaveTextContent('打开工作区')
+
+      fireEvent.pointerOut(trigger, { relatedTarget: document.body })
+
+      expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+      expect(trigger).toHaveAttribute('title', '打开工作区')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not show a title tooltip when pointer press moves focus to the trigger', () => {
+    render(<App />)
+    const trigger = screen.getByRole('button', { name: '打开工作区' })
+
+    fireEvent.pointerDown(trigger)
+    fireEvent.focusIn(trigger)
+
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
     expect(trigger).toHaveAttribute('title', '打开工作区')
   })
 
   it('dismisses a tooltip on press without restoring the native title until leave', () => {
-    render(<App />)
-    const trigger = screen.getByRole('button', { name: '打开工作区' })
+    vi.useFakeTimers()
+    try {
+      render(<App />)
+      const trigger = screen.getByRole('button', { name: '打开工作区' })
 
-    fireEvent.focusIn(trigger)
-    expect(screen.getByRole('tooltip')).toBeInTheDocument()
+      fireEvent.pointerOver(trigger)
+      act(() => {
+        vi.advanceTimersByTime(350)
+      })
+      expect(screen.getByRole('tooltip')).toBeInTheDocument()
 
-    fireEvent.pointerDown(trigger)
-    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
-    expect(trigger).not.toHaveAttribute('title')
+      fireEvent.pointerDown(trigger)
+      expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+      expect(trigger).not.toHaveAttribute('title')
 
-    fireEvent.focusOut(trigger, { relatedTarget: document.body })
-    expect(trigger).toHaveAttribute('title', '打开工作区')
+      fireEvent.pointerOut(trigger, { relatedTarget: document.body })
+      expect(trigger).toHaveAttribute('title', '打开工作区')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('renders the workbench hub modules on the home route', () => {
@@ -647,7 +691,7 @@ describe('RealmFlow navigation', () => {
     ).not.toBeInTheDocument()
     expect(
       within(content).queryByRole('combobox', { name: '空间权限模式' })
-    ).not.toBeInTheDocument()
+    ).toHaveTextContent('自动防护')
 
     const statistics = within(content).getByRole('region', {
       name: '需求统计'
@@ -677,8 +721,12 @@ describe('RealmFlow navigation', () => {
       within(content).getByRole('heading', { name: '测试对话' })
     ).toBeInTheDocument()
     expect(
-      within(content).getByText(/AI 生成内容请核实/)
-    ).toHaveClass('chat-session-subtitle-text')
+      within(content)
+        .getAllByText(/xxx 空间/)
+        .some((element) =>
+          element.classList.contains('chat-session-subtitle-text')
+        )
+    ).toBe(true)
     expect(within(messages).queryByText('你')).not.toBeInTheDocument()
     const executionBrand = within(messages).getByText('RealmFlow').parentElement
     const executionLogo = executionBrand?.querySelector(
@@ -705,7 +753,9 @@ describe('RealmFlow navigation', () => {
     expect(
       within(content).getByRole('button', { name: '重新生成回答' })
     ).toBeInTheDocument()
-    expect(within(content).queryByText('由 AI 生成')).not.toBeInTheDocument()
+    expect(within(content).getByText('由 AI 生成')).toHaveClass(
+      'chat-message-ai-generated'
+    )
     expect(messages.querySelectorAll('time.chat-message-time')).toHaveLength(2)
 
     fireEvent.click(
@@ -822,7 +872,7 @@ describe('RealmFlow navigation', () => {
     ).toBeInTheDocument()
     expect(
       screen
-        .getAllByText(/xxx 空间 · AI 生成内容请核实/)
+        .getAllByText(/xxx 空间/)
         .some(
           (element) =>
             element.classList.contains('chat-session-subtitle-text')
@@ -1595,8 +1645,11 @@ describe('RealmFlow navigation', () => {
     expect(screen.queryByText('Code with RealmFlow')).not.toBeInTheDocument()
     expect(screen.getByRole('textbox', { name: '对话内容' })).toBeInTheDocument()
     expect(screen.queryByRole('combobox', { name: '审批模式' })).not.toBeInTheDocument()
-    expect(screen.getByRole('combobox', { name: '工作空间' })).toHaveValue('none')
-    expect(screen.getByRole('combobox', { name: '权限模式' })).toHaveValue('default')
+    expect(screen.getByRole('combobox', { name: '工作空间' })).toHaveValue('')
+    expect(screen.getByRole('combobox', { name: '权限模式' })).toHaveAttribute(
+      'aria-valuetext',
+      '自动防护'
+    )
 
     fireEvent.change(screen.getByRole('textbox', { name: '对话内容' }), {
       target: { value: '帮我规划并开发一个应用' }
@@ -1607,7 +1660,7 @@ describe('RealmFlow navigation', () => {
       await screen.findByRole('heading', { name: '帮我规划并开发一个应用' })
     ).toBeInTheDocument()
     expect(
-      screen.getByText(/不使用空间知识 · AI 生成内容请核实/)
+      screen.getByText('通用对话', { selector: '.chat-session-subtitle-text' })
     ).toHaveClass('chat-session-subtitle-text')
   })
 
@@ -1745,6 +1798,18 @@ describe('RealmFlow navigation', () => {
     render(<App />)
     fireEvent.click(screen.getByRole('link', { name: '新对话' }))
     const search = screen.getByRole('searchbox', { name: '搜索模板' })
+    const searchControl = search.closest('.template-filter-search')
+    expect(searchControl).toHaveAttribute('data-expanded', 'false')
+    expect(search).toHaveAttribute('tabindex', '-1')
+    expect(screen.getByRole('button', { name: '搜索' })).toHaveAttribute(
+      'aria-expanded',
+      'false'
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '搜索' }))
+
+    expect(searchControl).toHaveAttribute('data-expanded', 'true')
+    expect(search).toHaveFocus()
 
     fireEvent.change(search, { target: { value: '数据库设计助手' } })
     expect(screen.getByRole('heading', { name: '数据库设计助手' })).toBeInTheDocument()

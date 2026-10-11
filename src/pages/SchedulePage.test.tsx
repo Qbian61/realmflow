@@ -19,6 +19,7 @@ import type { ModelProfile, ModelProvider } from "../../domain/model";
 import { ToastProvider } from "../features/toast/ToastProvider";
 import { LocalizationProvider } from "../localization/LocalizationProvider";
 import SchedulePage from "./SchedulePage";
+import { createApprovalProfileSnapshot } from "../../domain/approval-profile";
 
 function render(
   ui: Parameters<typeof testingRender>[0],
@@ -40,6 +41,7 @@ function openScheduledTasks(): void {
 }
 
 const schedule: ScheduleDto = {
+  approvalProfile: createApprovalProfileSnapshot(),
   id: "schedule-1",
   name: "Daily summary",
   description: "Summarize project status",
@@ -63,6 +65,15 @@ const schedule: ScheduleDto = {
   updatedAt: 100,
   nextRunAt: 1_800_000_000_000,
 };
+
+it("reviews the approval mode and warns that scheduled operations may wait", async () => {
+  installBusiness(createBusiness());
+  render(<SchedulePage />);
+  await screen.findByRole("heading", { name: "工作周报" });
+  fireEvent.click(screen.getByRole("button", { name: "使用推荐任务 工作周报" }));
+  expect(screen.getByRole("combobox", { name: "审批模式" })).toBeVisible();
+  expect(screen.getByText("每次运行仍会检查实际操作，需要授权时任务会等待你的决定。")).toBeVisible();
+});
 
 describe("SchedulePage", () => {
   afterEach(() => {
@@ -316,6 +327,7 @@ describe("SchedulePage", () => {
     await waitFor(() => expect(business.createSchedule).toHaveBeenCalledOnce());
     expect(business.createSchedule).toHaveBeenCalledWith({
       definition: {
+        approvalProfileId: "protected",
         name: "工作周报",
         description: "自动汇总本周工作进展，一键生成周报",
         cronExpression: "0 18 * * 5",

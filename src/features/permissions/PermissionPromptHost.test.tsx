@@ -127,6 +127,8 @@ function permissionApi(
   requests: ReturnType<typeof permission>[]
 ): ToolPermissionApi {
   return {
+    listGrants: vi.fn().mockResolvedValue([]),
+    revokeGrant: vi.fn().mockResolvedValue(undefined),
     listPending: vi.fn().mockResolvedValue(requests),
     resolve: vi.fn().mockResolvedValue({
       ...requests[0],
@@ -139,7 +141,11 @@ function permissionApi(
 
 function permission(id: string, requestedAt: number, toolName: string) {
   return {
-    schemaVersion: 2 as const,
+    schemaVersion: 3 as const,
+    approvalProfileId: 'protected' as const,
+    approvalProfileDigest: 'c'.repeat(64),
+    effectiveRisk: 'L1' as const,
+    maxGrant: 'persistent' as const,
     id,
     executionId: `execution-${id}`,
     runId: 'run-1',
