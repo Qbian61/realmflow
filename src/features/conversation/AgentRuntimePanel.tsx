@@ -1,8 +1,14 @@
-import { ChevronDown, ChevronRight } from 'lucide-react'
+import { ChevronDown, ChevronRight
+} from 'lucide-react'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { AgentRuntimeApi } from '../../../shared/agent-runtime-state'
-import { Button, Field, InlineAlert } from '../../components/ui'
+import {
+  Button,
+  Field,
+  InlineAlert,
+  Select,
+} from '../../components/ui'
 import { useLocalization } from '../../localization/LocalizationProvider'
 import { useRuntimePanelState } from './use-runtime-panel-state'
 import './AgentRuntimePanel.css'
@@ -50,12 +56,12 @@ function RuntimePanelBody({ runId, api }: { runId: string; api: AgentRuntimeApi 
         </Field>
         <div className="agent-runtime-actions">
           <Field name="runtime-goal-status" label={t('agentRuntime.goalStatus')} disabled={disabled}>
-            <select value={goal.status} onChange={(event) => setGoal({
+            <Select value={goal.status} onChange={(event) => setGoal({
               ...goal, status: event.target.value as typeof goal.status
             })}>
               {(['active', 'blocked', 'completed', 'cancelled'] as const).map((status) =>
                 <option key={status} value={status}>{t(labels[status])}</option>)}
-            </select>
+            </Select>
           </Field>
           <Button type="submit" variant="neutral" size="compact"
             disabled={disabled || !goal.objective.trim() || error === 'agentRuntime.conflict'}>

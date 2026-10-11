@@ -25,6 +25,7 @@ import {
   ListPagination,
   Spinner,
   useListPagination,
+  Select,
 } from "../../components/ui";
 import { useLocalization } from "../../localization/LocalizationProvider";
 import { useToast } from "../toast/ToastProvider";
@@ -209,7 +210,7 @@ export function RepositorySnapshotDialog({
             <div className="repository-snapshot-meta">
               <label>
                 <GitBranch size={14} />
-                <select name="resources-repository-branch" autoComplete="off"
+                <Select name="resources-repository-branch" autoComplete="off"
                   aria-label={t("resources.repository.branch")}
                   value={currentView.repository.selectedBranch ?? ""}
                   disabled={updatingBranch}
@@ -220,7 +221,7 @@ export function RepositorySnapshotDialog({
                       {branch.name}
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
               <span>{currentView.snapshot.revisionLabel}</span>
               <span>
@@ -292,7 +293,7 @@ export function RepositorySnapshotDialog({
                     title={t("resources.repositoryPreview.statusFilter")}
                   >
                     <ListFilter size={14} />
-                    <select name="resources-repository-preview-status-filter" autoComplete="off"
+                    <Select name="resources-repository-preview-status-filter" autoComplete="off"
                       aria-label={t("resources.repositoryPreview.statusFilter")}
                       value={statusFilter}
                       onChange={(event) =>
@@ -316,7 +317,7 @@ export function RepositorySnapshotDialog({
                       <option value="pending">
                         {t("resources.repositoryPreview.pending")}
                       </option>
-                    </select>
+                    </Select>
                   </label>
                 </span>
               </div>

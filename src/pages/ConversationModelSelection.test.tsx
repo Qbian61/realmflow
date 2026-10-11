@@ -1,4 +1,5 @@
 import {
+  act,
   fireEvent,
   render as testingRender,
   screen,
@@ -43,6 +44,26 @@ const enabledProfile: ModelProfile & { revision: number } = {
 };
 
 describe("conversation model selection", () => {
+  it("initializes a new conversation from the Main approval default", async () => {
+    installModelPool()
+    window.realmflow!.toolPermissions = {
+      ...window.realmflow!.toolPermissions,
+      getDefault: vi.fn().mockResolvedValue({ approvalProfileId: 'cautious', revision: 1 })
+    }
+    render(<NewChatPage onCreateSession={vi.fn()} />)
+    await waitFor(() => expect(screen.getByRole('combobox', { name: '权限模式' })).toHaveTextContent('谨慎确认'))
+  })
+
+  it("initializes a new space conversation from the Main approval default", async () => {
+    installModelPool()
+    window.realmflow!.toolPermissions = {
+      ...window.realmflow!.toolPermissions,
+      getDefault: vi.fn().mockResolvedValue({ approvalProfileId: 'cautious', revision: 1 })
+    }
+    render(<SpaceConversationComposer spacePath="/workspace" inputId="default-space" onCreateSession={vi.fn()} />)
+    await waitFor(() => expect(screen.getByRole('combobox', { name: '空间权限模式' })).toHaveTextContent('谨慎确认'))
+  })
+
   afterEach(() => {
     delete window.realmflow;
   });
@@ -67,6 +88,8 @@ describe("conversation model selection", () => {
       "Plan the rollout",
       "profile-fast",
       "auto",
+      undefined,
+      "protected",
     );
   });
 
@@ -114,6 +137,9 @@ describe("conversation model selection", () => {
         "session-1",
         "Use a canary release",
         "profile-fast",
+        "auto",
+        undefined,
+        "protected",
         "auto",
       ),
     );
@@ -165,6 +191,20 @@ describe("conversation model selection", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("does not render the no-model setup guide below the new-chat composer", async () => {
+    installModelPool(false);
+    render(<NewChatPage onCreateSession={vi.fn()} />);
+
+    await act(async () => undefined);
+
+    expect(
+      screen.queryByText("配置模型后即可开始对话"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "配置模型…" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("keeps automatic capability routing selected by default", async () => {
     installModelPool();
     const onCreateSession = vi.fn();
@@ -182,6 +222,8 @@ describe("conversation model selection", () => {
       "Choose a model",
       undefined,
       "auto",
+      undefined,
+      "protected",
     );
   });
 
@@ -203,6 +245,8 @@ describe("conversation model selection", () => {
       "Verify all affected files",
       undefined,
       "auto",
+      undefined,
+      "protected",
     );
   });
 
@@ -249,6 +293,8 @@ describe("conversation model selection", () => {
         "Review this space",
         "profile-fast",
         "auto",
+        undefined,
+        "protected",
       ),
     );
   });

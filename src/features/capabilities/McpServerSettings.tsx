@@ -21,7 +21,8 @@ import {
   DialogFooter,
   DialogHeader,
   Field,
-  IconButton as SharedIconButton
+  IconButton as SharedIconButton,
+  Select,
 } from '../../components/ui'
 import { useLocalization } from '../../localization/LocalizationProvider'
 import { useToast } from '../toast/ToastProvider'
@@ -376,7 +377,7 @@ function McpServerEditor({
             />
           </Field>
           <Field name="capabilities-mcp-editor-transport" label={t('capabilities.mcp.editor.transport')}>
-            <select
+            <Select
               value={draft.kind}
               onChange={(event) =>
                 onChange({
@@ -387,7 +388,7 @@ function McpServerEditor({
             >
               <option value="streamable_http">Streamable HTTP</option>
               <option value="stdio">stdio</option>
-            </select>
+            </Select>
           </Field>
           {draft.kind === 'streamable_http' ? (
             <Field name="capabilities-mcp-editor-url"

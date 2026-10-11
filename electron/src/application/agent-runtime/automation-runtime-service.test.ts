@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
+import { createApprovalProfileSnapshot } from '../../../../domain/approval-profile'
 import type { Schedule, ScheduleRun } from '../../../../domain/schedule'
 import { AutomationRuntimeService } from './automation-runtime-service'
 
 const active: Schedule = {
+  approvalProfile: createApprovalProfileSnapshot(),
   id: 'schedule-active',
   name: 'Daily summary',
   description: 'Summarize the workspace',

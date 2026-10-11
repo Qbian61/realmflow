@@ -20,7 +20,6 @@ type ActiveTarget = {
   text: string;
   previousDescribedBy: string | null;
   hovered: boolean;
-  focused: boolean;
   revealed: boolean;
 };
 
@@ -120,7 +119,7 @@ export function TooltipProvider({
   const activate = useCallback(
     (
       element: HTMLElement,
-      interaction: "hovered" | "focused",
+      interaction: "hovered",
     ): void => {
       let active = activeRef.current;
       if (active?.element !== element) {
@@ -132,7 +131,6 @@ export function TooltipProvider({
           text,
           previousDescribedBy: element.getAttribute("aria-describedby"),
           hovered: false,
-          focused: false,
           revealed: false,
         };
         element.removeAttribute("title");
@@ -140,10 +138,7 @@ export function TooltipProvider({
       }
 
       active[interaction] = true;
-      if (interaction === "focused") {
-        clearTimer();
-        reveal(active);
-      } else if (!active.revealed && timerRef.current === undefined) {
+      if (!active.revealed && timerRef.current === undefined) {
         timerRef.current = setTimeout(() => {
           timerRef.current = undefined;
           reveal(active);
@@ -156,7 +151,7 @@ export function TooltipProvider({
   const deactivate = useCallback(
     (
       element: HTMLElement,
-      interaction: "hovered" | "focused",
+      interaction: "hovered",
       relatedTarget: EventTarget | null,
     ): void => {
       const active = activeRef.current;
@@ -168,7 +163,7 @@ export function TooltipProvider({
         return;
       }
       active[interaction] = false;
-      if (!active.hovered && !active.focused) restoreActiveTarget();
+      if (!active.hovered) restoreActiveTarget();
     },
     [restoreActiveTarget],
   );
@@ -186,24 +181,14 @@ export function TooltipProvider({
       if (element) activate(element, "hovered");
     };
     const onPointerOut = (event: PointerEvent): void => {
+      const active = activeRef.current;
       const element =
-        activeRef.current?.element ??
-        (event.target instanceof Element
-          ? (event.target.closest("[title]") as HTMLElement | null)
-          : null);
+        active && event.target instanceof Node && active.element.contains(event.target)
+          ? active.element
+          : event.target instanceof Element
+            ? (event.target.closest("[title]") as HTMLElement | null)
+            : null;
       if (element) deactivate(element, "hovered", event.relatedTarget);
-    };
-    const onFocusIn = (event: FocusEvent): void => {
-      const element = titledElement(event.target);
-      if (element) activate(element, "focused");
-    };
-    const onFocusOut = (event: FocusEvent): void => {
-      const element =
-        activeRef.current?.element ??
-        (event.target instanceof Element
-          ? (event.target.closest("[title]") as HTMLElement | null)
-          : null);
-      if (element) deactivate(element, "focused", event.relatedTarget);
     };
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === "Escape") restoreActiveTarget();
@@ -211,15 +196,11 @@ export function TooltipProvider({
 
     document.addEventListener("pointerover", onPointerOver);
     document.addEventListener("pointerout", onPointerOut);
-    document.addEventListener("focusin", onFocusIn);
-    document.addEventListener("focusout", onFocusOut);
     document.addEventListener("keydown", onKeyDown);
     document.addEventListener("pointerdown", dismissActiveTooltip);
     return () => {
       document.removeEventListener("pointerover", onPointerOver);
       document.removeEventListener("pointerout", onPointerOut);
-      document.removeEventListener("focusin", onFocusIn);
-      document.removeEventListener("focusout", onFocusOut);
       document.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("pointerdown", dismissActiveTooltip);
       restoreActiveTarget();

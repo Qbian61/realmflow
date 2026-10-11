@@ -21,7 +21,7 @@ import {
 } from '../mappers/business-mappers'
 import { executeCreateSpace } from './workspace-command-errors'
 import { createConversationManagementActions } from './workspace-conversation-management'
-import { highestSequence, moveToIndex } from './workspace-list-utils'
+import { highestSequence, moveToIndex, updateListMembership } from './workspace-list-utils'
 import { useActiveConversation } from './use-active-conversation'
 export type WorkspacePersistenceIssue = 'navigation' | 'sessions'
 export type WorkspaceOperationNotice =
@@ -568,7 +568,8 @@ export function useWorkspaceController({
       prompt: string,
       modelProfileId?: string,
       reasoningMode: ReasoningPreference = 'auto',
-      attachments?: ConversationAttachmentSubmission
+      attachments?: ConversationAttachmentSubmission,
+      approvalProfileId: import('../../../domain/approval-profile').ApprovalProfileId = 'protected'
     ): Promise<string> {
       sessionSequenceRef.current += 1
       const now = Date.now()
@@ -599,6 +600,7 @@ export function useWorkspaceController({
               ...(modelProfileId ? { modelProfileId } : {}),
               ...(attachments ? { attachments } : {}),
               applicationLocale,
+              approvalProfileId,
               reasoningMode,
               title: titleFromPrompt(prompt),
               prompt
@@ -647,7 +649,9 @@ export function useWorkspaceController({
       content: string,
       modelProfileId?: string,
       reasoningMode: ReasoningPreference = 'auto',
-      attachments?: ConversationAttachmentSubmission
+      attachments?: ConversationAttachmentSubmission,
+      approvalProfileId?: import('../../../domain/approval-profile').ApprovalProfileId,
+      contextMode: 'auto' | 'fresh' | 'continuation' = 'auto'
     ): Promise<void> {
       const session = state.sessions.find((item) => item.id === sessionId)
       if (!session) return
@@ -660,6 +664,8 @@ export function useWorkspaceController({
             ...(modelProfileId ? { modelProfileId } : {}),
             ...(attachments ? { attachments } : {}),
             applicationLocale,
+            ...(approvalProfileId ? { approvalProfileId } : {}),
+            contextMode,
             reasoningMode
         })
         dispatch({
@@ -687,12 +693,6 @@ export function useWorkspaceController({
     issue: WorkspacePersistenceIssue,
     unavailable: boolean
   ): void {
-    setPersistenceIssues((current) => {
-      const exists = current.includes(issue)
-      if (unavailable === exists) return current
-      return unavailable
-        ? [...current, issue]
-        : current.filter((item) => item !== issue)
-    })
+    setPersistenceIssues(current => updateListMembership(current, issue, unavailable))
   }
 }

@@ -50,7 +50,8 @@ describe('RealmFlow SQLite database', () => {
       36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52,
       53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69,
       70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86,
-      87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106
+      87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108
+      , 109, 110, 111
     ])
 
     const tables = database
@@ -83,6 +84,10 @@ describe('RealmFlow SQLite database', () => {
         'chat_messages',
         'chat_sessions',
         'conversation_attachment_chunks',
+        'conversation_context_projections',
+        'conversation_memory_entries',
+        'conversation_turn_context_routes',
+        'chat_messages_fts',
         'connector_commands',
         'connector_credentials',
         'connector_events',
@@ -148,6 +153,7 @@ describe('RealmFlow SQLite database', () => {
         'requirements',
         'runtime_evaluation_runs',
         'runtime_governance_events',
+        'runtime_resource_leases',
         'runtime_governance_revisions',
         'runtime_observability_state',
         'schema_migrations',
@@ -699,7 +705,7 @@ describe('RealmFlow SQLite database', () => {
       database
         .prepare('SELECT MAX(version) AS version FROM schema_migrations')
         .get()
-    ).toEqual({ version: 106 })
+    ).toEqual({ version: 111 })
   })
 
   it('audits workbench writes without storing private content', async () => {
@@ -2234,7 +2240,7 @@ describe('RealmFlow SQLite database', () => {
       database
         .prepare('SELECT MAX(version) AS version FROM schema_migrations')
         .get()
-    ).toEqual({ version: 106 })
+    ).toEqual({ version: 111 })
   })
 
   it('repairs conversation messages incorrectly failed at a suspended Run boundary', () => {
@@ -2334,7 +2340,7 @@ describe('RealmFlow SQLite database', () => {
       database
         .prepare('SELECT MAX(version) AS version FROM schema_migrations')
         .get()
-    ).toEqual({ version: 106 })
+    ).toEqual({ version: 111 })
   })
 
   it('backfills an empty no-progress suspension with a truthful degraded conclusion', () => {
@@ -2443,7 +2449,7 @@ describe('RealmFlow SQLite database', () => {
       database
         .prepare('SELECT MAX(version) AS version FROM schema_migrations')
         .get()
-    ).toEqual({ version: 106 })
+    ).toEqual({ version: 111 })
   })
 
   it('purges legacy deleted task records and their attachment metadata', () => {

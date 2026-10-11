@@ -1044,10 +1044,27 @@ describe('SQLite business repositories', () => {
     ).resolves.toEqual([{ ...requirement, revision: 1 }])
     await expect(
       repositories.chatSessions.listByWorkspace(workspace.id)
-    ).resolves.toEqual([{ ...session, revision: 1 }])
+    ).resolves.toEqual([{ ...session, approvalProfileId: 'protected', revision: 1 }])
     await expect(
       repositories.artifacts.listByRequirement(requirement.id)
     ).resolves.toEqual([{ ...artifact, revision: 1 }])
+  })
+
+  it('round trips approval modes and rejects invalid persisted modes', async () => {
+    const repositories = createSqliteRepositories(database)
+    const session: ChatSessionRecord = {
+      id: 'approval-session', kind: 'general', knowledgeScope: { kind: 'none' },
+      approvalProfileId: 'cautious', title: 'Approval', sortOrder: 0,
+      messages: [], createdAt: 1, updatedAt: 1
+    }
+    await repositories.chatSessions.save(session, 0)
+    expect((await repositories.chatSessions.get(session.id))?.approvalProfileId).toBe('cautious')
+    await repositories.chatSessions.save({ ...session, approvalProfileId: 'trusted' }, 1)
+    expect((await repositories.chatSessions.get(session.id))?.approvalProfileId).toBe('trusted')
+    await expect(repositories.chatSessions.save({
+      ...session, approvalProfileId: 'unrestricted' as never
+    }, 2)).rejects.toThrow('Approval profile is invalid')
+    expect((await repositories.chatSessions.get(session.id))?.approvalProfileId).toBe('trusted')
   })
 
   it('persists folder-bound general chats and excludes node chats from recent', async () => {
@@ -1099,7 +1116,7 @@ describe('SQLite business repositories', () => {
       }>
     }
     await expect(recentRepository.listRecent({})).resolves.toEqual({
-      conversations: [{ ...general, revision: 1 }],
+      conversations: [{ ...general, approvalProfileId: 'protected', revision: 1 }],
       folderPaths: ['/tmp/task-folder']
     })
   })
@@ -1172,9 +1189,9 @@ describe('SQLite business repositories', () => {
 
     await expect(recentRepository.listRecent({})).resolves.toEqual({
       conversations: [
-        { ...sessions[2], revision: 1 },
-        { ...sessions[1], revision: 1 },
-        { ...sessions[3], revision: 1 }
+        { ...sessions[2], approvalProfileId: 'protected', revision: 1 },
+        { ...sessions[1], approvalProfileId: 'protected', revision: 1 },
+        { ...sessions[3], approvalProfileId: 'protected', revision: 1 }
       ],
       folderPaths: ['/tmp/folder-b', '/tmp/folder-a']
     })
@@ -1299,6 +1316,7 @@ describe('SQLite business repositories', () => {
 
     await expect(repositories.chatSessions.get(session.id)).resolves.toEqual({
       ...session,
+      approvalProfileId: 'protected',
       revision: 1
     })
   })
@@ -1381,7 +1399,7 @@ describe('SQLite business repositories', () => {
     await repositories.chatSessions.save(session, 0)
     await expect(
       repositories.chatSessions.listByNodeRun(run.id)
-    ).resolves.toEqual([{ ...session, revision: 1 }])
+    ).resolves.toEqual([{ ...session, approvalProfileId: 'protected', revision: 1 }])
     await expect(
       repositories.chatSessions.save(
         {
@@ -1398,6 +1416,7 @@ describe('SQLite business repositories', () => {
     repositories = createSqliteRepositories(database)
     await expect(repositories.chatSessions.get(session.id)).resolves.toEqual({
       ...session,
+      approvalProfileId: 'protected',
       revision: 1
     })
   })
@@ -1442,6 +1461,40 @@ describe('SQLite business repositories', () => {
         scenarioId: 'general',
         createdAt: 81
       }),
+      route: {
+        schemaVersion: 1 as const,
+        policyVersion: '1.0.0',
+        sourceMessageId: 'message-request-1',
+        sourceDigest: 'source-digest-1',
+        relation: 'fresh' as const,
+        selectedMessageIds: [],
+        excludedMessageIds: [],
+        reasons: ['topic_changed' as const],
+        confidence: 0.8,
+        createdAt: 81
+      },
+      projection: {
+        schemaVersion: 1 as const,
+        id: 'projection-message-request-1',
+        conversationId: 'session-turn',
+        sourceMessageId: 'message-request-1',
+        routePolicyVersion: '1.0.0',
+        projectionPolicyVersion: '1.0.0',
+        recentMessages: [
+          {
+            messageId: 'message-request-1',
+            role: 'user' as const,
+            content: '  Start the turn  '
+          }
+        ],
+        compactedFacts: [],
+        recalledMemory: [],
+        excluded: [],
+        characterCount: 18,
+        estimatedTokens: 5,
+        digest: '0'.repeat(64),
+        createdAt: 81
+      },
       modelName: 'DeepSeek V4 Pro',
       createdAt: 81
     }
@@ -1480,9 +1533,33 @@ describe('SQLite business repositories', () => {
     const replayed = await turns.beginTurn(command)
     expect(replayed.status).toBe('idempotent')
     expect(replayed.entity).toEqual(started.entity)
+    const routeConflict = await turns.beginTurn({
+      ...command,
+      route: {
+        ...command.route,
+        sourceDigest: 'different-source-digest'
+      }
+    })
+    expect(routeConflict.status).toBe('message_conflict')
     expect(
       database.prepare('SELECT COUNT(*) FROM chat_messages').pluck().get()
     ).toBe(2)
+    expect(
+      database
+        .prepare(
+          'SELECT relation FROM conversation_turn_context_routes WHERE source_message_id = ?'
+        )
+        .pluck()
+        .get('message-request-1')
+    ).toBe('fresh')
+    expect(
+      database
+        .prepare(
+          'SELECT digest FROM conversation_context_projections WHERE source_message_id = ?'
+        )
+        .pluck()
+        .get('message-request-1')
+    ).toBe('0'.repeat(64))
 
     const bound = await repositories.chatSessions.bindTurnRun({
       sessionId: session.id,
@@ -1577,6 +1654,69 @@ describe('SQLite business repositories', () => {
     expect(
       database.prepare('SELECT COUNT(*) FROM chat_messages').pluck().get()
     ).toBe(2)
+  })
+
+  it('rolls back the complete turn when context persistence fails', async () => {
+    const { chatSessions } = createSqliteRepositories(database)
+    const session: ChatSessionRecord = {
+      id: 'session-context-rollback',
+      kind: 'general',
+      knowledgeScope: { kind: 'none' },
+      title: 'Context rollback',
+      sortOrder: 91,
+      messages: [],
+      createdAt: 91,
+      updatedAt: 91
+    }
+    await expect(
+      chatSessions.beginTurn({
+        session,
+        expectedRevision: 0,
+        userMessageId: 'context-rollback-user',
+        assistantMessageId: 'context-rollback-assistant',
+        content: 'Rollback me',
+        route: {
+          schemaVersion: 1,
+          policyVersion: '1.0.0',
+          sourceMessageId: 'context-rollback-user',
+          sourceDigest: 'context-rollback-digest',
+          relation: 'fresh',
+          selectedMessageIds: [],
+          excludedMessageIds: [],
+          reasons: ['topic_changed'],
+          confidence: 0.8,
+          createdAt: 92
+        },
+        projection: {
+          schemaVersion: 1,
+          id: 'context-rollback-projection',
+          conversationId: 'different-session',
+          sourceMessageId: 'context-rollback-user',
+          routePolicyVersion: '1.0.0',
+          projectionPolicyVersion: '1.0.0',
+          recentMessages: [],
+          compactedFacts: [],
+          recalledMemory: [],
+          excluded: [],
+          characterCount: 0,
+          estimatedTokens: 0,
+          digest: '1'.repeat(64),
+          createdAt: 92
+        },
+        createdAt: 92
+      })
+    ).rejects.toThrow()
+
+    await expect(chatSessions.get(session.id)).resolves.toBeUndefined()
+    expect(
+      database
+        .prepare(
+          `SELECT COUNT(*) FROM chat_messages
+           WHERE id IN ('context-rollback-user', 'context-rollback-assistant')`
+        )
+        .pluck()
+        .get()
+    ).toBe(0)
   })
 
   it('binds and completes a pending assistant then recovers interrupted turns once', async () => {

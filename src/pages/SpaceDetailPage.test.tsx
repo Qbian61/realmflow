@@ -280,6 +280,9 @@ describe("SpaceDetailPage", () => {
       name: "确认新建需求",
     });
     expect(confirm).toBeDisabled();
+    const template = within(dialog).getByRole("combobox", { name: "流程模板" });
+    await waitFor(() => expect(template).not.toBeDisabled());
+    fireEvent.click(template);
     expect(
       await within(dialog).findByRole("option", {
         name: "Product delivery · v2",
@@ -291,7 +294,7 @@ describe("SpaceDetailPage", () => {
     );
     expect(confirm).toBeDisabled();
     fireEvent.change(
-      within(dialog).getByRole("combobox", { name: "流程模板" }),
+      template,
       { target: { value: "template-version-2" } },
     );
     fireEvent.click(confirm);
@@ -638,6 +641,7 @@ describe("SpaceDetailPage", () => {
 
     fireEvent.click(await screen.findByRole("tab", { name: "空间知识库 (0)" }));
     fireEvent.click(screen.getByRole("button", { name: "添加在线文档" }));
+    fireEvent.click(screen.getByRole("combobox", { name: "连接器" }));
     expect(
       await screen.findByRole("option", { name: "Docs" }),
     ).toBeInTheDocument();
@@ -886,8 +890,9 @@ describe("SpaceDetailPage", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "仓库名称" }), {
       target: { value: "RealmFlow" },
     });
-    await screen.findByRole("option", { name: "main" });
-    expect(screen.getByRole("combobox", { name: "分支" })).toHaveValue("main");
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "分支" })).toHaveValue("main");
+    });
     fireEvent.click(screen.getByRole("button", { name: "确认关联" }));
 
     expect(ingestLocalRepository).toHaveBeenCalledWith({
@@ -969,17 +974,20 @@ describe("SpaceDetailPage", () => {
     fireEvent.click(await screen.findByRole("tab", { name: "空间知识库 (1)" }));
     fireEvent.click(screen.getByRole("button", { name: "关联代码仓库" }));
     fireEvent.click(screen.getByRole("button", { name: "远程仓库" }));
-    expect(
-      await screen.findByRole("option", { name: "Git source" }),
-    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "连接器" })).toHaveValue(
+        "connector-git",
+      );
+    });
     fireEvent.change(screen.getByRole("textbox", { name: "仓库名称" }), {
       target: { value: "Docs repository" },
     });
     fireEvent.change(screen.getByRole("textbox", { name: "仓库路径" }), {
       target: { value: "/repositories/docs" },
     });
-    await screen.findByRole("option", { name: "main" });
-    expect(screen.getByRole("combobox", { name: "分支" })).toHaveValue("main");
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "分支" })).toHaveValue("main");
+    });
     fireEvent.click(screen.getByRole("button", { name: "确认关联" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(

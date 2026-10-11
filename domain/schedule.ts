@@ -3,11 +3,13 @@ import {
   type ToolCapability,
   type ToolDefinitionReference
 } from './tool-definition'
+import { createApprovalProfileSnapshot, normalizeApprovalProfile, type ApprovalProfileId, type ApprovalProfileSnapshot } from './approval-profile'
 
 export type ScheduleStatus = 'active' | 'paused'
 export type MissedRunPolicy = 'skip' | 'run_once'
 export type ScheduleRunStatus =
   | 'running'
+  | 'waiting_permission'
   | 'succeeded'
   | 'failed'
   | 'cancelled'
@@ -30,16 +32,18 @@ export type ScheduleDefinition = {
   skillInput: Record<string, unknown>
   connectorBindings: ScheduleConnectorBinding[]
   permissions: ToolCapability[]
+  approvalProfileId?: ApprovalProfileId
 }
 
 export type Schedule = ScheduleDefinition & {
+  approvalProfile: ApprovalProfileSnapshot
   id: string
   status: ScheduleStatus
   revision: number
   createdAt: number
   updatedAt: number
   lastRunAt?: number
-  lastRunStatus?: Exclude<ScheduleRunStatus, 'running'>
+  lastRunStatus?: Exclude<ScheduleRunStatus, 'running' | 'waiting_permission'>
   lastRecoveryDecision?: ScheduleRecoveryDecision
 }
 
@@ -51,6 +55,9 @@ export type ScheduleRun = {
   triggerSource: 'manual' | 'cron'
   status: ScheduleRunStatus
   toolExecutionId?: string
+  permissionRequestId?: string
+  providerRunId?: string
+  approvalProfile?: ApprovalProfileSnapshot
   errorCode?: string
   errorMessage?: string
   scheduledFor?: number
@@ -93,6 +100,7 @@ export function createSchedule(input: {
   return {
     id: requireIdentifier(input.id, 'Schedule ID'),
     ...normalizeScheduleDefinition(input.definition),
+    approvalProfile: createApprovalProfileSnapshot(input.definition.approvalProfileId),
     status: 'active',
     revision: 1,
     createdAt: requireTimestamp(input.at),
@@ -108,6 +116,7 @@ export function updateSchedule(
   return {
     ...current,
     ...normalizeScheduleDefinition(input.definition),
+    approvalProfile: createApprovalProfileSnapshot(input.definition.approvalProfileId ?? current.approvalProfile.id),
     revision: current.revision + 1,
     updatedAt: at
   }
@@ -161,6 +170,7 @@ export function createScheduleRun(input: {
     scheduleName: input.schedule.name,
     triggerSource: input.triggerSource,
     status: 'running',
+    approvalProfile: input.schedule.approvalProfile,
     ...(scheduledFor === undefined ? {} : { scheduledFor }),
     startedAt,
     revision: 1
@@ -170,14 +180,14 @@ export function createScheduleRun(input: {
 export function finishScheduleRun(
   current: ScheduleRun,
   input: {
-    status: Exclude<ScheduleRunStatus, 'running'>
+    status: Exclude<ScheduleRunStatus, 'running' | 'waiting_permission'>
     toolExecutionId?: string
     errorCode?: string
     errorMessage?: string
     at: number
   }
 ): ScheduleRun {
-  if (current.status !== 'running') {
+  if (current.status !== 'running' && current.status !== 'waiting_permission') {
     throw new Error('Schedule run is already terminal')
   }
   const at = requireForwardTimestamp(input.at, current.startedAt)
@@ -212,7 +222,7 @@ export function updateScheduleRunSummary(
   if (run.scheduleId !== current.id) {
     throw new Error('Schedule run does not belong to schedule')
   }
-  if (run.status === 'running' || run.finishedAt === undefined) {
+  if (run.status === 'running' || run.status === 'waiting_permission' || run.finishedAt === undefined) {
     throw new Error('Schedule run must be terminal')
   }
   if (run.finishedAt < current.updatedAt) {
@@ -263,7 +273,8 @@ export function normalizeScheduleDefinition(
     executionTarget,
     skillInput,
     connectorBindings,
-    permissions
+    permissions,
+    ...(input.approvalProfileId === undefined ? {} : { approvalProfileId: normalizeApprovalProfile(input.approvalProfileId) })
   }
 }
 

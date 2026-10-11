@@ -70,6 +70,21 @@ afterEach(() => {
 });
 
 describe("RequirementNodeConversationPanel", () => {
+  it("uses the Main approval default before a node conversation exists", async () => {
+    vi.stubGlobal('realmflow', undefined)
+    const original = window.realmflow
+    window.realmflow = { toolPermissions: {
+      getDefault: vi.fn().mockResolvedValue({ approvalProfileId: 'cautious', revision: 1 }),
+      onChanged: vi.fn().mockReturnValue(() => {})
+    } } as never
+    try {
+      render(<RequirementNodeConversationPanel requirementId="requirement-1" nodeId="node-1" nodeName="Build"
+        interactive nodeRunId="node-run-1"
+        questions={[]} onReload={vi.fn()} />)
+      await waitFor(() => expect(screen.getByRole('combobox', { name: '节点权限模式' })).toHaveTextContent('谨慎确认'))
+    } finally { window.realmflow = original }
+  })
+
   it("renders committed turn snapshots before the append command completes", async () => {
     let publish:
       | ((event: { conversation: ConversationDto }) => void)

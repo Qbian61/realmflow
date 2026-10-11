@@ -41,6 +41,7 @@ describe('ProviderEditor', () => {
     expect(
       screen.getByRole('button', { name: '保存供应商' })
     ).toHaveClass('ui-button', 'ui-button--primary')
+    fireEvent.click(screen.getByRole('combobox', { name: '服务类型' }))
     const values = screen
       .getAllByRole('option')
       .map((option) => (option as HTMLOptionElement).value)

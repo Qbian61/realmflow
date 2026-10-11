@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { BrowserRuntimeService } from './browser-runtime-service'
 import type { BrowserDriver, BrowserSession, BrowserSessionRepository } from './browser-runtime-port'
+import type { BrowserCallContext } from './browser-runtime-port'
 
 function fixture() {
   const records = new Map<string, BrowserSession>()
@@ -29,6 +30,35 @@ function fixture() {
 }
 
 describe('BrowserRuntimeService lifecycle', () => {
+  it('refuses a target mutation between the last permission inspection and execution', async () => {
+    const { service, driver, call } = fixture()
+    const session = await service.createSession(call)
+    const describe = vi.fn().mockResolvedValue({
+      url: 'https://example.com/', privateSession: false, semantic: 'control', targetDigest: 'a'.repeat(64)
+    })
+    Object.assign(driver, { describe })
+    await service.describe(session.id, 'click', { ref: 's1:1' }, call)
+    describe.mockResolvedValue({
+      url: 'https://example.com/', privateSession: false, semantic: 'publish', targetDigest: 'b'.repeat(64)
+    })
+    await expect(service.execute(session.id, 'click', { ref: 's1:1' }, call)).rejects.toThrow('changed')
+    expect(driver.execute).not.toHaveBeenCalled()
+  })
+
+  it('checks ownership before describing a target for authorization', async () => {
+    const { service, driver, call } = fixture()
+    const session = await service.createSession(call)
+    const describe = vi.fn().mockResolvedValue({ url: 'https://example.com/', privateSession: false })
+    Object.assign(driver, { describe })
+    const inspect = (service as unknown as {
+      describe(id: string, action: string, args: {}, call: BrowserCallContext): Promise<unknown>
+    }).describe.bind(service)
+    await expect(inspect(session.id, 'snapshot', {}, { ...call, ownerKey: 'stranger' })).rejects.toThrow('owner')
+    expect(describe).not.toHaveBeenCalled()
+    await expect(inspect(session.id, 'snapshot', {}, call)).resolves.toMatchObject({ privateSession: false })
+    expect(driver.execute).not.toHaveBeenCalled()
+  })
+
   it('creates a Main-owned profile and durable active session', async () => {
     const { service, repository, driver, call } = fixture()
     const session = await service.createSession(call)
@@ -191,5 +221,39 @@ describe('BrowserRuntimeService lifecycle', () => {
     expect(repository.get(second.id)?.status).toBe('active')
     expect(driver.close).toHaveBeenCalledTimes(1)
     expect(driver.close).toHaveBeenCalledWith(first.id)
+  })
+
+  it('resolves browser actions through the current run and rejects another run', async () => {
+    const { service, driver, call } = fixture()
+    const runOne = {
+      ...call,
+      runId: 'run-1',
+      authorityDigest: 'a'.repeat(64)
+    }
+    const runTwo = {
+      ...call,
+      executionId: 'execution-2',
+      runId: 'run-2',
+      authorityDigest: 'b'.repeat(64)
+    }
+    const session = await service.createSession(runOne)
+    const current = service as unknown as {
+      executeCurrent(
+        action: 'snapshot',
+        args: {},
+        context: BrowserCallContext
+      ): Promise<unknown>
+    }
+
+    await expect(
+      current.executeCurrent('snapshot', {}, runOne)
+    ).resolves.toEqual({ text: 'ready' })
+    await expect(
+      current.executeCurrent('snapshot', {}, runTwo)
+    ).rejects.toMatchObject({ code: 'runtime_resource_stale' })
+    await expect(
+      service.execute(session.id, 'snapshot', {}, runTwo)
+    ).rejects.toMatchObject({ code: 'runtime_resource_stale' })
+    expect(driver.execute).toHaveBeenCalledTimes(1)
   })
 })

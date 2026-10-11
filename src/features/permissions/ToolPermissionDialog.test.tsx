@@ -5,7 +5,11 @@ import type { PendingToolPermissionView } from '../../../shared/tool-permissions
 import { ToolPermissionDialog } from './ToolPermissionDialog'
 
 const request: PendingToolPermissionView = {
-  schemaVersion: 2,
+  schemaVersion: 3,
+  approvalProfileId: 'protected',
+  approvalProfileDigest: 'c'.repeat(64),
+  effectiveRisk: 'L1',
+  maxGrant: 'persistent',
   id: 'permission-1',
   executionId: 'execution-1',
   runId: 'run-1',
@@ -25,6 +29,55 @@ const request: PendingToolPermissionView = {
 }
 
 describe('ToolPermissionDialog', () => {
+  it('shows Main risk and mode and focuses rejection for sensitive operations', () => {
+    render(<LocalizationProvider><ToolPermissionDialog request={{ ...request, reason: 'external',
+      effectiveRisk: 'L4', maxGrant: 'once' }}
+      pending={false} onAllow={vi.fn()} onAllowSession={vi.fn()} onAllowAlways={vi.fn()} onDeny={vi.fn()} />
+    </LocalizationProvider>)
+    expect(screen.getByText(/L4/)).toBeVisible()
+    expect(screen.getByText(/自动防护/)).toBeVisible()
+    expect(screen.getByRole('button', { name: '拒绝' })).toHaveFocus()
+  })
+
+  it('describes isolated browser creation without claiming host system control', () => {
+    render(<LocalizationProvider>
+      <ToolPermissionDialog request={{ ...request, toolId: 'builtin.browser.create',
+        toolName: 'Create browser', reason: 'system' }}
+        pending={false} onAllow={vi.fn()} onAllowSession={vi.fn()} onAllowAlways={vi.fn()} onDeny={vi.fn()} />
+    </LocalizationProvider>)
+    expect(screen.getByText(/将创建一个隔离的浏览器会话/)).toBeVisible()
+    expect(screen.queryByText(/控制本机系统功能/)).not.toBeInTheDocument()
+  })
+
+  it('offers scope approvals only for the trusted scope carried by Main', () => {
+    const onAllowSpace = vi.fn()
+    const onAllowRequirement = vi.fn()
+    render(<LocalizationProvider>
+      <ToolPermissionDialog request={{ ...request, reason: 'out_of_scope', maxGrant: 'space',
+        workspaceId: 'space-1', requirementId: 'req-1' }}
+        pending={false} onAllow={vi.fn()} onAllowSession={vi.fn()} onAllowAlways={vi.fn()}
+        onAllowSpace={onAllowSpace} onAllowRequirement={onAllowRequirement} onDeny={vi.fn()} />
+    </LocalizationProvider>)
+    fireEvent.click(screen.getByRole('button', { name: '本需求允许' }))
+    fireEvent.click(screen.getByRole('button', { name: '本空间允许' }))
+    expect(onAllowRequirement).toHaveBeenCalledOnce()
+    expect(onAllowSpace).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('button', { name: '始终允许' })).not.toBeInTheDocument()
+  })
+
+  it('offers only deny and once for a one-time-only request', () => {
+    render(
+      <LocalizationProvider>
+        <ToolPermissionDialog request={{ ...request, maxGrant: 'once', effectiveRisk: 'L4' } as PendingToolPermissionView}
+          pending={false} onAllow={vi.fn()} onAllowSession={vi.fn()}
+          onAllowAlways={vi.fn()} onDeny={vi.fn()} />
+      </LocalizationProvider>,
+    )
+    expect(screen.getAllByRole('button')).toHaveLength(2)
+    expect(screen.queryByRole('button', { name: '始终允许' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '本次会话允许' })).not.toBeInTheDocument()
+  })
+
   it('requires explicit confirmation before allowing a destructive action', () => {
     const onAllow = vi.fn()
     render(

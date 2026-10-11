@@ -18,7 +18,11 @@ import type {
   WorkflowTemplateDraftDto,
   WorkflowTemplateNodeDto
 } from '../../../../shared/business'
-import { Button, Field } from '../../../components/ui'
+import {
+  Button,
+  Field,
+  Select,
+} from '../../../components/ui'
 import { useLocalization } from '../../../localization/LocalizationProvider'
 import {
   WorkflowTemplateNodeConfiguration,
@@ -223,7 +227,7 @@ export const WorkflowNodeInspector = forwardRef<
               <input spellCheck={false} readOnly value={node.stableKey} />
             </Field>
             <Field name="workflow-editor-node-type" label={t('workflowEditor.nodeType')}>
-              <select
+              <Select
                 disabled={readOnly}
                 value={draft.type}
                 onChange={(event) =>
@@ -245,7 +249,7 @@ export const WorkflowNodeInspector = forwardRef<
                     {t(`workflowEditor.type.${type}`)}
                   </option>
                 ))}
-              </select>
+              </Select>
             </Field>
             <Field name="workflow-editor-node-description" label={t('workflowEditor.nodeDescription')}>
               <textarea

@@ -148,20 +148,23 @@ describe('builtin web Tool handlers', () => {
     })
   })
 
-  it('returns a structured unconfigured result without contacting a search provider', async () => {
+  it('returns one logical failure when search is unconfigured and browser fallback is unavailable', async () => {
     const request = vi.fn(async () => new Response('{}'))
 
     await expect(
       runSearch({ query: 'realmflow local first' }, request)
-    ).resolves.toEqual({
-      status: 'failed',
-      error: {
-        code: 'provider_unconfigured',
-        message: 'provider_unconfigured'
-      },
-      provider: 'disabled',
-      results: [],
-      cached: false
+    ).rejects.toMatchObject({
+      code: 'web_access_failed',
+      logicalFailure: true,
+      diagnostics: {
+        attempts: [
+          {
+            channel: 'provider',
+            status: 'failed',
+            reason: 'provider_unconfigured'
+          }
+        ]
+      }
     })
     expect(request).not.toHaveBeenCalled()
   })
@@ -277,15 +280,18 @@ describe('builtin web Tool handlers', () => {
       runSearch({ query: 'realmflow' }, request, {
         searxngBaseUrl: 'https://user:pass@search.example.com'
       })
-    ).resolves.toEqual({
-      status: 'failed',
-      error: {
-        code: 'provider_error',
-        message: 'provider_error'
-      },
-      provider: 'searxng',
-      results: [],
-      cached: false
+    ).rejects.toMatchObject({
+      code: 'web_access_failed',
+      logicalFailure: true,
+      diagnostics: {
+        attempts: [
+          {
+            channel: 'provider',
+            status: 'failed',
+            reason: 'provider_error'
+          }
+        ]
+      }
     })
   })
 

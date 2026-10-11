@@ -28,6 +28,32 @@ describe("WorkbenchDashboardPage", () => {
     ).toHaveAttribute("href", "/chat/new");
   });
 
+  it("shows zero when completion has no execution samples", async () => {
+    const api = createApi();
+    const emptySnapshot = snapshot();
+    emptySnapshot.summary = {
+      activeRequirements: 0,
+      waitingForUser: 0,
+      runtimeExceptions: 0,
+      completionRate: undefined,
+      completedCount: 0,
+      enteredExecutionCount: 0,
+    };
+    vi.mocked(api.getSnapshot).mockResolvedValue(emptySnapshot);
+    renderDashboard(api);
+
+    const completionMetric = (await screen.findByText("完成率")).closest(
+      ".ui-metric",
+    );
+    expect(completionMetric).not.toBeNull();
+    expect(
+      within(completionMetric as HTMLElement).getByText("0", {
+        selector: ".ui-metric__value",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("暂无样本")).not.toBeInTheDocument();
+  });
+
   it("filters exceptions and refreshes when the workspace changes", async () => {
     const api = createApi();
     renderDashboard(api);

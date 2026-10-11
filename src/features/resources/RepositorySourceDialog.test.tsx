@@ -39,11 +39,17 @@ describe("RepositorySourceDialog", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "仓库名称" }), {
       target: { value: "Private repository" },
     });
-    await screen.findByRole("option", { name: "Example connector" });
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "连接器" })).toHaveValue(
+        "connector-1",
+      );
+    });
     fireEvent.change(screen.getByRole("textbox", { name: "仓库路径" }), {
       target: { value: "https://user:password@example.test/private.git" },
     });
-    await screen.findByRole("option", { name: "main" });
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "分支" })).toHaveValue("main");
+    });
     fireEvent.click(screen.getByRole("button", { name: "确认关联" }));
 
     expect(
@@ -66,7 +72,11 @@ describe("RepositorySourceDialog", () => {
     renderDialog(business);
 
     fireEvent.click(screen.getByRole("button", { name: "远程仓库" }));
-    await screen.findByRole("option", { name: "Example connector" });
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "连接器" })).toHaveValue(
+        "connector-1",
+      );
+    });
     fireEvent.change(screen.getByRole("textbox", { name: "仓库路径" }), {
       target: { value: "/repositories/example" },
     });

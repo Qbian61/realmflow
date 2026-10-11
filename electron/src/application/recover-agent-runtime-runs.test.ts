@@ -453,6 +453,7 @@ function runtimeRun(
     status,
     snapshot: {
       schemaVersion: 1,
+      approvalProfile: { schemaVersion: 1, id: 'protected', policyVersion: '1.0.0', digest: 'a'.repeat(64) },
       runId: id,
       rootRunId: id,
       delegationDepth: 0,

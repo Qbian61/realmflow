@@ -3,7 +3,7 @@
   "id": "builtin.browser.close",
   "version": "1.0.0",
   "name": "Close browser",
-  "description": "Close the owned browser session; preserve its local profile.",
+  "description": "Close the current Run browser session; preserve its local profile.",
   "tags": [
     "browser"
   ],
@@ -16,14 +16,22 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "sessionId": {
-        "type": "string",
-        "pattern": "^browser-[A-Za-z0-9-]+$",
-        "maxLength": 120
+      "target": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "current_run"
+          }
+        }
       }
     },
     "required": [
-      "sessionId"
+      "target"
     ]
   },
   "outputSchema": {

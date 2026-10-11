@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   ConversationProcessorPipeline,
   createBuiltinConversationProcessors,
+  isConversationClarificationResponse,
   type ConversationProcessingInput,
   type ConversationProcessor
 } from './conversation-processor'
@@ -69,7 +70,7 @@ describe('ConversationProcessorPipeline', () => {
       result.semanticUnderstanding.retrievalQueries.every(
         (query) =>
           query.sourceMessageId === 'message-1' &&
-          query.processorVersion === '1.0.0' &&
+          query.processorVersion === '1.0.1' &&
           query.reason.length > 0
       )
     ).toBe(true)
@@ -226,6 +227,28 @@ describe('ConversationProcessorPipeline', () => {
       status: 'clarification_required',
       sideEffects: ['可能将能力安装到错误范围']
     })
+  })
+
+  it.each([
+    '安装到全局',
+    '安装到当前空间',
+    '安装到当前需求',
+    'Install it in the current workspace'
+  ])('recognizes an explicit capability scope as a clarification response: %s', async (content) => {
+    const result = await new ConversationProcessorPipeline(
+      createBuiltinConversationProcessors()
+    ).run({
+      ...baseInput,
+      content: '创建一个查询问题的 HTTP 连接器',
+      bindings: {}
+    })
+
+    expect(
+      isConversationClarificationResponse(
+        result.semanticUnderstanding,
+        content
+      )
+    ).toBe(true)
   })
 
   it('runs processors by stage and order and records optional degradation', async () => {

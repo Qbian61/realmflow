@@ -53,7 +53,7 @@ describe('AgentRunRecoveryConfigurationValidator', () => {
     expect(inspect).not.toHaveBeenCalled()
   })
 
-  it('requires a fresh authorization for a permission-blocked Run', async () => {
+  it('restores a permission-blocked Run without treating a valid pending gate as expired', async () => {
     const run = { ...runtimeRun(), status: 'waiting_permission' as const }
     const validator = new AgentRunRecoveryConfigurationValidator({
       runtime: {
@@ -67,7 +67,7 @@ describe('AgentRunRecoveryConfigurationValidator', () => {
     })
 
     await expect(validator.validate(run, checkpoint(run))).resolves.toEqual(
-      expect.objectContaining({ permissionValid: false }),
+      expect.objectContaining({ permissionValid: true }),
     )
   })
 
@@ -122,6 +122,7 @@ function runtimeRun(): AgentRuntimeRun {
     status: 'running',
     snapshot: {
       schemaVersion: 1,
+      approvalProfile: { schemaVersion: 1, id: 'protected', policyVersion: '1.0.0', digest: 'a'.repeat(64) },
       runId: 'run-1',
       rootRunId: 'run-1',
       delegationDepth: 0,

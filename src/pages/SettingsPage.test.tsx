@@ -299,6 +299,8 @@ describe("SettingsPage", () => {
     expect(selector.closest(".ui-field")).toHaveClass(
       "settings-default-model-field",
     );
+    await waitFor(() => expect(selector).not.toBeDisabled());
+    fireEvent.click(selector);
     expect(
       await screen.findByRole("group", { name: provider.name }),
     ).toBeInTheDocument();

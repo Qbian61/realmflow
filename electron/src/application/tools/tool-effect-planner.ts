@@ -1,12 +1,15 @@
 import { createHash } from 'node:crypto'
 import { basename, isAbsolute, join, relative, resolve, win32 } from 'node:path'
 import type { ToolEffect } from '../../../../domain/tool-authorization'
+import { classifyProcessCommand } from '../../../../domain/process-command-classification'
 import type { ToolCapability } from '../../../../domain/tool-definition'
 import type { JsonObject } from '../../../../domain/tool-protocol-validation'
 import type { WebProviderConfiguration } from '../../../../shared/web-provider'
 import { BRAVE_SEARCH_ORIGIN } from '../web/web-search-providers'
 import type { AdapterEffectPlan } from './tool-adapter'
 import { ScopePathResolver } from './scope-path-resolver'
+import type { BrowserAction, BrowserCallContext, BrowserEffectEvidence } from '../browser/browser-runtime-port'
+import type { ToolExecutionContext } from './tool-adapter'
 
 export type ToolSessionFamily =
   | 'word'
@@ -16,12 +19,36 @@ export type ToolSessionFamily =
   | 'image'
 
 export type BuiltinToolEffectPlannerDependencies = {
+  /** Main-owned application storage; raw tool mutations cannot target it. */
+  protectedRoots?: readonly string[]
   resolveSessionPath?: (
     family: ToolSessionFamily,
     sessionId: string
   ) => Promise<string> | string
   pathResolver?: Pick<ScopePathResolver, 'plan'>
   webConfiguration?: { get(): WebProviderConfiguration }
+  processIsolation?: {
+    describe(input: { executable: string; arguments: string[]; cwd: string }): Promise<{ execution: 'sandboxed' | 'host' }>
+  }
+  browser?: {
+    describe(
+      id: string,
+      action: BrowserAction,
+      args: JsonObject,
+      call?: BrowserCallContext
+    ): Promise<BrowserEffectEvidence>
+    describeCurrent?(
+      action: BrowserAction,
+      args: JsonObject,
+      call: BrowserCallContext
+    ): Promise<BrowserEffectEvidence>
+    resolveCurrentSessionId?(
+      call: BrowserCallContext
+    ): Promise<string>
+  }
+  managedProcesses?: {
+    describeManaged(input: { owner: ToolExecutionContext['owner']; processId: string; runId?: string }): Promise<{ currentRun: boolean; fingerprint: string }>
+  }
 }
 
 type PlanInput = {
@@ -30,6 +57,8 @@ type PlanInput = {
   arguments: JsonObject
   scopeRoots: readonly string[]
   webConfiguration?: WebProviderConfiguration
+  context?: ToolExecutionContext
+  executionId?: string
 }
 
 type PathEffectKind =
@@ -119,20 +148,51 @@ async function plan(
   const name = input.handlerName
   if (name.startsWith('browser.')) {
     const action = name.slice('browser.'.length)
-    const observe = ['snapshot', 'wait_for', 'screenshot', 'download'].includes(action)
-    const effects: ToolEffect[] = [{
-      kind: observe ? 'computer.observe' : 'computer.control',
-      application: action === 'evaluate'
-        ? { bundleId: 'realmflow.browser.evaluate', displayName: 'Browser snapshot evaluation' }
-        : { bundleId: 'realmflow.browser', displayName: 'RealmFlow Browser' }
-    }]
+    if (action === 'create') return [{ kind: 'browser.session.create', profile: 'isolated' }]
     if (action === 'attach') {
       const profileId = requiredPath(input.arguments, 'profileId')
       if (!/^browser-[a-zA-Z0-9-]+$/.test(profileId)) throw new Error('Invalid browser profile')
-      effects.push({ kind: 'external', capability: 'credential.use', resourceKey: `browser-profile:${profileId}` })
+      return [{ kind: 'browser.profile.attach', profileId }]
     }
+    if (!dependencies.browser) throw new Error('Browser evidence unavailable')
+    const currentRun = isCurrentRunTarget(input.arguments)
+    const call = input.context
+      ? browserCallContext(input.context, input.executionId, input.scopeRoots)
+      : undefined
+    if (action === 'close') {
+      const sessionId = currentRun
+        ? await requireCurrentSessionId(dependencies.browser, call)
+        : requiredPath(input.arguments, 'sessionId')
+      return [{ kind: 'browser.session.close', sessionId }]
+    }
+    let sessionId: string
+    let evidence: BrowserEffectEvidence
+    if (currentRun) {
+      evidence = await requireCurrentEvidence(
+        dependencies.browser,
+        action as BrowserAction,
+        input.arguments,
+        call
+      )
+      sessionId = requiredEvidenceSessionId(evidence)
+    } else {
+      sessionId = requiredPath(input.arguments, 'sessionId')
+      evidence = await dependencies.browser.describe(
+        sessionId,
+        action as BrowserAction,
+        input.arguments,
+        call
+      )
+    }
+    const effects: ToolEffect[] = [evidence.semantic === 'read' ? {
+      kind: 'browser.page.read', sessionId, origin: browserOrigin(evidence.url),
+      privateSession: evidence.privateSession, targetDigest: evidence.targetDigest
+    } : {
+      kind: 'browser.page.control', sessionId, origin: browserOrigin(evidence.url),
+      semantic: evidence.semantic, targetDigest: evidence.targetDigest
+    }]
     if (action === 'navigate' || action === 'download') {
-      effects.push({ kind: 'external', capability: 'network.connect', resourceKey: sanitizedWebOrigin(input.arguments.url) })
+      effects.push({ kind: 'network.public_read', origin: publicWebOrigin(input.arguments.url), localDataEgress: false })
     }
     if (action === 'upload') {
       effects.push(await pathEffect('filesystem.read', requiredPath(input.arguments, 'path'), input, dependencies))
@@ -302,38 +362,53 @@ async function plan(
     ]
   }
   if (PROCESS_HANDLERS.has(name)) {
+    if (name === 'process.list' || name === 'process.discover') {
+      return [{ kind: 'process.inspect', workingDirectory: await selectedRoot(input, dependencies) }]
+    }
+    if (name === 'process.stop') {
+      if (!dependencies.managedProcesses || !input.context) throw new Error('Managed process evidence unavailable')
+      const processId = requiredPath(input.arguments, 'processId')
+      const evidence = await dependencies.managedProcesses.describeManaged({
+        owner: input.context.owner, processId, runId: input.context.parentExecutionId
+      })
+      return [{ kind: 'process.manage', processId, ...evidence }]
+    }
     return [await processEffect(input, dependencies)]
   }
   if (name === 'web.fetch') {
     return [
       {
-        kind: 'external',
-        capability: 'network.connect',
-        resourceKey: sanitizedWebOrigin(input.arguments.url)
+        kind: 'network.public_read',
+        localDataEgress: false,
+        origin: publicWebOrigin(input.arguments.url)
       }
     ]
   }
   if (name === 'web.search') {
     const config = input.webConfiguration
-    if (!config || config.searchProvider === 'disabled') throw Object.assign(
-      new Error('Web search is disabled. Configure a search provider in Settings before using web search.'),
-      { code: 'provider_unconfigured' }
-    )
+    if (!config || config.searchProvider === 'disabled') {
+      return [{
+        kind: 'network.public_read',
+        localDataEgress: false,
+        providerId: 'browser',
+        origin: 'https://www.google.com'
+      }]
+    }
     const effects: ToolEffect[] = [{
-      kind: 'external', capability: 'network.connect',
-      resourceKey: config.searchProvider === 'brave'
+      kind: 'network.public_read', localDataEgress: false,
+      providerId: config.searchProvider,
+      origin: config.searchProvider === 'brave'
         ? BRAVE_SEARCH_ORIGIN : sanitizedWebOrigin(config.searxngBaseUrl)
     }]
     if (config.searchProvider === 'brave') {
       if (!config.hasBraveCredential || !config.braveCredentialHandle) throw new Error('Web credential unavailable')
-      effects.push({ kind: 'external', capability: 'credential.use', resourceKey: config.braveCredentialHandle })
     }
     return effects
   }
   if (name.startsWith('git.')) {
     const repositoryRoot = await selectedRoot(input, dependencies)
     return name === 'git.commit'
-      ? [{ kind: 'repository.publish', repositoryRoot }]
+      ? [{ kind: 'repository.local_write', repositoryRoot }]
       : [{ kind: 'filesystem.read', path: repositoryRoot }]
   }
 
@@ -414,13 +489,100 @@ async function plan(
   return []
 }
 
+function browserCallContext(
+  context: ToolExecutionContext,
+  executionId: string | undefined,
+  scopeRoots: readonly string[]
+): BrowserCallContext {
+  const ownerKey = JSON.stringify([
+    context.owner.type,
+    context.owner.id,
+    context.workspaceId ?? null
+  ])
+  const runId = context.parentExecutionId
+  return {
+    ownerKey,
+    executionId: executionId ?? 'planning',
+    ...(runId
+      ? {
+          runId,
+          authorityDigest: createHash('sha256')
+            .update(JSON.stringify({ ownerKey, runId }))
+            .digest('hex')
+        }
+      : {}),
+    ...(context.conversationId
+      ? { conversationId: context.conversationId }
+      : {}),
+    scopeRoots: [...scopeRoots],
+    signal: new AbortController().signal
+  }
+}
+
+function isCurrentRunTarget(arguments_: JsonObject): boolean {
+  const target = arguments_.target
+  return (
+    typeof target === 'object' &&
+    target !== null &&
+    !Array.isArray(target) &&
+    (target as Record<string, unknown>).kind === 'current_run'
+  )
+}
+
+async function requireCurrentSessionId(
+  browser: NonNullable<BuiltinToolEffectPlannerDependencies['browser']>,
+  call: BrowserCallContext | undefined
+): Promise<string> {
+  if (!call || !browser.resolveCurrentSessionId) {
+    throw Object.assign(
+      new Error('Current Run browser is unavailable'),
+      { code: 'runtime_resource_stale' }
+    )
+  }
+  return browser.resolveCurrentSessionId(call)
+}
+
+async function requireCurrentEvidence(
+  browser: NonNullable<BuiltinToolEffectPlannerDependencies['browser']>,
+  action: BrowserAction,
+  arguments_: JsonObject,
+  call: BrowserCallContext | undefined
+): Promise<BrowserEffectEvidence> {
+  if (!call || !browser.describeCurrent) {
+    throw Object.assign(
+      new Error('Current Run browser is unavailable'),
+      { code: 'runtime_resource_stale' }
+    )
+  }
+  return browser.describeCurrent(action, arguments_, call)
+}
+
+function requiredEvidenceSessionId(
+  evidence: BrowserEffectEvidence
+): string {
+  if (
+    !evidence.sessionId ||
+    !/^browser-[a-zA-Z0-9-]+$/.test(evidence.sessionId)
+  ) {
+    throw Object.assign(
+      new Error('Current Run browser evidence is stale'),
+      { code: 'runtime_resource_stale' }
+    )
+  }
+  return evidence.sessionId
+}
+
+function browserOrigin(url: string): string {
+  return url === 'about:blank' ? 'about:blank' : sanitizedWebOrigin(url)
+}
+
 async function pathEffect(
   kind: PathEffectKind,
   path: string,
   input: PlanInput,
   dependencies: Required<
     Pick<BuiltinToolEffectPlannerDependencies, 'pathResolver'>
-  >,
+  > & Pick<BuiltinToolEffectPlannerDependencies, 'protectedRoots'>,
   options: { allowMissing?: boolean } = {}
 ): Promise<ToolEffect> {
   const roots = selectedRoots(input)
@@ -430,6 +592,14 @@ async function pathEffect(
     operation:
       kind === 'filesystem.read' && !options.allowMissing ? 'read' : 'write'
   })
+  const segments = resolved.canonicalPath.replaceAll('\\', '/').toLowerCase().split('/')
+  const protectedPath = segments.some(segment =>
+    ['.git', '.realmflow', '.trae', '.agents', '.cursor'].includes(segment))
+    || dependencies.protectedRoots?.some(root =>
+      pathIsInside(normalizeScopeRoot(root), resolved.canonicalPath))
+  if (kind !== 'filesystem.read' && protectedPath) {
+    throw new Error('Raw mutation of a protected path is forbidden')
+  }
   if (kind === 'filesystem.delete') {
     return {
       kind,
@@ -437,14 +607,18 @@ async function pathEffect(
       permanent: false
     }
   }
-  return { kind, path: resolved.canonicalPath }
+  const sensitive = protectedPath || segments.some(segment =>
+    ['.ssh', '.aws', '.gnupg', 'keychains', 'cookies', 'login data'].includes(segment)
+    || /^\.env(?:\.|$)/.test(segment) || /\.(?:pem|p12|pfx|key)$/.test(segment))
+  return { kind, path: resolved.canonicalPath,
+    ...(kind === 'filesystem.read' && sensitive ? { sensitivity: 'sensitive' as const } : {}) }
 }
 
 async function processEffect(
   input: PlanInput,
   dependencies: Required<
     Pick<BuiltinToolEffectPlannerDependencies, 'pathResolver'>
-  >
+  > & Pick<BuiltinToolEffectPlannerDependencies, 'processIsolation'>
 ): Promise<ToolEffect> {
   const executable =
     optionalPath(input.arguments, 'executable') ?? input.handlerName
@@ -459,8 +633,14 @@ async function processEffect(
       operation: 'read'
     })
   ).canonicalPath
+  const arguments_ = args.filter((value): value is string => typeof value === 'string')
+  const isolation = await dependencies.processIsolation?.describe({
+    executable, arguments: arguments_, cwd: workingDirectory
+  })
   return {
     kind: 'process.execute',
+    execution: isolation?.execution ?? 'host',
+    commandClass: classifyProcessCommand(executable, arguments_),
     executableDigest: digest(executable),
     executableDisplayName: basename(executable),
     argsFingerprint: digest(JSON.stringify(args)),
@@ -629,6 +809,13 @@ function sanitizedWebOrigin(value: unknown): string {
     url.password = ''
   }
   return `${url.protocol}//${url.host}`
+}
+
+function publicWebOrigin(value: unknown): string {
+  const origin = sanitizedWebOrigin(value)
+  const url = new URL(value as string)
+  if (url.username || url.password) throw new Error('Public URL must not contain credentials')
+  return origin
 }
 
 function pathAlreadyIncludesScopeRoot(

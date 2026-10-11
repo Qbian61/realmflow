@@ -6,7 +6,7 @@ import type {
   ModelStatisticsPreferences,
   ModelStatisticsTimeRange,
 } from "./model-statistics-preferences";
-import { Toolbar } from "../../components/ui";
+import { Toolbar, Select } from "../../components/ui";
 import { useLocalization } from "../../localization/LocalizationProvider";
 
 type Props = {
@@ -42,7 +42,7 @@ export default function ModelStatisticsFilters({
     >
       <label>
         <span>{t("analytics.filters.timeRange")}</span>
-        <select name="model-statistics-filters-value-time-range" autoComplete="off"
+        <Select name="model-statistics-filters-value-time-range" autoComplete="off"
           value={value.timeRange}
           disabled={disabled}
           onChange={(event) =>
@@ -55,13 +55,13 @@ export default function ModelStatisticsFilters({
           <option value="30d">{t("analytics.range.30d")}</option>
           <option value="90d">{t("analytics.range.90d")}</option>
           <option value="all">{t("analytics.range.all")}</option>
-        </select>
+        </Select>
       </label>
 
       {ENTITY_FILTERS.map(([key, label, optionKey]) => (
         <label key={key}>
           <span>{t(`analytics.dimension.${label}`)}</span>
-          <select name={`analytics-filter-${key}`} autoComplete="off"
+          <Select name={`analytics-filter-${key}`} autoComplete="off"
             value={value[key] ?? ""}
             disabled={disabled}
             onChange={(event) =>
@@ -74,13 +74,13 @@ export default function ModelStatisticsFilters({
                 {option.label}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
       ))}
 
       <label>
         <span>{t("analytics.filters.groupBy")}</span>
-        <select name="model-statistics-filters-value-group-by" autoComplete="off"
+        <Select name="model-statistics-filters-value-group-by" autoComplete="off"
           value={value.groupBy}
           disabled={disabled}
           onChange={(event) =>
@@ -94,7 +94,7 @@ export default function ModelStatisticsFilters({
               {t(`analytics.dimension.${label}`)}
             </option>
           ))}
-        </select>
+        </Select>
       </label>
     </Toolbar>
   );

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { createApprovalProfileSnapshot, type ApprovalProfileSnapshot } from '../../../../domain/approval-profile'
 import Ajv2020 from 'ajv/dist/2020.js'
 import type {
   ToolCatalogItem,
@@ -25,6 +26,9 @@ import {
   type JsonObject
 } from '../../../../domain/tool-protocol-validation'
 import type {
+  AdapterEffectPlan,
+  AdapterExecutionResult,
+  AdapterPreparation,
   PreparedToolInvocation,
   ResolvedToolBinding,
   ToolConnectorGrant
@@ -37,6 +41,7 @@ import type { ToolProjectionRunner } from './tool-projection-runner'
 import type { ToolProjectionStore } from './tool-projection-store'
 import type {
   PermissionDecisionCommand,
+  ReusableToolPermissionView,
   ToolPermissionRequestProjection
 } from '../../../../shared/tool-permissions'
 import type { AiRunToolResult } from '../../../../domain/ai-run'
@@ -58,6 +63,7 @@ import {
 } from './tool-model-facing-projection'
 import { directorySearchOutput, directoryDescribeOutput } from './tool-directory'
 import { ToolPermissionReuse } from './tool-permission-reuse'
+import { runtimeControlEffects } from './runtime-control-effects'
 
 export type ToolExecutionCommand = {
   definition: ToolDefinitionReference
@@ -128,6 +134,7 @@ type RuntimeInvocation = ResolvedRuntimeInvocation & {
   authorization: ToolAuthorizationDecision
   boundScopes: BoundScopeAuthorization[]
   permissionFingerprint: string
+  approvalProfile: ApprovalProfileSnapshot
   modelFacingFacade?: ToolFacadeDispatchMetadata
   modelFacingDirectory?: ToolDirectoryDispatchMetadata
 }
@@ -259,6 +266,7 @@ type Dependencies = {
   }
   /** Main-owned lookup. Never accept authorization supplied by Renderer/model. */
   resolveRunPolicy?: (command: ToolExecutionCommand) => Promise<ToolPolicySnapshot | undefined>
+  resolveApprovalProfile?: (command: ToolExecutionCommand) => Promise<ApprovalProfileSnapshot>
   now?: () => number
   createId?: () => string
 }
@@ -313,10 +321,8 @@ export class ToolExecutionApplicationService {
       'attempt-preview',
       'preview'
     )
-    const preparation = await this.dependencies.adapters.prepare(
-      resolved.binding,
-      resolved.invocation
-    )
+    const preparation: AdapterPreparation = runtimeControlEffects(resolved.definition, resolved.invocation.arguments)
+      ? { outcome: 'ready' as const } : await this.dependencies.adapters.prepare(resolved.binding, resolved.invocation)
     if (preparation.outcome !== 'ready') {
       return { outcome: 'permission_denied', permissionRequests: [] }
     }
@@ -379,10 +385,8 @@ export class ToolExecutionApplicationService {
       attemptId,
       command.idempotencyKey
     )
-    const preparation = await this.dependencies.adapters.prepare(
-      resolved.binding,
-      resolved.invocation
-    )
+    const preparation: AdapterPreparation = runtimeControlEffects(resolved.definition, resolved.invocation.arguments)
+      ? { outcome: 'ready' as const } : await this.dependencies.adapters.prepare(resolved.binding, resolved.invocation)
     if (preparation.outcome !== 'ready') {
       return { outcome: 'permission_denied', permissionRequests: [] }
     }
@@ -399,6 +403,7 @@ export class ToolExecutionApplicationService {
     const initialEvents = [
       this.event('tool.invocation_requested', {
         executionId,
+        approvalProfileId: runtime.approvalProfile.id,
         ...(policy ? { toolPolicyDigest: policy.digest } : {}),
         definition: {
           id: executable.definition.id,
@@ -453,6 +458,12 @@ export class ToolExecutionApplicationService {
             status: 'requested',
             reason: authorization.reason,
             risk: executable.definition.risk,
+            approvalProfileId: runtime.approvalProfile.id,
+            approvalProfileDigest: runtime.approvalProfile.digest,
+            effectiveRisk: authorization.effectiveRisk,
+            maxGrant: authorization.maxGrant,
+            ...(permissionScope(command).workspaceId ? { workspaceId: permissionScope(command).workspaceId! } : {}),
+            ...(permissionScope(command).requirementId ? { requirementId: permissionScope(command).requirementId! } : {}),
             effectsDigest: runtime.effectsDigest,
             argumentsDigest: toolExecutionDigest(executable.command.input),
             bindingRevision: maximumBindingRevision(runtime.boundScopes),
@@ -483,6 +494,7 @@ export class ToolExecutionApplicationService {
         this.event(
           'tool.authorization_auto_granted',
           {
+            effectiveRisk: authorization.effectiveRisk,
             authorizationIds:
               authorization.source === 'bound_scope'
                 ? authorization.authorizationIds
@@ -695,7 +707,9 @@ export class ToolExecutionApplicationService {
         scopeRoots: runtime.invocation.scopeRoots
       })
     try {
-      result = await this.dependencies.adapters.execute(
+      result = runtimeControlEffects(runtime.definition, runtime.invocation.arguments)
+        ? await this.dispatchRuntimeControl(runtime, controller.signal)
+        : await this.dependencies.adapters.execute(
         runtime.binding,
         runtime.invocation,
         {
@@ -801,6 +815,13 @@ export class ToolExecutionApplicationService {
       await this.catchUpProjection()
       throw new Error('permission_runtime_state_lost')
     }
+    if (runtime.authorization.outcome === 'ask' &&
+        command.decision !== 'deny' && command.decision !== 'allow_once' &&
+        (runtime.authorization.maxGrant === 'once' ||
+         runtime.authorization.maxGrant === 'session' && command.decision !== 'allow_session' ||
+         runtime.authorization.maxGrant === 'space' && command.decision === 'allow_always')) {
+      throw new Error('permission_grant_ceiling_exceeded')
+    }
     if (command.decision !== 'deny' && !await this.pendingPolicyValid(runtime)) {
       await this.interruptUnavailable(
         request.executionId, `permission:${request.id}:policy-changed`, 'tool_policy_changed'
@@ -809,10 +830,7 @@ export class ToolExecutionApplicationService {
       await this.drainOutbox()
       throw new Error('tool_policy_changed')
     }
-    const planned = await this.dependencies.adapters.planEffects(
-      runtime.binding,
-      runtime.invocation
-    )
+    const planned = await this.planRuntimeEffects(runtime)
     if (
       planned.outcome !== 'planned' ||
       toolExecutionDigest(planned.effects) !== runtime.effectsDigest
@@ -834,7 +852,8 @@ export class ToolExecutionApplicationService {
     if (this.permissionReuse.fingerprint({
       command: runtime.command, definition: runtime.definition,
       bindingId: runtime.binding.bindingId, effects: planned.effects,
-      boundScopes: currentScopes, policyDigest: policy?.digest
+      boundScopes: currentScopes, policyDigest: policy?.digest,
+      approvalProfileDigest: runtime.approvalProfile.digest,
     }) !== runtime.permissionFingerprint) throw new Error('permission_context_changed')
 
     const stream = await this.dependencies.events.loadStream(
@@ -851,9 +870,12 @@ export class ToolExecutionApplicationService {
       occurredAt: at
     }
     const nextRevision = request.requestRevision + 1
-    const reusableGrant = command.decision === 'allow_session' || command.decision === 'allow_always'
+    const reusableGrant = command.decision !== 'deny' && command.decision !== 'allow_once'
       ? this.permissionReuse.createGrant(runtime.permissionFingerprint,
-          permissionSessionId(runtime.command), command.decision)
+          permissionSessionId(runtime.command), command.decision, permissionScope(runtime.command),
+          { toolId: runtime.definition.id, toolName: runtime.definition.name,
+            effectiveRisk: request.effectiveRisk, approvalProfileId: runtime.approvalProfile.id,
+            grantedAt: at, resources: request.resources })
       : undefined
     const decisionEvent = this.event(
       'tool.permission_decided',
@@ -1083,14 +1105,10 @@ export class ToolExecutionApplicationService {
         restoredRuntime.command.definition,
         restoredRuntime.command
       )
-      const binding = await this.dependencies.adapters.resolve(
-        definition,
-        toolRuntimeContext(restoredRuntime.command, request.executionId)
-      )
-      const preparation = await this.dependencies.adapters.prepare(
-        binding,
-        restoredRuntime.invocation
-      )
+      const binding = (await this.prepareRuntime(restoredRuntime.command, definition, request.executionId,
+        restoredRuntime.invocation.attemptId, restoredRuntime.invocation.idempotencyKey)).binding
+      const preparation = runtimeControlEffects(definition, restoredRuntime.invocation.arguments)
+        ? { outcome: 'ready' as const } : await this.dependencies.adapters.prepare(binding, restoredRuntime.invocation)
       if (preparation.outcome !== 'ready') continue
       this.pending.set(request.executionId, {
         ...restoredRuntime,
@@ -1103,10 +1121,39 @@ export class ToolExecutionApplicationService {
     return restored
   }
 
+  async listReusablePermissions(): Promise<ReusableToolPermissionView[]> {
+    const grants = await this.permissionReuse.listGrants()
+    return grants.map(({ fingerprint: _fingerprint, appSessionId: _appSessionId, ...view }) =>
+      view as unknown as ReusableToolPermissionView)
+  }
+
+  async revokeReusablePermission(grantId: string): Promise<void> {
+    await this.permissionReuse.revoke(grantId)
+    await this.dependencies.onPermissionChanged?.()
+  }
+
   private async pendingPolicyValid(runtime: PersistedPendingRuntime): Promise<boolean> {
+    if (runtime.effects.some(effect => effect.kind === 'browser.page.read' || effect.kind === 'browser.page.control')) {
+      const definition = await this.resolveDefinition(runtime.command.definition, runtime.command)
+      const binding = await this.dependencies.adapters.resolve(definition, toolRuntimeContext(runtime.command, runtime.invocation.executionId))
+      const plan = await this.dependencies.adapters.planEffects(binding, runtime.invocation)
+      if (plan.outcome !== 'planned' || toolExecutionDigest(plan.effects) !== runtime.effectsDigest) return false
+    }
+    const stream = await this.dependencies.events.loadStream(runtime.invocation.executionId)
+    const grantIds = stream.flatMap(event =>
+      event.eventType === 'tool.authorization_auto_granted' && Array.isArray(event.payload.grantIds)
+        ? event.payload.grantIds.filter((id): id is string => typeof id === 'string')
+        : event.eventType === 'tool.permission_decided' && event.payload.reusableGrant
+          ? [event.eventId] : [])
+    if (grantIds.length) {
+      const active = new Set((await this.permissionReuse.listGrants()).map(grant => grant.id))
+      if (grantIds.some(id => !active.has(id))) return false
+    }
     const policy = await this.dependencies.resolveRunPolicy?.(runtime.command)
+    const profile = await this.dependencies.resolveApprovalProfile?.(runtime.command)
     const digest = runtime.command.context.toolPolicyDigest
-    return (!digest || policy?.digest === digest) &&
+    return (!profile || profile.digest === runtime.approvalProfile.digest) &&
+      (!digest || policy?.digest === digest) &&
       policyAllows(policy, runtime.command.definition)
   }
 
@@ -1118,6 +1165,11 @@ export class ToolExecutionApplicationService {
       throw new Error('Skill execution requires the model Tool Loop')
     }
     const catalog = await this.dependencies.projections.getCatalog()
+    const control = findAssistantRuntimeControlTool(catalog, reference)
+    if (control) return control.definition
+    const media = (await this.dependencies.mediaRuntime?.definitions(catalog))?.find(candidate =>
+      candidate.id === reference.id && candidate.version === reference.version && candidate.definitionDigest === reference.digest)
+    if (media) return media
     const item = catalog.tools.find(
       (candidate) =>
         candidate.id === reference.id &&
@@ -1153,6 +1205,18 @@ export class ToolExecutionApplicationService {
       throw new Error('Skill execution requires the model Tool Loop')
     }
     const catalog = await this.directoryCatalog(command, policy)
+    const control = findAssistantRuntimeControlTool(catalog, command.definition)
+    if (control) {
+      this.validateArguments(control.definition, command.input)
+      return { command, definition: control.definition }
+    }
+    const media = (await this.dependencies.mediaRuntime?.definitions(catalog))?.find(candidate =>
+      candidate.id === command.definition.id && candidate.version === command.definition.version &&
+      candidate.definitionDigest === command.definition.digest)
+    if (media) {
+      this.validateArguments(media, command.input)
+      return { command, definition: media }
+    }
     const item = catalog.tools.find(
       (candidate) =>
         candidate.id === command.definition.id &&
@@ -1236,10 +1300,11 @@ export class ToolExecutionApplicationService {
     idempotencyKey: string
   ): Promise<ResolvedRuntimeInvocation> {
     const context = toolRuntimeContext(command, executionId)
-    const binding = await this.dependencies.adapters.resolve(
-      definition,
-      context
-    )
+    const binding: ResolvedToolBinding = runtimeControlEffects(definition, command.input as JsonObject)
+      ? { definitionId: definition.id, definitionVersion: definition.version,
+          definitionDigest: definition.definitionDigest, adapterKind: 'builtin',
+          bindingId: `runtime-${definition.id}-${definition.definitionDigest}`, opaqueRuntimeHandle: {} }
+      : await this.dependencies.adapters.resolve(definition, context)
     return {
       command: {
         ...command,
@@ -1265,16 +1330,39 @@ export class ToolExecutionApplicationService {
     }
   }
 
+  private async planRuntimeEffects(runtime: ResolvedRuntimeInvocation): Promise<AdapterEffectPlan> {
+    const effects = runtimeControlEffects(runtime.definition, runtime.invocation.arguments)
+    return effects ? { outcome: 'planned', effects }
+      : this.dependencies.adapters.planEffects(runtime.binding, runtime.invocation)
+  }
+
+  private async dispatchRuntimeControl(runtime: RuntimeInvocation, signal: AbortSignal): Promise<AdapterExecutionResult> {
+    const command = { ...runtime.command, idempotencyKey: runtime.invocation.idempotencyKey }
+    try {
+      const response = runtime.definition.executor.kind === 'builtin' &&
+        runtime.definition.executor.handler === 'media-provider-runtime'
+        ? await this.executeMediaProviderTool(command, signal, true)
+        : await this.executeAssistantRuntimeTool(command, signal, true)
+      if (response?.outcome === 'executed' && response.execution.status === 'succeeded') {
+        const output = response.execution.output ?? {}
+        return { outcome: 'succeeded', output: output as JsonObject,
+          metrics: { durationMs: 0, outputBytes: Buffer.byteLength(JSON.stringify(output)) } }
+      }
+      return { outcome: 'failed', error: { code: 'runtime_execution_failed',
+        message: 'Runtime operation failed', retryable: false }, metrics: { durationMs: 0, outputBytes: 0 } }
+    } catch {
+      return { outcome: 'failed', error: { code: 'runtime_execution_failed',
+        message: 'Runtime operation failed', retryable: false }, metrics: { durationMs: 0, outputBytes: 0 } }
+    }
+  }
+
   private async planAndAuthorize(
     command: ToolExecutionCommand,
     runtime: ResolvedRuntimeInvocation,
     modelFacingFacade?: ToolFacadeDispatchMetadata,
     modelFacingDirectory?: ToolDirectoryDispatchMetadata
   ): Promise<RuntimeInvocation> {
-    const planned = await this.dependencies.adapters.planEffects(
-      runtime.binding,
-      runtime.invocation
-    )
+    const planned = await this.planRuntimeEffects(runtime)
     if (planned.outcome !== 'planned') {
       throw Object.assign(new Error(planned.error.message), {
         code: planned.error.code
@@ -1285,7 +1373,10 @@ export class ToolExecutionApplicationService {
         command,
         runtime.invocation.scopeRoots
       )) ?? defaultBoundScopes(command, runtime.invocation.scopeRoots, this.now())
+    const approvalProfile = await this.dependencies.resolveApprovalProfile?.(command)
+      ?? createApprovalProfileSnapshot()
     let authorization = authorizeToolEffects({
+      approvalProfile: approvalProfile.id,
       effects: planned.effects,
       risk: runtime.definition.risk,
       context: permissionContext(command),
@@ -1301,14 +1392,16 @@ export class ToolExecutionApplicationService {
     const policy = await this.dependencies.resolveRunPolicy?.(command)
     const permissionFingerprint = this.permissionReuse.fingerprint({
       command, definition: runtime.definition, bindingId: runtime.binding.bindingId,
-      effects: planned.effects, boundScopes, policyDigest: policy?.digest
+      effects: planned.effects, boundScopes, policyDigest: policy?.digest,
+      approvalProfileDigest: approvalProfile.digest,
     })
-    if (authorization.outcome === 'ask') {
+    if (authorization.outcome === 'ask' && authorization.maxGrant !== 'once') {
       const grantId = await this.permissionReuse.matchingGrant(
-        permissionFingerprint, permissionSessionId(command)
+        permissionFingerprint, permissionSessionId(command), authorization.maxGrant, permissionScope(command),
       )
       if (grantId) authorization = {
-        outcome: 'authorized', source: 'explicit_grant', grantIds: [grantId]
+        outcome: 'authorized', source: 'explicit_grant', grantIds: [grantId],
+        effectiveRisk: authorization.effectiveRisk
       }
     }
     return {
@@ -1318,6 +1411,7 @@ export class ToolExecutionApplicationService {
       authorization,
       boundScopes,
       permissionFingerprint,
+      approvalProfile,
       ...(modelFacingFacade ? { modelFacingFacade } : {}),
       ...(modelFacingDirectory ? { modelFacingDirectory } : {})
     }
@@ -1442,11 +1536,13 @@ export class ToolExecutionApplicationService {
 
   private async executeAssistantRuntimeTool(
     command: ToolExecutionCommand & { idempotencyKey: string },
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    approved = false
   ): Promise<ExecuteToolExecutionResult | undefined> {
     const catalog = await this.dependencies.projections.getCatalog()
     const control = findAssistantRuntimeControlTool(catalog, command.definition)
     if (!control) return undefined
+    if (!approved && runtimeControlEffects(control.definition, command.input as JsonObject)) return undefined
     this.validateArguments(control.definition, command.input)
     const runtimeInput = cloneJsonObject(command.input, 'Assistant runtime input')
 
@@ -1495,6 +1591,9 @@ export class ToolExecutionApplicationService {
                   )
                 )
     if (!output) return undefined
+    if (approved) return { outcome: 'executed', execution: {
+      id: command.idempotencyKey, status: 'succeeded', output
+    } }
     return this.recordRuntimeControlResult({
       command,
       definition: control.definition,
@@ -1506,8 +1605,10 @@ export class ToolExecutionApplicationService {
 
   private async executeMediaProviderTool(
     command: ToolExecutionCommand & { idempotencyKey: string },
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    approved = false
   ): Promise<ExecuteToolExecutionResult | undefined> {
+    if (!approved) return undefined
     if (!this.dependencies.mediaRuntime) return undefined
     const catalog = await this.dependencies.projections.getCatalog()
     const definition = (
@@ -1551,6 +1652,7 @@ export class ToolExecutionApplicationService {
         /^media_[a-z_]+$/.test(error.message)
           ? error.message
           : 'media_execution_failed'
+      if (approved) throw new Error(code)
       return this.recordDirectoryControlResult({
         command,
         definition,
@@ -1562,6 +1664,7 @@ export class ToolExecutionApplicationService {
       })
     }
     if (!isRecord(response.output)) {
+      if (approved) throw new Error('media_output_invalid')
       return this.recordDirectoryControlResult({
         command,
         definition,
@@ -1576,13 +1679,9 @@ export class ToolExecutionApplicationService {
     const artifact = isRecord(response.artifact)
       ? cloneJsonObject(response.artifact, 'Media artifact')
       : undefined
-    await this.dependencies.generatedArtifacts?.afterToolExecution({
-      runId: command.context.parentExecutionId,
-      toolName: definition.id,
-      arguments: cloneJsonObject(command.input, 'Media arguments'),
-      scopeRoots,
-      output
-    })
+    if (approved) return { outcome: 'executed', execution: {
+      id: command.idempotencyKey, status: 'succeeded', output
+    } }
     return this.recordDirectoryControlResult({
       command,
       definition,
@@ -1655,6 +1754,10 @@ export class ToolExecutionApplicationService {
           status: 'requested',
           reason: 'system',
           risk: input.definition.risk,
+          approvalProfileId: createApprovalProfileSnapshot().id,
+          approvalProfileDigest: createApprovalProfileSnapshot().digest,
+          effectiveRisk: 'L3',
+          maxGrant: 'once',
           effectsDigest: toolExecutionDigest([]),
           argumentsDigest: toolExecutionDigest(input.command.input),
           bindingRevision: 0,
@@ -2285,9 +2388,18 @@ function permissionSessionId(command: ToolExecutionCommand): string {
       ? command.context.scope.conversationId : 'realmflow')
 }
 
+function permissionScope(command: ToolExecutionCommand): { workspaceId?: string; requirementId?: string } {
+  return {
+    workspaceId: command.context.workspaceId ?? (command.context.scope.kind === 'space'
+      ? command.context.scope.workspaceId : undefined),
+    requirementId: command.context.requirementId ?? (command.context.scope.kind === 'requirement'
+      ? command.context.scope.requirementId : undefined),
+  }
+}
+
 function toolNameForRuntime(runtime: RuntimeInvocation): string {
   return runtime.definition.executor.kind === 'builtin'
-    ? runtime.definition.executor.handler
+    ? runtime.definition.executor.handler === 'media-provider-runtime' ? runtime.definition.id : runtime.definition.executor.handler
     : runtime.definition.id
 }
 
@@ -2520,7 +2632,8 @@ function serializePendingRuntime(runtime: RuntimeInvocation): JsonObject {
         effectsDigest: runtime.effectsDigest,
         authorization: runtime.authorization,
         boundScopes: runtime.boundScopes,
-        permissionFingerprint: runtime.permissionFingerprint
+        permissionFingerprint: runtime.permissionFingerprint,
+        approvalProfile: runtime.approvalProfile,
       })
     ),
     'pending Tool invocation'

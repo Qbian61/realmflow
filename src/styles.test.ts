@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const styles = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
@@ -19,10 +19,49 @@ const nativeWorkbenchMenuStyles = readFileSync(
   resolve(process.cwd(), "src/features/workbench/native-workbench-menu.css"),
   "utf8",
 );
+const permissionCardStyles = readFileSync(
+  resolve(process.cwd(), "src/features/permissions/ToolPermissionCard.css"),
+  "utf8",
+);
 const electronMainSource = readFileSync(
   resolve(process.cwd(), "electron/src/main.ts"),
   "utf8",
 );
+
+function productionReactFiles(dir: string): string[] {
+  return readdirSync(dir).flatMap((entry) => {
+    const path = join(dir, entry);
+    const stat = statSync(path);
+    if (stat.isDirectory()) return productionReactFiles(path);
+    if (!path.endsWith(".tsx") || path.endsWith(".test.tsx")) return [];
+    return [path];
+  });
+}
+
+describe("Select component architecture", () => {
+  it("preserves the analytics filter grid when composed with Toolbar", () => {
+    expect(styles).toMatch(/\.analytics-filters\.ui-toolbar\s*\{[^}]*display: grid;/);
+  });
+  it("isolates select display and hit area from page input styles", () => {
+    const inputRule = uiStyles.match(/\/\* Shared Select isolation[\s\S]*?\.ui-select \.ui-select-input\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(inputRule).toContain("opacity: 0;");
+    const displayRule = uiStyles.match(/\/\* Shared Select isolation[\s\S]*?\.ui-select \.ui-select-display\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(displayRule).toContain("height: 36px;");
+    expect(displayRule).toContain("box-sizing: border-box;");
+  });
+
+  it("uses the shared application select instead of native select controls", () => {
+    const offenders = productionReactFiles(resolve(process.cwd(), "src"))
+      .map((path) => ({
+        path,
+        source: readFileSync(path, "utf8"),
+      }))
+      .filter(({ source }) => /<select(?:\s|>)/.test(source))
+      .map(({ path }) => path.replace(`${process.cwd()}/`, ""));
+
+    expect(offenders).toEqual([]);
+  });
+});
 
 describe("Theme color architecture", () => {
   it("defines semantic light and dark theme tokens", () => {
@@ -372,7 +411,7 @@ describe("Root viewport styles", () => {
       /\.requirement-row-actions\s*\{[^}]*visibility:\s*hidden;/s,
     );
     expect(styles).toMatch(
-      /\.space-requirements li:hover \.requirement-row-actions,\s*\.space-requirements li:focus-within \.requirement-row-actions\s*\{[^}]*visibility:\s*visible;[^}]*pointer-events:\s*auto;/s,
+      /\.space-requirements li:hover \.requirement-row-actions,[\s\S]*?li:has\(\.requirement-row-actions :focus-visible\)[\s\S]*?\.requirement-row-actions,[\s\S]*?li:has\(\.requirement-actions-trigger\[aria-expanded='true'\]\)[\s\S]*?\.requirement-row-actions\s*\{[^}]*visibility:\s*visible;[^}]*pointer-events:\s*auto;/s,
     );
   });
 
@@ -883,7 +922,7 @@ describe("Analytics styles", () => {
 
   it("uses stable filter and summary grids", () => {
     expect(styles).toMatch(
-      /\.analytics-filters\s*\{[^}]*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/,
+      /\.analytics-filters\.ui-toolbar\s*\{[^}]*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/,
     );
     expect(styles).toMatch(
       /\.analytics-summary\s*\{[^}]*grid-template-columns: repeat\(5, minmax\(0, 1fr\)\);/,
@@ -955,11 +994,17 @@ describe("Composer focus styles", () => {
     );
   });
 
-  it("keeps the toolbar and context surface stable as controls wrap", () => {
+  it("keeps the toolbar and workspace control stable as controls wrap", () => {
     expect(styles).toMatch(
       /\.composer-toolbar\s*\{[^}]*display: flex;[^}]*min-width: 0;[^}]*align-items: center;/,
     );
-    expect(styles).toMatch(/\.composer-context-surface\s*\{[^}]*min-width: 0;/);
+    expect(styles).toMatch(
+      /\.composer-workspace-selector\s*\{[^}]*flex: 0 1 auto;/,
+    );
+    expect(styles).toMatch(
+      /\.composer-workspace-selector-popover\.ui-menu\s*\{[^}]*right: auto;[^}]*left: 0;[^}]*width: min\(240px, calc\(100vw - 32px\)\);/,
+    );
+    expect(styles).not.toContain(".composer-context-surface");
   });
 
   it("uses only the inner input border as focus feedback", () => {
@@ -969,16 +1014,26 @@ describe("Composer focus styles", () => {
     );
   });
 
-  it("darkens context controls without adding decoration", () => {
+  it("keeps the workspace control in the toolbar without border decoration", () => {
     const interactionRule = styles.match(
-      /\.composer-context \.select-control:hover,\s*\.composer-context \.select-control:focus-within\s*\{([^}]*)\}/,
+      /\.model-selector-trigger:hover,\s*\.model-selector-trigger\[aria-expanded='true'\]\s*\{([^}]*)\}/,
     )?.[1];
 
     expect(interactionRule).toBeDefined();
-    expect(interactionRule ?? "").toContain("color: var(--tone-222);");
-    expect(interactionRule ?? "").not.toMatch(/background|border|box-shadow/);
+    expect(interactionRule ?? "").toContain("background: var(--tone-f3f3f3);");
+    expect(interactionRule ?? "").not.toMatch(/border|box-shadow/);
     expect(styles).toMatch(
-      /\.composer-context \.select-control select\s*\{[^}]*color: inherit;[^}]*\}/,
+      /\.composer-workspace-selector-trigger\s*\{[^}]*justify-content: flex-start;[^}]*max-width: 180px;[^}]*\}/,
+    );
+    expect(styles).not.toContain(".composer-workspace-select select");
+  });
+
+  it("aligns model selector option height with the workspace selector", () => {
+    expect(styles).toMatch(
+      /\.model-selector-list button,\s*\.model-selector-configure\s*\{[^}]*min-height: 36px;/,
+    );
+    expect(styles).toMatch(
+      /\.composer-workspace-selector \.model-selector-list button\s*\{[^}]*min-height: 36px;/,
     );
   });
 
@@ -1024,7 +1079,7 @@ describe("Composer focus styles", () => {
     expect(uiStyles).toMatch(
       /\.ui-menu\s*\{[^}]*animation: ui-menu-in var\(--ui-motion-default\) ease-out;/,
     );
-    expect(optionRule).toContain("min-height: 28px;");
+    expect(optionRule).toContain("min-height: 36px;");
     expect(optionRule).toContain("padding: 0 7px;");
     expect(uiStyles).toMatch(/\.ui-menu-item\s*\{[^}]*border-radius: 5px;/);
     expect(optionRule).toContain("font-size: 11px;");
@@ -1035,6 +1090,26 @@ describe("Composer focus styles", () => {
     expect(styles).toMatch(
       /\.composer:has\(\.model-selector-popover\)\s*\{[^}]*z-index: 30;/,
     );
+  });
+
+  it("keeps shared application selects from inheriting the compact model trigger size", () => {
+    const modelTriggerIndex = styles.indexOf(".model-selector-trigger {");
+    const selectTriggerIndex = styles.indexOf(".ui-select .ui-select-trigger {");
+    const selectTriggerRule =
+      styles.match(/\.ui-select \.ui-select-trigger\s*\{([^}]*)\}/)?.[1] ??
+      "";
+    const selectInputRule =
+      styles.match(/\.ui-select \.ui-select-input\s*\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(modelTriggerIndex).toBeGreaterThan(-1);
+    expect(selectTriggerIndex).toBeGreaterThan(modelTriggerIndex);
+    expect(selectTriggerRule).toContain("width: 100%;");
+    expect(selectTriggerRule).toContain("max-width: none;");
+    expect(selectTriggerRule).toContain("min-height: 36px;");
+    expect(selectTriggerRule).toContain("justify-content: space-between;");
+    expect(selectTriggerRule).toContain("border: 1px solid var(--color-border);");
+    expect(selectInputRule).toContain("background: transparent;");
+    expect(selectInputRule).toContain("border-color: transparent;");
   });
 
   it("keeps elevation on the composer but not the inner input", () => {
@@ -1060,6 +1135,15 @@ describe("Composer focus styles", () => {
     expect(styles).toMatch(
       /\.composer\.without-context \.composer-input\s*\{[^}]*border-radius: 18px;[^}]*\}/,
     );
+  });
+
+  it("keeps the historical conversation composer 30px wider than the message column", () => {
+    const surfaceRule =
+      permissionCardStyles.match(
+        /\.chat-session-composer > \.composer-surface\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+
+    expect(surfaceRule).toContain("width: min(850px, 100%);");
   });
 
   it("aligns space and new-chat composers to the same top position", () => {
@@ -1500,6 +1584,21 @@ describe("Composer focus styles", () => {
     expect(styles).toMatch(/\.tool-catalog-copy\s*\{[^}]*min-width:\s*0;/s);
   });
 
+  it("keeps the tool and skill directory at four columns until narrower desktop widths", () => {
+    expect(styles).toMatch(
+      /\.product-capability-grid\s*\{[^}]*grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\);/s,
+    );
+    expect(styles).toMatch(
+      /@media \(max-width:\s*1440px\)\s*\{[\s\S]*?\.product-capability-grid\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\);/s,
+    );
+    expect(styles).toMatch(
+      /@media \(max-width:\s*1180px\)\s*\{[\s\S]*?\.product-capability-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);/s,
+    );
+    expect(styles).toMatch(
+      /@media \(max-width:\s*760px\)\s*\{[\s\S]*?\.product-capability-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);/s,
+    );
+  });
+
   it("matches analytics tabs to the shared workspace header style", () => {
     const headerRule =
       styles.match(/\.analytics-page-header\s*\{([^}]*)\}/)?.[1] ?? "";
@@ -1565,20 +1664,34 @@ describe("Composer focus styles", () => {
   it("keeps the conversation body to messages and a compact reply composer", () => {
     const pageRule =
       styles.match(/\.chat-session-page\s*\{([^}]*)\}/)?.[1] ?? "";
+    const composerShellRule =
+      styles.match(/\.chat-session-composer\s*\{([^}]*)\}/)?.[1] ?? "";
     const compactInputRule =
       styles.match(/\.composer\.compact \.composer-input\s*\{([^}]*)\}/)?.[1] ??
       "";
     const compactTextareaRule =
       styles.match(/\.composer\.compact textarea\s*\{([^}]*)\}/)?.[1] ?? "";
+    const conversationTextareaRule =
+      styles.match(
+        /\.chat-session-composer \.composer textarea\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    const compactPlaceholderRule =
+      styles.match(
+        /\.chat-session-composer \.composer textarea::placeholder\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
 
     expect(pageRule).toContain("grid-template-rows: minmax(0, 1fr) auto;");
+    expect(composerShellRule).toContain("padding: 16px 21px 24px;");
     expect(compactInputRule).toContain("padding: 14px 18px 10px;");
     expect(compactTextareaRule).toContain("height: 52px;");
+    expect(conversationTextareaRule).toContain("color: var(--tone-424242);");
+    expect(conversationTextareaRule).toContain("font-size: 14px;");
+    expect(conversationTextareaRule).toContain("font-weight: 400;");
+    expect(conversationTextareaRule).toContain("line-height: 24px;");
+    expect(conversationTextareaRule).toContain("letter-spacing: 0;");
+    expect(compactPlaceholderRule).toContain("font-size: 14px;");
     expect(styles).toMatch(
       /\.chat-session-messages\s*\{[^}]*width: var\(--conversation-content-width\);/,
-    );
-    expect(styles).toMatch(
-      /\.chat-session-composer \.composer\s*\{[^}]*width: var\(--conversation-content-width\);/,
     );
     expect(styles).toMatch(
       /\.chat-message\.assistant\.pending \.chat-message-markdown > :last-child::after\s*\{[^}]*animation: chat-stream-caret/,
@@ -1668,6 +1781,12 @@ describe("Composer focus styles", () => {
       styles.match(/\.chat-message-footer\.assistant\s*\{([^}]*)\}/)?.[1] ?? "";
     const assistantMetaRule =
       styles.match(/\.chat-message-assistant-meta\s*\{([^}]*)\}/)?.[1] ?? "";
+    const aiGeneratedRule =
+      styles.match(/\.chat-message-ai-generated\s*\{([^}]*)\}/)?.[1] ?? "";
+    const sharedAssistantMetaRule =
+      styles.match(
+        /\.chat-message-footer\.assistant \.chat-message-model,\s*\.chat-message-footer\.assistant \.chat-message-time,\s*\.chat-message-footer\.assistant \.chat-message-ai-generated\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
     const actionRule =
       styles.match(/\.chat-message-action\s*\{([^}]*)\}/)?.[1] ?? "";
     const assistantBodyRule =
@@ -1684,6 +1803,12 @@ describe("Composer focus styles", () => {
     expect(assistantFooterRule).toContain("justify-content: flex-start;");
     expect(assistantFooterRule).toContain("gap: 4px;");
     expect(assistantMetaRule).toContain("opacity: 0;");
+    expect(aiGeneratedRule).toContain("margin-left: auto;");
+    expect(sharedAssistantMetaRule).toContain("color: var(--tone-909090);");
+    expect(sharedAssistantMetaRule).toContain("font-size: 12px;");
+    expect(sharedAssistantMetaRule).toContain("font-weight: 400;");
+    expect(sharedAssistantMetaRule).toContain("line-height: 18px;");
+    expect(sharedAssistantMetaRule).toContain("letter-spacing: 0;");
     expect(styles).toMatch(
       /\.chat-message\.assistant:hover \.chat-message-assistant-meta,\s*\.chat-message\.assistant:focus-within \.chat-message-assistant-meta\s*\{[^}]*opacity: 1;/,
     );
@@ -1911,25 +2036,20 @@ describe("Composer focus styles", () => {
   it("keeps the outer shell transparent around the input", () => {
     const composerRule =
       styles.match(/(?:^|\n)\.composer\s*\{([^}]*)\}/)?.[1] ?? "";
-    const contextRule =
-      styles.match(/(?:^|\n)\.composer-context\s*\{([^}]*)\}/)?.[1] ?? "";
 
     expect(composerRule).toContain("background: transparent;");
     expect(composerRule).toContain("border: 0;");
-    expect(contextRule).toContain("background: var(--tone-f3f3f3);");
+    expect(styles).not.toMatch(/(?:^|\n)\.composer-context\s*\{/);
   });
 
-  it("joins the input bottom corners to the context area", () => {
+  it("keeps the input rounded after moving context controls inside", () => {
     const composerRule =
       styles.match(/(?:^|\n)\.composer\s*\{([^}]*)\}/)?.[1] ?? "";
     const inputRule =
       styles.match(/(?:^|\n)\.composer-input\s*\{([^}]*)\}/)?.[1] ?? "";
-    const contextRule =
-      styles.match(/(?:^|\n)\.composer-context\s*\{([^}]*)\}/)?.[1] ?? "";
 
     expect(composerRule).toContain("border-radius: 18px;");
-    expect(inputRule).toContain("border-radius: 18px 18px 0 0;");
-    expect(contextRule).toContain("border-radius: 0 0 18px 18px;");
+    expect(inputRule).toContain("border-radius: 18px;");
   });
 
   it("uses the shared dialog as the schedule editor surface", () => {
@@ -1983,6 +2103,37 @@ describe("Composer focus styles", () => {
     expect(itemRule).toContain("min-height: 34px;");
   });
 
+  it("uses a compact borderless account footer with a scroll fade", () => {
+    const userAreaRule =
+      styles.match(/\.user-area\s*\{([^}]*)\}/)?.[1] ?? "";
+    const userTriggerRule =
+      styles.match(/\.user-trigger\s*\{([^}]*)\}/)?.[1] ?? "";
+    const avatarRule =
+      styles.match(/\.avatar\s*\{([^}]*)\}/)?.[1] ?? "";
+    const userChevronRule =
+      styles.match(/\.user-chevron\s*\{([^}]*)\}/)?.[1] ?? "";
+    const fadeRule =
+      styles.match(/\.user-area::before\s*\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(userAreaRule).toContain("padding: 8px 12px 10px;");
+    expect(userAreaRule).toContain("background: var(--sidebar);");
+    expect(userAreaRule).not.toContain("border-top:");
+    expect(userTriggerRule).toContain("min-height: 44px;");
+    expect(userTriggerRule).toContain(
+      "grid-template-columns: 34px minmax(0, 1fr) 28px;",
+    );
+    expect(avatarRule).toContain("width: 34px;");
+    expect(avatarRule).toContain("height: 34px;");
+    expect(userChevronRule).not.toContain("background:");
+    expect(userChevronRule).not.toContain("border-radius:");
+    expect(fadeRule).toContain("bottom: 100%;");
+    expect(fadeRule).toContain("height: 24px;");
+    expect(fadeRule).toContain(
+      "background: linear-gradient(to bottom, transparent, var(--sidebar));",
+    );
+    expect(fadeRule).toContain("pointer-events: none;");
+  });
+
   it("keeps contextual sidebar actions reachable by keyboard and touch", () => {
     const spaceActionsRule =
       styles.match(/\.space-row-actions\s*\{([^}]*)\}/)?.[1] ?? "";
@@ -1996,6 +2147,55 @@ describe("Composer focus styles", () => {
     );
     expect(styles).toMatch(
       /@media \(hover: none\)[\s\S]*?\.space-row-actions,[\s\S]*?\.requirement-row-actions,[\s\S]*?\.space-actions-trigger,[\s\S]*?\.recent-filter-button\s*\{[^}]*opacity: 1;[^}]*visibility: visible;[^}]*pointer-events: auto;/,
+    );
+  });
+
+  it("does not keep sidebar item actions visible from residual row focus", () => {
+    expect(styles).not.toContain(
+      ".space-row:focus-within .space-row-actions",
+    );
+    expect(styles).not.toContain(
+      ".space-requirements li:focus-within .requirement-row-actions",
+    );
+    expect(styles).not.toContain(
+      ".recent-session:focus-within .recent-session-actions-trigger",
+    );
+    expect(styles).toContain(
+      ".space-row:has(.space-row-actions :focus-visible) .space-row-actions",
+    );
+    expect(styles).toMatch(
+      /\.space-requirements\s+li:has\(\.requirement-row-actions :focus-visible\)\s+\.requirement-row-actions/,
+    );
+    expect(styles).toContain(
+      ".recent-session-actions-trigger:focus-visible",
+    );
+  });
+
+  it("slides sidebar item actions in from right to left", () => {
+    const spaceActionsRule =
+      styles.match(/\.space-row-actions\s*\{([^}]*)\}/)?.[1] ?? "";
+    const requirementActionsRule =
+      styles.match(/\.requirement-row-actions\s*\{([^}]*)\}/)?.[1] ?? "";
+    const recentActionsRule =
+      styles.match(/\.recent-session-actions-trigger\s*\{([^}]*)\}/)?.[1] ??
+      "";
+
+    for (const rule of [
+      spaceActionsRule,
+      requirementActionsRule,
+      recentActionsRule,
+    ]) {
+      expect(rule).toContain("transform: translateX(6px);");
+      expect(rule).toContain("transform 150ms ease;");
+    }
+    expect(styles).toMatch(
+      /\.space-row:hover \.space-row-actions,[\s\S]*?\.space-row-actions\s*\{[^}]*transform: translateX\(0\);/,
+    );
+    expect(styles).toMatch(
+      /\.space-requirements li:hover \.requirement-row-actions,[\s\S]*?\.requirement-row-actions\s*\{[^}]*transform: translateX\(0\);/,
+    );
+    expect(styles).toMatch(
+      /\.recent-session:hover \.recent-session-actions-trigger,[\s\S]*?\.recent-session-actions-trigger\s*\{[^}]*transform: translateX\(0\);/,
     );
   });
 
@@ -2078,7 +2278,7 @@ describe("Composer focus styles", () => {
       )?.[1] ?? "";
     const spaceRevealRule =
       styles.match(
-        /\.space-row:hover \.space-requirements-toggle,\s*\.space-row:focus-within \.space-requirements-toggle\s*\{([^}]*)\}/,
+        /\.space-row:hover \.space-requirements-toggle,\s*\.space-requirements-toggle:focus-visible\s*\{([^}]*)\}/,
       )?.[1] ?? "";
 
     for (const rule of [groupChevronRule, spaceToggleRule]) {
@@ -2138,7 +2338,8 @@ describe("Composer focus styles", () => {
     const rowRule =
       styles.match(/\.recent-filter-row\s*\{([^}]*)\}/)?.[1] ?? "";
     const selectRule =
-      styles.match(/\.recent-filter-row select\s*\{([^}]*)\}/)?.[1] ?? "";
+      styles.match(/\.recent-filter-row \.ui-select-trigger\s*\{([^}]*)\}/)
+        ?.[1] ?? "";
 
     expect(buttonRule).toContain("width: 28px;");
     expect(buttonRule).toContain("height: 28px;");
@@ -2150,8 +2351,36 @@ describe("Composer focus styles", () => {
     expect(panelRule).toContain("overflow: hidden;");
     expect(rowRule).toContain("grid-template-columns: 52px minmax(0, 1fr);");
     expect(selectRule).toContain("min-width: 0;");
-    expect(selectRule).toContain("height: 28px;");
+    expect(selectRule).toContain("min-height: 36px;");
     expect(selectRule).toContain("text-overflow: ellipsis;");
+  });
+
+  it("keeps the task field type selector wide enough for short labels", () => {
+    const fieldTypeSelectRule =
+      styles.match(
+        /\.workbench-task-field-manager-type \.ui-select\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    const fieldTypeTriggerRule =
+      styles.match(
+        /\.workbench-task-field-manager-type \.ui-select-trigger\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    const fieldTypeLabelRule =
+      styles.match(
+        /\.workbench-task-field-manager-type \.ui-select-trigger > span\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+
+    expect(fieldTypeSelectRule).toContain("width: 128px;");
+    expect(fieldTypeTriggerRule).toContain("min-width: 128px;");
+    expect(fieldTypeTriggerRule).toContain("justify-content: space-between;");
+    expect(fieldTypeLabelRule).toContain("min-width: 0;");
+    expect(fieldTypeLabelRule).toContain("text-overflow: ellipsis;");
+  });
+
+  it("aligns the space action with the recent filter right edge", () => {
+    const spaceActionsRule =
+      styles.match(/\.space-actions\s*\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(spaceActionsRule).toContain("margin-right: -12px;");
   });
 
   it("lets requirement names use the row width until actions overlay them", () => {
@@ -2166,7 +2395,7 @@ describe("Composer focus styles", () => {
       styles.match(/\.requirement-actions-trigger\s*\{([^}]*)\}/)?.[1] ?? "";
     const revealRule =
       styles.match(
-        /\.space-requirements li:hover \.requirement-actions-trigger,\s*\.space-requirements li:focus-within \.requirement-actions-trigger,\s*\.requirement-actions-trigger\[aria-expanded='true'\]\s*\{([^}]*)\}/,
+        /\.space-requirements li:hover \.requirement-actions-trigger,\s*\.requirement-actions-trigger:focus-visible,\s*\.requirement-actions-trigger\[aria-expanded='true'\]\s*\{([^}]*)\}/,
       )?.[1] ?? "";
 
     expect(triggerRule).toContain("opacity: 0;");
@@ -2188,7 +2417,7 @@ describe("Composer focus styles", () => {
       )?.[1] ?? "";
     const revealRule =
       styles.match(
-        /\.space-row:hover \.space-drag-handle,\s*\.space-row:focus-within \.space-drag-handle,\s*\.space-requirements li:hover \.requirement-drag-handle,\s*\.space-requirements li:focus-within \.requirement-drag-handle\s*\{([^}]*)\}/,
+        /\.space-row:hover \.space-drag-handle,\s*\.space-drag-handle:focus-visible,\s*\.space-requirements li:hover \.requirement-drag-handle,\s*\.requirement-drag-handle:focus-visible\s*\{([^}]*)\}/,
       )?.[1] ?? "";
     const dropRule =
       styles.match(
@@ -3039,6 +3268,12 @@ describe("Composer focus styles", () => {
       styles.match(/\.follow-up-suggestion\s*\{([^}]*)\}/)?.[1] ?? "";
     const textRule =
       styles.match(/\.follow-up-suggestion__text\s*\{([^}]*)\}/)?.[1] ?? "";
+    const actionsRule =
+      styles.match(/\.follow-up-suggestion__actions\s*\{([^}]*)\}/)?.[1] ??
+      "";
+    const expandedActionsRule = styles.match(
+      /([^{}]*\.follow-up-suggestion:hover[^{}]*\.follow-up-suggestion__action:focus-visible[^{}]*)\{([^}]*)\}/,
+    );
     const actionRule =
       styles.match(
         /\.follow-up-suggestion__action\.ui-icon-button\s*\{([^}]*)\}/,
@@ -3052,14 +3287,23 @@ describe("Composer focus styles", () => {
     expect(suggestionRule).toContain("width: fit-content;");
     expect(suggestionRule).toContain("max-width: 100%;");
     expect(suggestionRule).toContain(
-      "grid-template-columns: minmax(0, auto) 32px 32px;",
+      "grid-template-columns: minmax(0, auto) auto;",
     );
     expect(suggestionRule).toContain("background: var(--tone-f4f4f4);");
     expect(textRule).toContain("color: var(--tone-424242);");
     expect(textRule).toContain("font-weight: 400;");
     expect(textRule).toContain("overflow-wrap: anywhere;");
+    expect(actionsRule).toContain("display: flex;");
+    expect(actionsRule).toContain("width: 32px;");
+    expect(actionsRule).toContain("overflow: hidden;");
+    expect(actionsRule).toContain("transition: width 150ms ease;");
+    expect(expandedActionsRule?.[1]).toContain(
+      ".follow-up-suggestion:has(",
+    );
+    expect(expandedActionsRule?.[2]).toContain("width: 66px;");
     expect(actionRule).toContain("width: 32px;");
     expect(actionRule).toContain("height: 32px;");
+    expect(actionRule).toContain("color: var(--tone-8a8a8a);");
   });
 
   it("removes DAG transitions and animations for reduced motion", () => {

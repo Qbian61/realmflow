@@ -8,6 +8,7 @@ import {
   type AssistantTurnProjection
 } from '../../../../domain/assistant-turn'
 import type { ConversationProcessingSnapshot } from '../../../../domain/conversation-processor'
+import { normalizeApprovalProfile } from '../../../../domain/approval-profile'
 import type {
   AssistantMessageFollowUp,
   ConversationMessageSource
@@ -122,6 +123,7 @@ import {
 } from './workflow-audit-repository'
 import { SqliteTemplateMigrationRepository } from './template-migration-repository'
 import { SqliteIndexMaintenanceRepository } from './index-maintenance-repository'
+import { SqliteConversationContextRepository } from './conversation-context-repository'
 
 const CONTENT_CHECKPOINT_INTERVAL_MS = 500
 const CONTENT_CHECKPOINT_BYTES = 4_096
@@ -224,6 +226,7 @@ type ChatSessionRow = {
   node_run_id: string | null
   folder_path: string | null
   model_profile_id: string | null
+  approval_profile_id: string
   title: string
   sort_order: number
   revision: number
@@ -2010,26 +2013,9 @@ export class SqliteChatSessionRepository implements
     return this.database.transaction(() => this.saveSync(entity, expectedRevision))()
   }
 
-  async beginTurn(input: {
-    session: ChatSessionRecord
-    expectedRevision: number
-    userMessageId: string
-    assistantMessageId: string
-    content: string
-    processing?: ConversationProcessingSnapshot
-    modelName?: string
-    references?: {
-      questionId?: string
-      todoId?: string
-      toolCallId?: string
-      artifactId?: string
-    }
-    attachmentBinding?: {
-      draftOwnerId: string
-      attachmentIds: string[]
-    }
-    createdAt: number
-  }) {
+  async beginTurn(
+    input: Parameters<ChatSessionRepository['beginTurn']>[0]
+  ) {
     return this.database.transaction(() => {
       const current = this.getSync(input.session.id)
       const base = current
@@ -2044,9 +2030,25 @@ export class SqliteChatSessionRepository implements
         (message) => message.id === input.userMessageId
       )
       if (existing) {
+        const persistedContext = input.route
+          ? new SqliteConversationContextRepository(this.database)
+          : undefined
+        const persistedRoute = persistedContext?.getRoute(
+          input.userMessageId
+        )
+        const persistedProjection = persistedContext?.getProjection(
+          input.userMessageId
+        )
+        const contextMatches =
+          !input.route ||
+          (persistedRoute?.sourceDigest === input.route.sourceDigest &&
+            persistedRoute.policyVersion === input.route.policyVersion &&
+            persistedProjection?.digest === input.projection?.digest)
         return {
           status:
-            existing.role === 'user' && existing.content === input.content
+            existing.role === 'user' &&
+            existing.content === input.content &&
+            contextMatches
               ? ('idempotent' as const)
               : ('message_conflict' as const),
           entity: base
@@ -2094,6 +2096,17 @@ export class SqliteChatSessionRepository implements
       const saved = this.saveSync(updated, input.expectedRevision)
       if (saved.status === 'conflict') {
         return { status: 'conflict' as const, entity: saved.entity }
+      }
+      if (Boolean(input.route) !== Boolean(input.projection)) {
+        throw new Error(
+          'Conversation turn route and projection must be persisted together'
+        )
+      }
+      if (input.route && input.projection) {
+        new SqliteConversationContextRepository(this.database).insertTurn({
+          route: input.route,
+          projection: input.projection
+        })
       }
       if (input.attachmentBinding) {
         const attachmentIds = [
@@ -2436,6 +2449,7 @@ export class SqliteChatSessionRepository implements
     entity: ChatSessionRecord,
     expectedRevision: number
   ): SaveResult<ChatSessionRecord> {
+    const approvalProfileId = normalizeApprovalProfile(entity.approvalProfileId ?? 'protected')
     const knowledgeScope =
       entity.knowledgeScope ??
       (entity.kind === 'requirement_node'
@@ -2459,9 +2473,9 @@ export class SqliteChatSessionRepository implements
       .prepare(
         `INSERT INTO chat_sessions (
           id, workspace_id, requirement_id, kind, knowledge_scope, node_run_id,
-          folder_path, model_profile_id, title, sort_order, revision,
+          folder_path, model_profile_id, approval_profile_id, title, sort_order, revision,
           created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           workspace_id = excluded.workspace_id,
           requirement_id = excluded.requirement_id,
@@ -2470,6 +2484,7 @@ export class SqliteChatSessionRepository implements
           node_run_id = excluded.node_run_id,
           folder_path = excluded.folder_path,
           model_profile_id = excluded.model_profile_id,
+          approval_profile_id = excluded.approval_profile_id,
           title = excluded.title,
           sort_order = excluded.sort_order,
           revision = excluded.revision,
@@ -2484,6 +2499,7 @@ export class SqliteChatSessionRepository implements
         entity.nodeRunId ?? null,
         entity.folderPath ?? null,
         entity.modelProfileId ?? null,
+        approvalProfileId,
         entity.title,
         entity.sortOrder,
         revision,
@@ -2630,6 +2646,7 @@ export class SqliteChatSessionRepository implements
   private mapSession(row: ChatSessionRow): Revisioned<ChatSessionRecord> {
     return {
       id: row.id,
+      approvalProfileId: normalizeApprovalProfile(row.approval_profile_id),
       kind: row.kind,
       knowledgeScope: parseConversationKnowledgeScope(row.knowledge_scope),
       ...(row.workspace_id ? { workspaceId: row.workspace_id } : {}),

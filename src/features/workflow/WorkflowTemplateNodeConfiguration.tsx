@@ -11,6 +11,7 @@ import type {
   WorkflowTemplateDraftDto,
   WorkflowTemplateNodeDto,
 } from "../../../shared/business";
+import { Select } from "../../components/ui";
 import { useLocalization } from "../../localization/LocalizationProvider";
 import {
   WorkflowConnectorSelector,
@@ -204,7 +205,7 @@ export const WorkflowTemplateNodeConfiguration = forwardRef<
           </div>
           <label>
             <span>{t("workflowConfig.predecessors")}</span>
-            <select name="workflow-template-node-configuration-configuration-input-predecessor-artifacts" autoComplete="off"
+            <Select name="workflow-template-node-configuration-configuration-input-predecessor-artifacts" autoComplete="off"
               value={configuration.input.predecessorArtifacts}
               onChange={(event) =>
                 setConfiguration({
@@ -226,7 +227,7 @@ export const WorkflowTemplateNodeConfiguration = forwardRef<
               <option value="all">
                 {t("workflowConfig.predecessors.all")}
               </option>
-            </select>
+            </Select>
           </label>
           <label>
             <span>{t("workflowConfig.attachments")}</span>
@@ -268,7 +269,7 @@ export const WorkflowTemplateNodeConfiguration = forwardRef<
           <div className="workflow-config-grid">
             <label>
               <span>{t("workflowConfig.modelStrategy")}</span>
-              <select name="workflow-template-node-configuration-configuration-model-strategy" autoComplete="off"
+              <Select name="workflow-template-node-configuration-configuration-model-strategy" autoComplete="off"
                 value={configuration.model.strategy}
                 onChange={(event) =>
                   setConfiguration({
@@ -293,7 +294,7 @@ export const WorkflowTemplateNodeConfiguration = forwardRef<
                 <option value="capability">
                   {t("workflowConfig.model.capability")}
                 </option>
-              </select>
+              </Select>
             </label>
             {configuration.model.strategy === "fixed" ? (
               <WorkflowFixedModelSelector
@@ -396,7 +397,7 @@ export const WorkflowTemplateNodeConfiguration = forwardRef<
                     />
                     <span>{t(label)}</span>
                   </label>
-                  <select name={`workflow-permission-${capability}-scope`} autoComplete="off"
+                  <Select name={`workflow-permission-${capability}-scope`} autoComplete="off"
                     aria-label={t("workflowConfig.permissionScope", {
                       label: t(label),
                     })}
@@ -423,7 +424,7 @@ export const WorkflowTemplateNodeConfiguration = forwardRef<
                     <option value="space">
                       {t("workflowConfig.scope.space")}
                     </option>
-                  </select>
+                  </Select>
                 </div>
               );
             })}

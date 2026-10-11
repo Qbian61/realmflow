@@ -34,6 +34,20 @@ afterEach(async () => {
 })
 
 describe('SqliteScheduleRepository', () => {
+  it('keeps waiting permission across recovery and blocks a duplicate run', async () => {
+    const schedule = await save()
+    const running = createScheduleRun({ id: 'waiting-run', schedule, triggerSource: 'manual', at: 200 })
+    await repository.startRun({ run: running, eventId: 'waiting-start', idempotencyKey: 'waiting-start', fingerprint: 'waiting-start', at: 200 })
+    const waiting = { ...running, status: 'waiting_permission' as const, toolExecutionId: 'original-tool', permissionRequestId: 'original-request', revision: 2 }
+    await repository.finishRun({ run: waiting, expectedRunRevision: 1, schedule, expectedScheduleRevision: 1, eventId: 'waiting-save', at: 210 })
+    expect(await repository.recoverInterrupted({ at: 220, createEventId: () => 'recovered' })).toBe(0)
+    expect(await repository.listRuns({ limit: 10 })).toContainEqual(expect.objectContaining({
+      status: 'waiting_permission', toolExecutionId: 'original-tool', permissionRequestId: 'original-request', approvalProfile: schedule.approvalProfile
+    }))
+    expect(await repository.startRun({ run: { ...running, id: 'duplicate' }, eventId: 'duplicate', idempotencyKey: 'duplicate', fingerprint: 'duplicate', at: 220 }))
+      .toMatchObject({ status: 'active_run', run: { id: 'waiting-run' } })
+  })
+
   it('atomically saves and replays a schedule command', async () => {
     const input = saveInput()
 

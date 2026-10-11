@@ -1,4 +1,5 @@
-import { useState, type FormEvent } from "react";
+import { useState, type FormEvent
+} from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -26,6 +27,7 @@ import {
   Tab,
   TabList,
   Tabs,
+  Select,
 } from "../../components/ui";
 import { useLocalization } from "../../localization/LocalizationProvider";
 import type { Translator } from "../../localization/translate";
@@ -489,7 +491,7 @@ function NodeForm({
             />
           </Field>
           <Field name="workflow-editor-node-type" label={t("workflowEditor.nodeType")}>
-            <select
+            <Select
               value={state.type}
               onChange={(event) =>
                 onChange({
@@ -508,7 +510,7 @@ function NodeForm({
               <option value="approval">
                 {t("workflowEditor.type.approval")}
               </option>
-            </select>
+            </Select>
           </Field>
           <Field name="workflow-editor-node-description" label={t("workflowEditor.nodeDescription")}>
             <textarea

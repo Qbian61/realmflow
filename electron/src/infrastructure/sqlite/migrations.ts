@@ -5160,6 +5160,174 @@ const FOLLOW_UP_SUGGESTION_SCHEMA = `
   );
 `
 
+const CONVERSATION_TURN_CONTEXT_SCHEMA = `
+  CREATE TABLE conversation_turn_context_routes (
+    source_message_id TEXT PRIMARY KEY
+      REFERENCES chat_messages(id) ON DELETE CASCADE,
+    policy_version TEXT NOT NULL,
+    source_digest TEXT NOT NULL,
+    relation TEXT NOT NULL CHECK (
+      relation IN ('fresh', 'continuation', 'reference')
+    ),
+    predecessor_message_id TEXT
+      REFERENCES chat_messages(id) ON DELETE RESTRICT,
+    selected_message_ids_json TEXT NOT NULL CHECK (
+      json_valid(selected_message_ids_json) AND
+      json_type(selected_message_ids_json) = 'array'
+    ),
+    excluded_message_ids_json TEXT NOT NULL CHECK (
+      json_valid(excluded_message_ids_json) AND
+      json_type(excluded_message_ids_json) = 'array'
+    ),
+    reasons_json TEXT NOT NULL CHECK (
+      json_valid(reasons_json) AND json_type(reasons_json) = 'array'
+    ),
+    confidence REAL NOT NULL CHECK (
+      confidence >= 0 AND confidence <= 1
+    ),
+    created_at INTEGER NOT NULL CHECK (created_at >= 0)
+  );
+  CREATE INDEX conversation_turn_context_routes_relation_created
+    ON conversation_turn_context_routes(relation, created_at DESC);
+  CREATE TRIGGER conversation_turn_context_routes_prevent_update
+    BEFORE UPDATE ON conversation_turn_context_routes
+    BEGIN
+      SELECT RAISE(ABORT, 'Conversation turn context routes are immutable');
+    END;
+
+  CREATE TABLE conversation_context_projections (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL
+      REFERENCES chat_sessions(id) ON DELETE CASCADE,
+    source_message_id TEXT NOT NULL UNIQUE
+      REFERENCES conversation_turn_context_routes(source_message_id)
+      ON DELETE CASCADE,
+    route_policy_version TEXT NOT NULL,
+    projection_policy_version TEXT NOT NULL,
+    projection_json TEXT NOT NULL CHECK (
+      json_valid(projection_json) AND
+      json_extract(projection_json, '$.schemaVersion') = 1
+    ),
+    character_count INTEGER NOT NULL CHECK (character_count >= 0),
+    estimated_tokens INTEGER NOT NULL CHECK (estimated_tokens >= 0),
+    digest TEXT NOT NULL CHECK (length(digest) = 64),
+    created_at INTEGER NOT NULL CHECK (created_at >= 0)
+  );
+  CREATE INDEX conversation_context_projections_conversation_created
+    ON conversation_context_projections(conversation_id, created_at DESC);
+  CREATE TRIGGER conversation_context_projections_prevent_update
+    BEFORE UPDATE ON conversation_context_projections
+    BEGIN
+      SELECT RAISE(ABORT, 'Conversation context projections are immutable');
+    END;
+`
+
+const RUNTIME_RESOURCE_LEASE_SCHEMA = `
+  CREATE TABLE runtime_resource_leases (
+    id TEXT PRIMARY KEY,
+    resource_type TEXT NOT NULL CHECK (
+      resource_type IN (
+        'browser_session', 'process', 'terminal', 'computer_session'
+      )
+    ),
+    resource_id TEXT NOT NULL,
+    conversation_id TEXT,
+    owner_scope_digest TEXT,
+    owner_run_id TEXT NOT NULL,
+    epoch INTEGER NOT NULL CHECK (epoch > 0),
+    authority_digest TEXT NOT NULL CHECK (length(authority_digest) = 64),
+    status TEXT NOT NULL CHECK (
+      status IN ('active', 'released', 'interrupted', 'expired')
+    ),
+    created_at INTEGER NOT NULL CHECK (created_at >= 0),
+    updated_at INTEGER NOT NULL CHECK (updated_at >= created_at)
+  );
+  CREATE INDEX runtime_resource_leases_owner_status
+    ON runtime_resource_leases(
+      owner_run_id, resource_type, status, epoch DESC
+    );
+  CREATE UNIQUE INDEX runtime_resource_leases_active_owner
+    ON runtime_resource_leases(owner_run_id, resource_type)
+    WHERE status = 'active';
+  CREATE UNIQUE INDEX runtime_resource_leases_active_resource
+    ON runtime_resource_leases(resource_type, resource_id)
+    WHERE status = 'active';
+`
+
+const CONVERSATION_MEMORY_SCHEMA = `
+  CREATE VIRTUAL TABLE chat_messages_fts USING fts5(
+    message_id UNINDEXED,
+    session_id UNINDEXED,
+    role UNINDEXED,
+    content,
+    tokenize = 'unicode61'
+  );
+  INSERT INTO chat_messages_fts(message_id, session_id, role, content)
+  SELECT id, session_id, role, content
+  FROM chat_messages
+  WHERE status = 'completed'
+    AND role IN ('user', 'assistant')
+    AND length(trim(content)) > 0;
+  CREATE TRIGGER chat_messages_fts_after_insert
+    AFTER INSERT ON chat_messages
+    WHEN NEW.status = 'completed'
+      AND NEW.role IN ('user', 'assistant')
+      AND length(trim(NEW.content)) > 0
+    BEGIN
+      INSERT INTO chat_messages_fts(
+        message_id, session_id, role, content
+      ) VALUES (NEW.id, NEW.session_id, NEW.role, NEW.content);
+    END;
+  CREATE TRIGGER chat_messages_fts_after_update
+    AFTER UPDATE OF status, role, content, session_id ON chat_messages
+    BEGIN
+      DELETE FROM chat_messages_fts WHERE message_id = OLD.id;
+      INSERT INTO chat_messages_fts(
+        message_id, session_id, role, content
+      )
+      SELECT NEW.id, NEW.session_id, NEW.role, NEW.content
+      WHERE NEW.status = 'completed'
+        AND NEW.role IN ('user', 'assistant')
+        AND length(trim(NEW.content)) > 0;
+    END;
+  CREATE TRIGGER chat_messages_fts_after_delete
+    AFTER DELETE ON chat_messages
+    BEGIN
+      DELETE FROM chat_messages_fts WHERE message_id = OLD.id;
+    END;
+
+  CREATE TABLE conversation_memory_entries (
+    id TEXT PRIMARY KEY,
+    scope TEXT NOT NULL CHECK (
+      scope IN ('conversation', 'workspace', 'requirement', 'global_user')
+    ),
+    scope_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (
+      kind IN ('fact', 'preference', 'decision', 'constraint', 'outcome')
+    ),
+    content TEXT NOT NULL CHECK (length(trim(content)) > 0),
+    source_message_ids_json TEXT NOT NULL CHECK (
+      json_valid(source_message_ids_json) AND
+      json_type(source_message_ids_json) = 'array'
+    ),
+    source_digest TEXT NOT NULL,
+    importance REAL NOT NULL CHECK (importance >= 0 AND importance <= 1),
+    valid_from INTEGER NOT NULL CHECK (valid_from >= 0),
+    expires_at INTEGER CHECK (
+      expires_at IS NULL OR expires_at > valid_from
+    ),
+    superseded_by TEXT
+      REFERENCES conversation_memory_entries(id) ON DELETE RESTRICT,
+    trust TEXT NOT NULL CHECK (
+      trust IN ('user_confirmed', 'system_observed', 'model_summary')
+    )
+  );
+  CREATE INDEX conversation_memory_entries_scope_validity
+    ON conversation_memory_entries(
+      scope, scope_id, valid_from DESC, importance DESC
+    );
+`
+
 function addFollowUpSuggestionMetricSource(database: Database.Database): void {
   const row = database
     .prepare(
@@ -6467,6 +6635,49 @@ export const REALMFLOW_MIGRATIONS: readonly SqlMigration[] = [
     version: 106,
     name: 'skill_registry',
     up: (database) => database.exec(SKILL_REGISTRY_SCHEMA)
+  },
+  {
+    version: 107,
+    name: 'conversation_approval_profile',
+    up: (database) => database.exec(`
+      ALTER TABLE chat_sessions ADD COLUMN approval_profile_id TEXT NOT NULL
+        DEFAULT 'protected' CHECK (approval_profile_id IN ('cautious', 'protected', 'trusted'));
+    `)
+  },
+  {
+    version: 108,
+    name: 'schedule_approval_waiting',
+    up: (database) => {
+      database.exec(EVENT_SOURCED_SCHEDULE_SCHEMA
+        .replace("'running', 'succeeded', 'failed', 'cancelled', 'interrupted'", "'running', 'waiting_permission', 'succeeded', 'failed', 'cancelled', 'interrupted'")
+        .replace("status = 'running' AND", "status IN ('running', 'waiting_permission') AND")
+        .replace("status <> 'running' AND", "status NOT IN ('running', 'waiting_permission') AND")
+        .replace("'run_interrupted', 'deleted'", "'run_interrupted', 'run_waiting_permission', 'deleted'"))
+      database.exec(`
+        ALTER TABLE schedules ADD COLUMN approval_profile_json TEXT NOT NULL DEFAULT '{"schemaVersion":1,"id":"protected","policyVersion":"1.0.0","digest":"42fff4157af1bdecd796d356da126b1df9d035800bcc844ea30493be70ecb8e4"}' CHECK(json_valid(approval_profile_json));
+        ALTER TABLE schedule_runs ADD COLUMN approval_profile_json TEXT CHECK(approval_profile_json IS NULL OR json_valid(approval_profile_json));
+        ALTER TABLE schedule_runs ADD COLUMN permission_request_id TEXT;
+        ALTER TABLE schedule_runs ADD COLUMN provider_run_id TEXT;
+      `)
+    }
+  },
+  {
+    version: 109,
+    name: 'conversation_turn_context',
+    up: (database) =>
+      database.exec(CONVERSATION_TURN_CONTEXT_SCHEMA)
+  },
+  {
+    version: 110,
+    name: 'runtime_resource_leases',
+    up: (database) =>
+      database.exec(RUNTIME_RESOURCE_LEASE_SCHEMA)
+  },
+  {
+    version: 111,
+    name: 'conversation_memory',
+    up: (database) =>
+      database.exec(CONVERSATION_MEMORY_SCHEMA)
   }
 ]
 

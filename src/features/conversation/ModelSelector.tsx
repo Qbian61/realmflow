@@ -81,7 +81,7 @@ export function ModelSelector({
     : undefined;
 
   useEffect(() => {
-    if (!pageActive) return;
+    if (!pageActive || !open) return;
     const close = (event: MouseEvent): void => {
       if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
     };
@@ -96,7 +96,7 @@ export function ModelSelector({
       document.removeEventListener("mousedown", close);
       document.removeEventListener("keydown", closeOnEscape);
     };
-  }, [pageActive]);
+  }, [open, pageActive]);
 
   useLayoutEffect(() => {
     if (!open) return;

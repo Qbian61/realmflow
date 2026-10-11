@@ -27,6 +27,7 @@ type CreateInput = {
   knowledgeScope?: ConversationKnowledgeScope
   title: string
   prompt: string
+  approvalProfileId?: import('../../../../domain/approval-profile').ApprovalProfileId
   requirementId?: string
   nodeRunId?: string
   workspaceId?: string
@@ -40,6 +41,7 @@ type AppendInput = {
   sessionId: string
   messageId: string
   content: string
+  approvalProfileId?: import('../../../../domain/approval-profile').ApprovalProfileId
   expectedRevision: number
   modelProfileId?: string
   applicationLocale?: 'zh-CN' | 'en' | 'ja'
@@ -121,6 +123,7 @@ export class SendRequirementNodeMessageUseCase {
         nodeRunId: input.nodeRunId
       },
       content: prompt,
+      ...(input.approvalProfileId ? { approvalProfileId: input.approvalProfileId } : {}),
       expectedRevision: 0,
       messageId: `${input.id}:message:1`,
       ...(onUpdate ? { onUpdate } : {}),
@@ -162,6 +165,7 @@ export class SendRequirementNodeMessageUseCase {
       sessionId: session.id,
       session,
       content: input.content,
+      ...(input.approvalProfileId ? { approvalProfileId: input.approvalProfileId } : {}),
       expectedRevision: input.expectedRevision,
       messageId: input.messageId,
       ...(onUpdate ? { onUpdate } : {}),
@@ -185,6 +189,7 @@ export class SendRequirementNodeMessageUseCase {
       nodeRunId: string
     }
     content: string
+    approvalProfileId?: import('../../../../domain/approval-profile').ApprovalProfileId
     expectedRevision: number
     messageId: string
     modelProfileId?: string
@@ -256,6 +261,7 @@ export class SendRequirementNodeMessageUseCase {
       sessionId: input.sessionId,
       session,
       content,
+      ...(input.approvalProfileId ? { approvalProfileId: input.approvalProfileId } : {}),
       expectedRevision: input.expectedRevision,
       messageId: input.messageId,
       context: context.context,

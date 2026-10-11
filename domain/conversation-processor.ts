@@ -7,6 +7,8 @@ export const CONVERSATION_PROCESSOR_STAGES = [
   'output'
 ] as const
 
+const BUILTIN_CONVERSATION_PROCESSOR_VERSION = '1.0.1'
+
 export type ConversationProcessorStage =
   (typeof CONVERSATION_PROCESSOR_STAGES)[number]
 
@@ -158,6 +160,23 @@ export type ConversationProcessingSnapshot = {
   }
   diagnostics: ConversationProcessingDiagnostic[]
   trace: ConversationProcessorTrace[]
+}
+
+export function isConversationClarificationResponse(
+  previous: SemanticUnderstanding,
+  content: string
+): boolean {
+  if (previous.ambiguity.length === 0) return false
+  const text = content.normalize('NFC').trim()
+  return previous.ambiguity.every((ambiguity) => {
+    if (ambiguity === '未明确是只读分析还是修改文件') {
+      return isReadOnlyRequest(text) || hasExplicitWrite(text)
+    }
+    if (ambiguity === '未明确能力安装范围') {
+      return hasExplicitCapabilityScope(text)
+    }
+    return false
+  })
 }
 
 type ConversationProcessingPatch = Partial<
@@ -480,7 +499,7 @@ function emptySemantic(
   return {
     sourceMessageId: messageId,
     sourceDigest,
-    processorVersion: '1.0.0',
+    processorVersion: BUILTIN_CONVERSATION_PROCESSOR_VERSION,
     generatedBy: 'deterministic',
     revision: 1,
     intent: 'unknown',
@@ -521,10 +540,7 @@ function understand(
   const capabilityScopeProvided =
     current.registeredInputs.references.some(({ kind }) =>
       kind === 'workspace' || kind === 'requirement' || kind === 'file'
-    ) ||
-    /(?:全局|当前空间|这个空间|当前需求|这个需求|global|current (?:workspace|requirement))/iu.test(
-      text
-    )
+    ) || hasExplicitCapabilityScope(text)
   const ambiguity = [
     ...(fileRequest && vagueAction && !readOnly && !explicitWrite
       ? ['未明确是只读分析还是修改文件']
@@ -570,28 +586,28 @@ function understand(
       kind: 'original',
       query: text,
       sourceMessageId: current.rawUserInput.messageId,
-      processorVersion: '1.0.0',
+      processorVersion: BUILTIN_CONVERSATION_PROCESSOR_VERSION,
       reason: '保留用户原始规范化查询'
     },
     {
       kind: 'keyword',
       query: keywordQuery(text),
       sourceMessageId: current.rawUserInput.messageId,
-      processorVersion: '1.0.0',
+      processorVersion: BUILTIN_CONVERSATION_PROCESSOR_VERSION,
       reason: '提取词法检索关键词'
     },
     {
       kind: 'semantic',
       query: objective,
       sourceMessageId: current.rawUserInput.messageId,
-      processorVersion: '1.0.0',
+      processorVersion: BUILTIN_CONVERSATION_PROCESSOR_VERSION,
       reason: '按结构化目标执行语义检索'
     }
   ]
   return {
     sourceMessageId: current.rawUserInput.messageId,
     sourceDigest: current.rawUserInput.contentDigest,
-    processorVersion: '1.0.0',
+    processorVersion: BUILTIN_CONVERSATION_PROCESSOR_VERSION,
     generatedBy: 'deterministic',
     revision: (previous?.revision ?? 0) + 1,
     ...(previous
@@ -754,6 +770,12 @@ function hasHighImpactAction(text: string): boolean {
   )
 }
 
+function hasExplicitCapabilityScope(text: string): boolean {
+  return /(?:全局|当前空间|这个空间|当前工作区|这个工作区|当前需求|这个需求|global|current (?:workspace|space|requirement))/iu.test(
+    text
+  )
+}
+
 function inferIntent(
   text: string,
   readOnly: boolean,
@@ -875,7 +897,7 @@ function definition(
 ): ConversationProcessor {
   return {
     ...input,
-    version: '1.0.0',
+    version: BUILTIN_CONVERSATION_PROCESSOR_VERSION,
     sideEffect: 'none',
     failurePolicy: 'required',
     timeoutMs: 1_000,

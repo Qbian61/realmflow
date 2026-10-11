@@ -74,7 +74,22 @@ const CONTEXT_ARGUMENT_KEYS = [
 ] as const
 
 export type BuiltinToolRuntimeDependencies = {
-  browser?: Pick<BrowserRuntimeService, 'createSession' | 'attachSession' | 'closeSession' | 'execute'>
+  protectedRoots?: readonly string[]
+  browser?: Pick<
+    BrowserRuntimeService,
+    'createSession' | 'attachSession' | 'closeSession' | 'execute'
+  > &
+    Partial<
+      Pick<
+        BrowserRuntimeService,
+        | 'describe'
+        | 'describeCurrent'
+        | 'resolveCurrentSessionId'
+        | 'closeCurrent'
+        | 'executeCurrent'
+        | 'ensureCurrentSession'
+      >
+    >
   resolveSessionPath?: (
     family: ToolSessionFamily,
     sessionId: string
@@ -165,14 +180,43 @@ export function createBuiltinToolAdapter(
       ...createGitToolHandlers(dependencies.git),
       ...createProcessToolHandlers(dependencies.processes),
       ...createBrowserToolHandlers(dependencies.browser),
-      ...createWebToolHandlers(new WebProviderRuntime({
-        resolveCredential: dependencies.web
-          ? (handle, revision) => dependencies.web!.resolveCredential(handle, revision) : undefined
-      })),
+      ...createWebToolHandlers(
+        new WebProviderRuntime({
+          resolveCredential: dependencies.web
+            ? (handle, revision) =>
+                dependencies.web!.resolveCredential(handle, revision)
+            : undefined
+        }),
+        dependencies.browser?.ensureCurrentSession &&
+          dependencies.browser.executeCurrent
+          ? {
+              ensureCurrentSession:
+                dependencies.browser.ensureCurrentSession.bind(
+                  dependencies.browser
+                ),
+              executeCurrent: dependencies.browser.executeCurrent.bind(
+                dependencies.browser
+              )
+            }
+          : undefined
+      ),
       ...applicationHandlers
     ],
     {
+      protectedRoots: dependencies.protectedRoots,
       resolveSessionPath: dependencies.resolveSessionPath,
+      ...(dependencies.processes.describeManaged ? {
+        managedProcesses: { describeManaged: input => dependencies.processes.describeManaged!(input) }
+      } : {}),
+      ...(dependencies.browser?.describe ? {
+        browser: { describe: (id, action, args, call) => {
+          if (!call) throw new Error('Browser execution context unavailable')
+          return dependencies.browser!.describe!(id, action, args, call)
+        } }
+      } : {}),
+      ...(dependencies.processes.describe ? {
+        processIsolation: { describe: input => dependencies.processes.describe!(input) }
+      } : {}),
       webConfiguration: dependencies.web
     }
   )

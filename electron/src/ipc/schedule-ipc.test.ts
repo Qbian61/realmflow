@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { createApprovalProfileSnapshot } from '../../../domain/approval-profile'
 import type { BusinessHandlers } from '../../../shared/business'
 import {
   IPC_COMMAND_CHANNELS,
@@ -365,6 +366,7 @@ function definition() {
 
 function schedule() {
   return {
+    approvalProfile: createApprovalProfileSnapshot(),
     id: 'schedule-1',
     ...definition(),
     status: 'active' as const,

@@ -1,12 +1,24 @@
 import type { ModelProfile, ModelProvider } from "../../domain/model";
 import type { MissedRunPolicy } from "../../domain/schedule";
+import type { ApprovalProfileId } from "../../domain/approval-profile";
+import type { ConnectorDto } from "../../shared/business";
 
 export type ModelPool = {
   providers: Array<ModelProvider & { revision: number }>;
   profiles: Array<ModelProfile & { revision: number }>;
 };
 
+export function enabledScheduleModels(models: ModelPool): ModelPool['profiles'] {
+  const providers = new Set(models.providers.filter(provider => provider.enabled).map(provider => provider.id))
+  return models.profiles.filter(profile => profile.enabled && providers.has(profile.providerId))
+}
+
+export function availableScheduleConnectors(connectors: ConnectorDto[]): ConnectorDto[] {
+  return connectors.filter(({ connector }) => connector.enabled && connector.validation?.status === 'available')
+}
+
 export type ScheduleDraft = {
+  approvalProfileId: ApprovalProfileId;
   id?: string;
   expectedRevision?: number;
   name: string;

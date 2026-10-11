@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import type { BrowserRuntimeService } from '../browser/browser-runtime-service'
 import { browserError } from '../browser/browser-runtime-service'
 import type { BrowserAction, BrowserCallContext, BrowserSession } from '../browser/browser-runtime-port'
@@ -15,10 +16,18 @@ const SAFE_ERRORS: Record<string, string> = {
   browser_context_invalid: 'Browser execution context is unavailable',
   browser_unavailable: 'Browser runtime is unavailable',
   browser_arguments_invalid: 'Browser arguments are invalid'
+  ,
+  runtime_resource_stale: 'Browser resource is stale for the current run'
 }
 
 export function createBrowserToolHandlers(
-  service?: Pick<BrowserRuntimeService, 'createSession' | 'attachSession' | 'closeSession' | 'execute'>
+  service?: Pick<
+    BrowserRuntimeService,
+    'createSession' | 'attachSession' | 'closeSession' | 'execute'
+  > &
+    Partial<
+      Pick<BrowserRuntimeService, 'closeCurrent' | 'executeCurrent'>
+    >
 ): BuiltinToolHandler[] {
   return ['create', 'attach', 'close', ...ACTIONS].map((action) => ({
     name: `browser.${action}`, version: '1.0.0',
@@ -28,6 +37,23 @@ export function createBrowserToolHandlers(
         const call = context(input)
         if (action === 'create') return publicSession(await service.createSession(call))
         if (action === 'attach') return publicSession(await service.attachSession(identifier(input.arguments, 'profileId'), call))
+        if (isCurrentRunTarget(input.arguments)) {
+          if (action === 'close') {
+            if (!service.closeCurrent) {
+              throw browserError('unavailable', SAFE_ERRORS.browser_unavailable)
+            }
+            const sessionId = await service.closeCurrent(call)
+            return { sessionId, status: 'closed' }
+          }
+          if (!service.executeCurrent) {
+            throw browserError('unavailable', SAFE_ERRORS.browser_unavailable)
+          }
+          return await service.executeCurrent(
+            action as BrowserAction,
+            input.arguments,
+            call
+          )
+        }
         const sessionId = identifier(input.arguments, 'sessionId')
         if (action === 'close') {
           await service.closeSession(sessionId, call)
@@ -52,11 +78,38 @@ function context(input: BuiltinToolHandlerInput): BrowserCallContext {
     ownerKey: JSON.stringify([input.context.owner.type, input.context.owner.id, input.context.workspaceId ?? null]),
     executionId: input.executionId,
     ...(input.context.parentExecutionId
-      ? { runId: input.context.parentExecutionId }
+      ? {
+          runId: input.context.parentExecutionId,
+          authorityDigest: createHash('sha256')
+            .update(
+              JSON.stringify({
+                ownerKey: JSON.stringify([
+                  input.context.owner.type,
+                  input.context.owner.id,
+                  input.context.workspaceId ?? null
+                ]),
+                runId: input.context.parentExecutionId
+              })
+            )
+            .digest('hex')
+        }
+      : {}),
+    ...(input.context.conversationId
+      ? { conversationId: input.context.conversationId }
       : {}),
     scopeRoots: [...input.scopeRoots],
     signal: input.signal
   }
+}
+
+function isCurrentRunTarget(args: JsonObject): boolean {
+  const target = args.target
+  return (
+    typeof target === 'object' &&
+    target !== null &&
+    !Array.isArray(target) &&
+    (target as Record<string, unknown>).kind === 'current_run'
+  )
 }
 
 function identifier(args: JsonObject, key: string): string {

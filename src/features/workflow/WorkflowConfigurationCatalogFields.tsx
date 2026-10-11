@@ -1,5 +1,6 @@
 import type { ConnectorDto, ModelPoolDto } from '../../../shared/business'
 import type { WorkflowReasoningPolicy } from '../../../domain/workflow'
+import { Select } from '../../components/ui'
 import { useLocalization } from '../../localization/LocalizationProvider'
 
 export function WorkflowFixedModelSelector({
@@ -16,7 +17,7 @@ export function WorkflowFixedModelSelector({
   return (
     <label>
       <span>{t('workflowConfig.profileId')}</span>
-      <select name="workflow-configuration-catalog-fields-profile-id" autoComplete="off"
+      <Select name="workflow-configuration-catalog-fields-profile-id" autoComplete="off"
         required
         value={profileId}
         onChange={(event) => onChange(event.target.value)}
@@ -36,7 +37,7 @@ export function WorkflowFixedModelSelector({
             {profileId}
           </option>
         ) : null}
-      </select>
+      </Select>
     </label>
   )
 }
@@ -102,7 +103,7 @@ export function WorkflowReasoningSelector({
   return (
     <label>
       <span>{t('workflowConfig.reasoning')}</span>
-      <select name="workflow-configuration-catalog-fields-value" autoComplete="off"
+      <Select name="workflow-configuration-catalog-fields-value" autoComplete="off"
         value={value}
         onChange={(event) =>
           onChange(event.target.value as WorkflowReasoningPolicy)
@@ -122,7 +123,7 @@ export function WorkflowReasoningSelector({
             </option>
           )
         )}
-      </select>
+      </Select>
     </label>
   )
 }

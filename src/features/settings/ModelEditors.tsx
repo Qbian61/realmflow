@@ -1,4 +1,5 @@
-import { Plus, Trash2, X } from 'lucide-react'
+import { Plus, Trash2, X
+} from 'lucide-react'
 import type { FormEvent } from 'react'
 import type {
   ModelAvailabilityCheck,
@@ -12,7 +13,8 @@ import {
   DialogFooter,
   DialogHeader,
   Field,
-  IconButton
+  IconButton,
+  Select,
 } from '../../components/ui'
 import { useLocalization } from '../../localization/LocalizationProvider'
 import type { Translator } from '../../localization/translate'
@@ -99,7 +101,7 @@ export function ProviderEditor({
             />
           </Field>
           <Field name="settings-editor-provider-type" label={t('settings.editor.provider.type')}>
-            <select
+            <Select
               disabled={draft.source === 'builtin'}
               value={draft.type}
               onChange={(event) =>
@@ -130,7 +132,7 @@ export function ProviderEditor({
                 {t('settings.provider.anthropicMessages')}
               </option>
               <option value="local">{t('settings.editor.provider.local')}</option>
-            </select>
+            </Select>
           </Field>
           <Field name="settings-editor-provider-base-url"
             className="model-form-wide"
@@ -347,7 +349,7 @@ export function ProfileEditor({
         <DialogBody className="model-editor-body">
         <div className="model-form-grid">
           <Field name="settings-editor-profile-provider" label={t('settings.editor.profile.provider')}>
-            <select
+            <Select
               value={draft.providerId}
               disabled={draft.expectedRevision > 0}
               onChange={(event) => {
@@ -366,7 +368,7 @@ export function ProfileEditor({
                   {provider.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </Field>
           <Field name="settings-editor-profile-display-name" label={t('settings.editor.profile.displayName')}>
             <input
@@ -395,7 +397,7 @@ export function ProfileEditor({
             />
           </Field>
           <Field name="settings-editor-profile-api-type" label={t('settings.editor.profile.apiType')}>
-            <select value={draft.apiType ?? ''} disabled>
+            <Select value={draft.apiType ?? ''} disabled>
               {draft.apiType &&
               ![
                 'openai_completions',
@@ -417,7 +419,7 @@ export function ProfileEditor({
                 {t('settings.provider.anthropicMessages')}
               </option>
               <option value="local">{t('settings.editor.provider.local')}</option>
-            </select>
+            </Select>
           </Field>
           <Field name="settings-editor-profile-context-window" label={t('settings.editor.profile.contextWindow')}>
             <input inputMode="numeric"

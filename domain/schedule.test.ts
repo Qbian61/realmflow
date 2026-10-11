@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { createApprovalProfileSnapshot } from './approval-profile'
 import {
   createSchedule,
   createScheduleRun,
@@ -59,6 +60,7 @@ describe('schedule domain', () => {
         { service: 'issues', connectorId: 'connector-1' }
       ],
       permissions: ['filesystem.read'],
+      approvalProfile: createApprovalProfileSnapshot('protected'),
       revision: 1,
       createdAt: 100,
       updatedAt: 100

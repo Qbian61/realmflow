@@ -46,6 +46,7 @@ type ScheduleRow = {
   skill_input_json: string
   connector_bindings_json: string
   permissions_json: string
+  approval_profile_json: string
   revision: number
   created_at: number
   updated_at: number
@@ -69,6 +70,9 @@ type ScheduleRunRow = {
   trigger_source: ScheduleRun['triggerSource']
   status: ScheduleRun['status']
   tool_execution_id: string | null
+  approval_profile_json: string | null
+  permission_request_id: string | null
+  provider_run_id: string | null
   error_code: string | null
   error_message: string | null
   scheduled_for: number | null
@@ -191,7 +195,7 @@ export class SqliteScheduleRepository implements ScheduleStore {
       const active = this.database
         .prepare(
           `SELECT id FROM schedule_runs
-           WHERE schedule_id = ? AND status = 'running' LIMIT 1`
+           WHERE schedule_id = ? AND status IN ('running', 'waiting_permission') LIMIT 1`
         )
         .get(input.id)
       if (active) {
@@ -255,7 +259,7 @@ export class SqliteScheduleRepository implements ScheduleStore {
       const active = this.database
         .prepare(
           `SELECT * FROM schedule_runs
-           WHERE schedule_id = ? AND status = 'running'
+           WHERE schedule_id = ? AND status IN ('running', 'waiting_permission')
            ORDER BY started_at DESC, id DESC LIMIT 1`
         )
         .get(input.run.scheduleId) as ScheduleRunRow | undefined
@@ -494,7 +498,7 @@ export class SqliteScheduleRepository implements ScheduleStore {
       const active = this.database
         .prepare(
           `SELECT id FROM schedule_runs
-           WHERE schedule_id = ? AND status = 'running'
+           WHERE schedule_id = ? AND status IN ('running', 'waiting_permission')
            ORDER BY started_at DESC, id DESC LIMIT 1`
         )
         .get(input.run.scheduleId)
@@ -599,7 +603,7 @@ export class SqliteScheduleRepository implements ScheduleStore {
         const active = this.database
           .prepare(
             `SELECT id FROM schedule_runs
-             WHERE schedule_id = ? AND status = 'running'
+             WHERE schedule_id = ? AND status IN ('running', 'waiting_permission')
              ORDER BY started_at DESC, id DESC LIMIT 1`
           )
           .get(run.scheduleId)
@@ -754,8 +758,8 @@ export class SqliteScheduleRepository implements ScheduleStore {
           workspace_id, model_profile_id, target_kind, target_definition_id,
           target_definition_version, target_definition_digest,
           skill_input_json, connector_bindings_json, permissions_json,
-          revision, created_at, updated_at, last_run_at, last_run_status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          revision, created_at, updated_at, last_run_at, last_run_status, approval_profile_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
           description = excluded.description,
@@ -775,7 +779,8 @@ export class SqliteScheduleRepository implements ScheduleStore {
           revision = excluded.revision,
           updated_at = excluded.updated_at,
           last_run_at = excluded.last_run_at,
-          last_run_status = excluded.last_run_status`
+          last_run_status = excluded.last_run_status,
+          approval_profile_json = excluded.approval_profile_json`
       )
       .run(
         schedule.id,
@@ -798,7 +803,8 @@ export class SqliteScheduleRepository implements ScheduleStore {
         schedule.createdAt,
         schedule.updatedAt,
         schedule.lastRunAt ?? null,
-        schedule.lastRunStatus ?? null
+        schedule.lastRunStatus ?? null,
+        JSON.stringify(schedule.approvalProfile)
       )
   }
 
@@ -808,15 +814,18 @@ export class SqliteScheduleRepository implements ScheduleStore {
         `INSERT INTO schedule_runs (
           id, schedule_id, schedule_revision, schedule_name, trigger_source,
           status, tool_execution_id, error_code, error_message, scheduled_for,
-          started_at, finished_at, revision
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          started_at, finished_at, revision, approval_profile_json, permission_request_id, provider_run_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           status = excluded.status,
           tool_execution_id = excluded.tool_execution_id,
           error_code = excluded.error_code,
           error_message = excluded.error_message,
           finished_at = excluded.finished_at,
-          revision = excluded.revision`
+          revision = excluded.revision,
+          approval_profile_json = excluded.approval_profile_json,
+          permission_request_id = excluded.permission_request_id,
+          provider_run_id = excluded.provider_run_id`
       )
       .run(
         run.id,
@@ -831,7 +840,10 @@ export class SqliteScheduleRepository implements ScheduleStore {
         run.scheduledFor ?? null,
         run.startedAt,
         run.finishedAt ?? null,
-        run.revision
+        run.revision,
+        run.approvalProfile ? JSON.stringify(run.approvalProfile) : null,
+        run.permissionRequestId ?? null,
+        run.providerRunId ?? null
       )
   }
 
@@ -925,6 +937,7 @@ function mapSchedule(row: ScheduleRow): Schedule {
       row.connector_bindings_json
     ) as ScheduleConnectorBinding[],
     permissions: JSON.parse(row.permissions_json) as Schedule['permissions'],
+    approvalProfile: JSON.parse(row.approval_profile_json) as Schedule['approvalProfile'],
     revision: row.revision,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -959,6 +972,9 @@ function mapScheduleRun(row: ScheduleRunRow): ScheduleRun {
     scheduleName: row.schedule_name,
     triggerSource: row.trigger_source,
     status: row.status,
+    ...(row.approval_profile_json === null ? {} : { approvalProfile: JSON.parse(row.approval_profile_json) as ScheduleRun['approvalProfile'] }),
+    ...(row.permission_request_id === null ? {} : { permissionRequestId: row.permission_request_id }),
+    ...(row.provider_run_id === null ? {} : { providerRunId: row.provider_run_id }),
     ...(row.tool_execution_id === null
       ? {}
       : { toolExecutionId: row.tool_execution_id }),

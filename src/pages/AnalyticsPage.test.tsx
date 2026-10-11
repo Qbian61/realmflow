@@ -352,6 +352,7 @@ describe("AnalyticsPage", () => {
       await screen.findByRole("tabpanel", { name: "モデル呼び出し" }),
     ).toBeVisible();
     expect(screen.getByLabelText("期間")).toBeVisible();
+    fireEvent.click(screen.getByRole("combobox", { name: "モデル" }));
     expect(screen.getByRole("option", { name: "GPT 4.1" })).toBeVisible();
   });
 

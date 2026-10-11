@@ -260,6 +260,50 @@ describe('AgentToolLoopCoordinator', () => {
     )).not.toContain(`rf_files_read_${digest.slice(0, 8)}`)
   })
 
+  it('grants the exact required high-risk tool selected through a schedule Skill', async () => {
+    const tool = { ...definition, risk: 'high' as const }
+    const catalog = { packages: [],
+      tools: [{ kind: 'tool' as const, ...tool, definition: tool, status: 'enabled' as const, enabledPreference: true, dependencyIssues: [], revision: 1, updatedAt: 0 }],
+      skills: [{ kind: 'skill' as const, ...skillDefinition, definition: skillDefinition, status: 'enabled' as const, enabledPreference: true, dependencyIssues: [], revision: 1, updatedAt: 0 }] }
+    const createRun = vi.fn(async () => ({ runId: 'scheduled-high' }))
+    const coordinator = new AgentToolLoopCoordinator({
+      gateway: { createRun, cancelRun: vi.fn(), submitToolResult: vi.fn(), streamEvents: vi.fn() },
+      catalog: { list: async () => catalog }, tools: { execute: vi.fn() },
+      skills: { readInstructions: async () => 'Use the selected tool.' }
+    })
+    await expect(coordinator.createRun({ conversationId: 'schedule:test', workspaceId: 'workspace-1',
+      scheduleRunId: 'schedule-run', messages: [{ role: 'user', content: 'Execute the reviewed Skill' }],
+      skill: { kind: 'skill', id: skillDefinition.id, version: skillDefinition.version, digest: skillDefinition.definitionDigest } }))
+      .resolves.toHaveProperty('runId')
+  })
+
+  it('recovers the exact selected schedule Skill and workspace from its immutable snapshot', async () => {
+    const created: AgentRuntimeRun[] = []
+    const save = vi.fn().mockResolvedValue(true)
+    const tool = { ...definition, risk: 'high' as const }
+    const coordinator = new AgentToolLoopCoordinator({
+      gateway: { createRun: async () => ({ runId: 'provider-schedule' }),
+        cancelRun: vi.fn(), submitToolResult: vi.fn(), streamEvents: vi.fn() },
+      catalog: { list: async () => ({ packages: [],
+        tools: [{ kind: 'tool' as const, ...tool, definition: tool, status: 'enabled' as const, enabledPreference: true, dependencyIssues: [], revision: 1, updatedAt: 0 }],
+        skills: [{ kind: 'skill' as const, ...skillDefinition, definition: skillDefinition, status: 'enabled' as const, enabledPreference: true, dependencyIssues: [], revision: 1, updatedAt: 0 }] }) },
+      tools: { execute: vi.fn() }, skills: { readInstructions: async () => 'Use the selected tool.' },
+      runtimeRuns: {
+        create: async run => { created.push(run) }, bindProviderRun: vi.fn(), bindProviderAttempt: vi.fn(),
+        transition: vi.fn(), getByProviderRunId: vi.fn(), listByRootRunId: vi.fn(),
+        listByParentRunId: vi.fn(), listUnfinished: vi.fn()
+      },
+      checkpoints: { save, getLatest: vi.fn(), list: vi.fn() }
+    })
+    await coordinator.createRun({
+      conversationId: 'schedule:test', workspaceId: 'workspace-1', scheduleRunId: 'schedule-run',
+      messages: [{ role: 'user', content: 'Execute the reviewed Skill' }],
+      skill: { kind: 'skill', id: skillDefinition.id, version: skillDefinition.version, digest: skillDefinition.definitionDigest }
+    })
+    await expect(coordinator.inspectRecoveryConfiguration(created[0], save.mock.calls.at(-1)![0]))
+      .resolves.toMatchObject({ profileAvailable: true, capabilitiesAvailable: true, permissionValid: true })
+  })
+
   it('rejects recovery when the effective policy environment changes before contacting the provider', async () => {
     let available = true
     const created: AgentRuntimeRun[] = []
@@ -3873,6 +3917,7 @@ describe('AgentToolLoopCoordinator', () => {
       snapshot: {
         schemaVersion: 1,
         runId: 'runtime-parent',
+        approvalProfile: { schemaVersion: 1, id: 'cautious', policyVersion: '1.0.0', digest: 'a'.repeat(64) },
         conversationId: 'conversation-1',
         rootRunId: 'runtime-root',
         parentRunId: 'runtime-root',
@@ -3939,6 +3984,7 @@ describe('AgentToolLoopCoordinator', () => {
         id: 'runtime-branch',
         snapshot: expect.objectContaining({
           runId: 'runtime-branch',
+          approvalProfile: expect.objectContaining({ id: 'cautious' }),
           rootRunId: 'runtime-root',
           parentRunId: 'runtime-parent',
           delegationDepth: 2,

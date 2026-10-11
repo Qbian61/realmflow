@@ -728,6 +728,7 @@ export type ConversationMessageDto = {
 }
 
 export type ConversationDto = {
+  approvalProfileId?: import('../domain/approval-profile').ApprovalProfileId
   id: string
   kind: ConversationKind
   knowledgeScope?: ConversationKnowledgeScope
@@ -757,6 +758,7 @@ export type ConversationMessageReferences = {
 }
 
 export type CreateConversationCommand = {
+  approvalProfileId?: import('../domain/approval-profile').ApprovalProfileId
   id: string
   kind: ConversationKind
   knowledgeScope: ConversationKnowledgeScope
@@ -775,15 +777,48 @@ export type CreateConversationCommand = {
 }
 
 export type AppendConversationMessageCommand = {
+  approvalProfileId?: import('../domain/approval-profile').ApprovalProfileId
   sessionId: string
   messageId: string
   content: string
   expectedRevision: number
   modelProfileId?: string
   reasoningMode?: ReasoningPreference
+  contextMode?: 'auto' | 'fresh' | 'continuation'
   applicationLocale?: 'zh-CN' | 'en' | 'ja'
   references?: ConversationMessageReferences
   attachments?: ConversationAttachmentSubmission
+}
+
+export type ConversationContextDiagnosticsDto = {
+  sourceMessageId: string
+  relation: 'fresh' | 'continuation' | 'reference'
+  reasons: string[]
+  selectedMessageCount: number
+  excluded: Array<{ reason: string; count: number }>
+  recentMessageCount: number
+  compactedFactCount: number
+  recalledMemoryCount: number
+  characterCount: number
+  estimatedTokens: number
+  projectionDigest: string
+  createdAt: number
+  leases: Array<{
+    resourceType:
+      | 'browser_session'
+      | 'process'
+      | 'terminal'
+      | 'computer_session'
+    status: 'active' | 'released' | 'interrupted' | 'expired'
+    epoch: number
+  }>
+}
+
+export type ConversationTranscriptSearchResultDto = {
+  messageId: string
+  role: 'user' | 'assistant'
+  content: string
+  rank: number
 }
 
 export type RenameConversationCommand = {
@@ -802,6 +837,7 @@ export type DeleteConversationResult =
   | { status: 'conflict'; conversation: ConversationDto }
 
 export type SendFollowUpSuggestionCommand = {
+  approvalProfileId?: import('../domain/approval-profile').ApprovalProfileId
   sessionId: string
   suggestionSetId: string
   suggestionId: string
@@ -1666,6 +1702,14 @@ export interface BusinessQueryApi {
   getConversation: (query: {
     sessionId: string
   }) => Promise<ConversationDto | undefined>
+  getConversationContextDiagnostics: (query: {
+    sessionId: string
+  }) => Promise<ConversationContextDiagnosticsDto | undefined>
+  searchConversationTranscript: (query: {
+    sessionId: string
+    query: string
+    limit?: number
+  }) => Promise<ConversationTranscriptSearchResultDto[]>
   listKnowledgeSources: (query: {
     workspaceId: string
   }) => Promise<KnowledgeSourceDto[]>

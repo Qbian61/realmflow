@@ -1,9 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState
+} from 'react'
 import type { ToolPolicyApi, ToolPolicyConfiguration, ToolPolicyPreview, ToolPolicyQuery } from '../../../shared/tool-policy'
 import type { BusinessApi } from '../../../shared/business'
 import { AGENT_RUN_SCENARIO_IDS, type AgentRunScenarioId } from '../../../domain/agent-runtime'
 import type { ToolPolicyLayer } from '../../../domain/tool-policy'
-import { Button, Field, InlineAlert } from '../../components/ui'
+import {
+  Button,
+  Field,
+  InlineAlert,
+  Select,
+} from '../../components/ui'
 import { useLocalization } from '../../localization/LocalizationProvider'
 import { ToolPolicyRuleEditor } from './ToolPolicyRuleEditor'
 import './ToolPolicyPanel.css'
@@ -103,34 +109,34 @@ export function ToolPolicyPanel({ api, business }: {
     <header><h2>{t('toolPolicy.title')}</h2><p>{t('toolPolicy.description')}</p></header>
     <div className="tool-policy-context">
       <Field name="scenario" label={t('toolPolicy.scenario')} disabled={saving}>
-        <select value={scenarioId} onChange={(event) => setScenarioId(event.target.value as AgentRunScenarioId)}>
+        <Select value={scenarioId} onChange={(event) => setScenarioId(event.target.value as AgentRunScenarioId)}>
           {AGENT_RUN_SCENARIO_IDS.map((scenario) =>
             <option key={scenario} value={scenario}>{t(`toolPolicy.scenario.${scenario}`)}</option>)}
-        </select>
+        </Select>
       </Field>
       <Field name="scope" label={t('toolPolicy.scope')} disabled={saving}>
-        <select value={scope} onChange={(event) => setScope(event.target.value)}>
+        <Select value={scope} onChange={(event) => setScope(event.target.value)}>
           <option value="user">{t('toolPolicy.user')}</option>
           {spaces.map((space) => <option key={space.id} value={space.id}>{space.label}</option>)}
-        </select>
+        </Select>
       </Field>
       <Field name="provider" label={t('toolPolicy.provider')} disabled={saving}>
-        <select value={providerId} onChange={(event) => { setProviderId(event.target.value); setOverride(false) }}>
+        <Select value={providerId} onChange={(event) => { setProviderId(event.target.value); setOverride(false) }}>
           <option value="">{t('toolPolicy.allProviders')}</option>
           {providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}
-        </select>
+        </Select>
       </Field>
     </div>
     {error ? <InlineAlert tone="danger" title={t(`toolPolicy.${error}`)} /> : null}
     {loading ? <p role="status">{t('toolPolicy.loading')}</p> : null}
     {configuration && !loading ? <form onSubmit={(event) => { event.preventDefault(); void save() }}>
       <Field name="modelFacingMode" label={t('toolPolicy.mode')} description={t('toolPolicy.modeHelp')} disabled={saving}>
-        <select value={modelFacingMode} onChange={(event) => {
+        <Select value={modelFacingMode} onChange={(event) => {
           setModelFacingMode(event.target.value as ToolPolicyConfiguration['modelFacingMode']); setSaved(false)
         }}>
           {(['auto', 'direct', 'facade', 'directory'] as const).map((mode) =>
             <option key={mode} value={mode}>{t(`toolPolicy.mode.${mode}`)}</option>)}
-        </select>
+        </Select>
       </Field>
       {providerId ? <Field name="override" label={t('toolPolicy.providerOverride')} description={t('toolPolicy.overrideHelp')}>
         <input type="checkbox" checked={override} disabled={saving} onChange={(event) => setOverride(event.target.checked)} />

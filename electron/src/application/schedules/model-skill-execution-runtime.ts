@@ -20,6 +20,7 @@ type Dependencies = {
 type Command = {
   schedule: Schedule
   scheduleRunId: string
+  onPermissionRequired?: (input: { providerRunId: string; executionId: string; requestId: string }) => Promise<void> | void
 }
 
 type Execution = {
@@ -59,6 +60,9 @@ export class ModelSkillExecutionRuntime {
       runId,
       controller.signal
     )) {
+      if (event.type === 'tool.call.permission_required' && event.data.toolExecutionId && event.data.requestId) {
+        await command.onPermissionRequired?.({ providerRunId: runId, executionId: event.data.toolExecutionId, requestId: event.data.requestId })
+      }
       const execution = terminalExecution(runId, event)
       if (execution) return { outcome: 'executed', execution }
     }
@@ -88,6 +92,7 @@ function contextFor(command: Command): ConversationContext {
   const task = schedule.description || schedule.name
   return {
     conversationId: `schedule:${schedule.id}:${scheduleRunId}`,
+    approvalProfileId: schedule.approvalProfile.id,
     workspaceId: schedule.workspaceId,
     scheduleRunId,
     triggerBindingId: `schedule:${schedule.id}:revision:${schedule.revision}`,

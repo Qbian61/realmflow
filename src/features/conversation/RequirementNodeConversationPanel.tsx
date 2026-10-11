@@ -4,12 +4,14 @@ import type {
   NodeQuestionDto,
 } from "../../../shared/business";
 import { Composer } from "../../components/Composer";
+import { Select } from "../../components/ui";
 import { useLocalization } from "../../localization/LocalizationProvider";
 import { ConversationMessageFooter } from "./ConversationMessageFooter";
 import { ConversationMessageList } from "./ConversationMessageList";
 import { ConversationShareController } from "./ConversationShareController";
 import { KnowledgeNoteCapture } from "./KnowledgeNoteCapture";
 import { useToast } from "../toast/ToastProvider";
+import { useDefaultApprovalProfile } from "../permissions/use-default-approval-profile";
 
 type Props = {
   requirementId: string;
@@ -45,6 +47,12 @@ export function RequirementNodeConversationPanel({
   const [committedConversation, setCommittedConversation] =
     useState(conversation);
   const displayedConversation = committedConversation ?? conversation;
+  const defaultApproval = useDefaultApprovalProfile();
+  const [selectedApproval, setSelectedApproval] = useState<{
+    nodeRunId: string; value: import("../../../domain/approval-profile").ApprovalProfileId
+  }>();
+  const approvalProfileId = selectedApproval?.nodeRunId === nodeRunId
+    ? selectedApproval.value : displayedConversation?.approvalProfileId ?? defaultApproval;
   const openQuestions = questions.filter(
     (question) => question.status === "open",
   );
@@ -111,6 +119,7 @@ export function RequirementNodeConversationPanel({
           content,
           expectedRevision: displayedConversation.revision,
           applicationLocale: locale,
+          approvalProfileId,
           ...(references ? { references } : {}),
         });
       } else {
@@ -123,6 +132,7 @@ export function RequirementNodeConversationPanel({
           title: nodeName,
           prompt: content,
           applicationLocale: locale,
+          approvalProfileId,
           ...(references ? { references } : {}),
         });
       }
@@ -246,7 +256,7 @@ export function RequirementNodeConversationPanel({
           {openQuestions.length > 0 ? (
             <label className="requirement-node-question-link">
               <span>{t("nodeConversation.linkQuestion")}</span>
-              <select name="node-conversation-link-question" autoComplete="off"
+              <Select name="node-conversation-link-question" autoComplete="off"
                 aria-label={t("nodeConversation.linkQuestion")}
                 value={questionId}
                 disabled={submitting}
@@ -258,10 +268,12 @@ export function RequirementNodeConversationPanel({
                     {question.prompt}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
           ) : null}
           <Composer
+            approvalProfileId={approvalProfileId}
+            onApprovalProfileChange={(value) => setSelectedApproval({ nodeRunId, value })}
             permissionRunIds={displayedConversation?.messages.flatMap(message => message.runId ? [message.runId] : []) ?? []}
             value={prompt}
             placeholder={t("nodeConversation.placeholder")}

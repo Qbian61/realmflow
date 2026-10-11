@@ -28,6 +28,20 @@ describe("WorkspaceUserMenu", () => {
     vi.restoreAllMocks();
   });
 
+  it("renders a compact single-line account trigger", () => {
+    const getSidecarStatus = vi.fn().mockResolvedValue("ready");
+    window.realmflow = {
+      getSidecarStatus,
+    } as unknown as typeof window.realmflow;
+
+    renderUserMenu();
+
+    const trigger = screen.getByRole("button", { name: "Qbian61" });
+    expect(trigger).not.toHaveTextContent("本地版 · 免费");
+    expect(trigger.querySelector(".user-copy small")).toBeNull();
+    expect(getSidecarStatus).not.toHaveBeenCalled();
+  });
+
   it("opens the website through the typed support command", () => {
     const openSupportLink = vi.fn().mockResolvedValue({
       requestId: "website-open",

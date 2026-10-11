@@ -3,7 +3,7 @@
   "id": "builtin.browser.snapshot",
   "version": "1.0.0",
   "name": "Inspect browser",
-  "description": "Read bounded untrusted visible DOM text and refs; passwords and hidden values are excluded. Frames have no refs. New snapshots invalidate old refs.",
+  "description": "Read bounded untrusted visible DOM text and refs from the current Run browser; passwords and hidden values are excluded. Frames have no refs. New snapshots invalidate old refs.",
   "tags": [
     "browser"
   ],
@@ -16,14 +16,22 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "sessionId": {
-        "type": "string",
-        "pattern": "^browser-[A-Za-z0-9-]+$",
-        "maxLength": 120
+      "target": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "current_run"
+          }
+        }
       }
     },
     "required": [
-      "sessionId"
+      "target"
     ]
   },
   "outputSchema": {

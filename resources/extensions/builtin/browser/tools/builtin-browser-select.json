@@ -3,7 +3,7 @@
   "id": "builtin.browser.select",
   "version": "1.0.0",
   "name": "Select browser option",
-  "description": "Select an option by value using a current snapshot ref.",
+  "description": "Select an option by value in the current Run browser using a current snapshot ref.",
   "tags": [
     "browser"
   ],
@@ -16,10 +16,18 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "sessionId": {
-        "type": "string",
-        "pattern": "^browser-[A-Za-z0-9-]+$",
-        "maxLength": 120
+      "target": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "current_run"
+          }
+        }
       },
       "ref": {
         "type": "string",
@@ -33,7 +41,7 @@
       }
     },
     "required": [
-      "sessionId",
+      "target",
       "ref",
       "value"
     ]

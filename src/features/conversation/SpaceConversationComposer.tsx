@@ -4,6 +4,7 @@ import { Composer } from "../../components/Composer";
 import { useLocalization } from "../../localization/LocalizationProvider";
 import { useToast } from "../toast/ToastProvider";
 import type { ReasoningPreference } from "../../../domain/reasoning-router";
+import { useDefaultApprovalProfile } from "../permissions/use-default-approval-profile";
 
 type SpaceConversationComposerProps = {
   spacePath: string;
@@ -13,6 +14,8 @@ type SpaceConversationComposerProps = {
     prompt: string,
     modelProfileId?: string,
     reasoningMode?: ReasoningPreference,
+    attachments?: import("../../../shared/conversation-attachments").ConversationAttachmentSubmission,
+    approvalProfileId?: import("../../../domain/approval-profile").ApprovalProfileId,
   ) => void | Promise<void>;
 };
 
@@ -24,6 +27,9 @@ export function SpaceConversationComposer({
   const { t } = useLocalization();
   const toast = useToast();
   const [prompt, setPrompt] = useState("");
+  const defaultApproval = useDefaultApprovalProfile();
+  const [selectedApproval, setApprovalProfileId] = useState<import("../../../domain/approval-profile").ApprovalProfileId>();
+  const approvalProfileId = selectedApproval ?? defaultApproval;
   const [submitting, setSubmitting] = useState(false);
   const models = useModelProfiles();
 
@@ -37,6 +43,8 @@ export function SpaceConversationComposer({
         value,
         models.selectedId || undefined,
         "auto",
+        undefined,
+        approvalProfileId,
       );
       setPrompt("");
     } catch {
@@ -49,6 +57,8 @@ export function SpaceConversationComposer({
   return (
     <section className="space-chat" aria-label={t("spaceConversation.region")}>
       <Composer
+        approvalProfileId={approvalProfileId}
+        onApprovalProfileChange={setApprovalProfileId}
         value={prompt}
         placeholder={t("spaceConversation.placeholder")}
         labels={{

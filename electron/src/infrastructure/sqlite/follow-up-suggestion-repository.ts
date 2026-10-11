@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3'
+import { normalizeApprovalProfile, type ApprovalProfileId } from '../../../../domain/approval-profile'
 import type {
   FollowUpSuggestionSet,
   FollowUpSuggestionSetStatus
@@ -140,6 +141,7 @@ export class SqliteFollowUpSuggestionRepository
   }
 
   async beginSuggestedTurn(input: {
+    approvalProfileId?: ApprovalProfileId
     sessionId: string
     suggestionSetId: string
     suggestionId: string
@@ -151,6 +153,8 @@ export class SqliteFollowUpSuggestionRepository
     modelName?: string
     createdAt: number
   }): Promise<BeginSuggestedTurnResult> {
+    const approvalProfileId = input.approvalProfileId === undefined
+      ? undefined : normalizeApprovalProfile(input.approvalProfileId)
     const status = this.database.transaction(() => {
       const session = this.database
         .prepare('SELECT revision FROM chat_sessions WHERE id = ?')
@@ -249,11 +253,13 @@ export class SqliteFollowUpSuggestionRepository
       this.database
         .prepare(
           `UPDATE chat_sessions
-           SET revision = revision + 1, updated_at = ?
+           SET revision = revision + 1, updated_at = ?,
+               approval_profile_id = COALESCE(?, approval_profile_id)
            WHERE id = ? AND revision = ?`
         )
         .run(
           input.createdAt,
+          approvalProfileId ?? null,
           input.sessionId,
           input.expectedSessionRevision
         )

@@ -1,4 +1,5 @@
-import { X } from "lucide-react";
+import { X
+} from "lucide-react";
 import { useState } from "react";
 import type { WorkbenchAttachmentApi } from "../../../../shared/workbench-attachments";
 import type {
@@ -15,6 +16,7 @@ import {
   DrawerHeader,
   Field,
   IconButton,
+  Select,
 } from "../../../components/ui";
 import { useLocalization } from "../../../localization/LocalizationProvider";
 import { TaskAttachmentField } from "./TaskAttachmentField";
@@ -149,7 +151,7 @@ function TaskFieldInput({
   if (field.fieldType === "single_select") {
     return (
       <Field name={`task-record-${record?.id ?? "new"}-${field.id}`} label={field.name}>
-        <select
+        <Select
           id={id}
           value={typeof value === "string" ? value : ""}
           onChange={(event) => onChange(event.target.value)}
@@ -160,7 +162,7 @@ function TaskFieldInput({
               {option.label}
             </option>
           ))}
-        </select>
+        </Select>
       </Field>
     );
   }

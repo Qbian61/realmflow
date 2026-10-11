@@ -40,4 +40,43 @@ describe('builtin browser Tool handlers', () => {
       executionId: 'execution-1'
     }))
   })
+
+  it('executes normal actions through the current run without a model session id', async () => {
+    const executeCurrent = vi.fn().mockResolvedValue({ text: 'ready' })
+    const handler = createBrowserToolHandlers({
+      createSession: vi.fn(),
+      attachSession: vi.fn(),
+      closeSession: vi.fn(),
+      execute: vi.fn(),
+      executeCurrent
+    } as never).find(({ name }) => name === 'browser.snapshot')!
+
+    await expect(
+      handler.execute({
+        arguments: { target: { kind: 'current_run' } },
+        executionId: 'execution-1',
+        requestedBy: { type: 'model', id: 'conversation-1' },
+        context: {
+          owner: { type: 'conversation', id: 'conversation-1' },
+          conversationId: 'conversation-1',
+          parentExecutionId: 'run-1',
+          correlationId: 'correlation-1',
+          causationId: 'causation-1'
+        },
+        scopeRoots: [],
+        signal: new AbortController().signal,
+        sink: { emit: vi.fn() }
+      })
+    ).resolves.toEqual({ text: 'ready' })
+
+    expect(executeCurrent).toHaveBeenCalledWith(
+      'snapshot',
+      { target: { kind: 'current_run' } },
+      expect.objectContaining({
+        runId: 'run-1',
+        conversationId: 'conversation-1',
+        authorityDigest: expect.stringMatching(/^[a-f0-9]{64}$/)
+      })
+    )
+  })
 })

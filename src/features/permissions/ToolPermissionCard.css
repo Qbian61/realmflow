@@ -104,7 +104,7 @@
   min-width: 0;
 }
 .chat-session-composer > .composer-surface {
-  width: var(--conversation-content-width);
+  width: min(850px, 100%);
 }
 .composer-surface > .composer,
 .chat-session-composer > .composer-surface > .composer {

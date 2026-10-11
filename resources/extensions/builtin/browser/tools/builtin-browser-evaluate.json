@@ -3,7 +3,7 @@
   "id": "builtin.browser.evaluate",
   "version": "1.0.0",
   "name": "Evaluate browser snapshot",
-  "description": "Evaluate an expression over sanitized snapshot in an isolated offline sandbox after explicit approval. No live page JavaScript, cookies or storage.",
+  "description": "Evaluate an expression over the current Run sanitized snapshot in an isolated offline sandbox after explicit approval. No live page JavaScript, cookies or storage.",
   "tags": [
     "browser"
   ],
@@ -16,10 +16,18 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "sessionId": {
-        "type": "string",
-        "pattern": "^browser-[A-Za-z0-9-]+$",
-        "maxLength": 120
+      "target": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "current_run"
+          }
+        }
       },
       "expression": {
         "type": "string",
@@ -28,7 +36,7 @@
       }
     },
     "required": [
-      "sessionId",
+      "target",
       "expression"
     ]
   },

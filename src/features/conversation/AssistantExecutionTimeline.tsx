@@ -51,6 +51,11 @@ export function AssistantExecutionTimeline({
     )
     return () => window.clearInterval(timer)
   }, [execution])
+  useEffect(() => {
+    if (execution?.status === 'completed') {
+      setManualOpen(false)
+    }
+  }, [execution?.status])
   if (!execution) return null
   const duration = Math.max(
     0,

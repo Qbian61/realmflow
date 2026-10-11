@@ -22,6 +22,7 @@ import type {
   RequirementWorkflow,
 } from "../../../domain/workflow";
 import type { RequirementExecutionViewDto } from "../../../shared/business";
+import { Select } from "../../components/ui";
 import { useLocalization } from "../../localization/LocalizationProvider";
 import { useToast } from "../toast/ToastProvider";
 import { TemplateMigrationDialog } from "./TemplateMigrationDialog";
@@ -374,7 +375,7 @@ export const RequirementWorkflowNodeEditor = forwardRef<
         >
           <label>
             <span>{t("workflowEditor.edges")}</span>
-            <select name="requirement-workflow-select-edge" autoComplete="off"
+            <Select name="requirement-workflow-select-edge" autoComplete="off"
               aria-label={t("requirementWorkflow.selectEdge")}
               value={selectedEdgeId}
               onChange={(event) => selectEdge(event.target.value)}
@@ -385,11 +386,11 @@ export const RequirementWorkflowNodeEditor = forwardRef<
                   {nodeNameForId(nodes, edge.targetNodeId)}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           <label>
             <span>{t("workflowEdge.source")}</span>
-            <select name="requirement-workflow-edge-source" autoComplete="off"
+            <Select name="requirement-workflow-edge-source" autoComplete="off"
               aria-label={t("requirementWorkflow.edgeSource")}
               value={edgeSourceNodeId}
               onChange={(event) => setEdgeSourceNodeId(event.target.value)}
@@ -399,11 +400,11 @@ export const RequirementWorkflowNodeEditor = forwardRef<
                   {node.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           <label>
             <span>{t("workflowEdge.target")}</span>
-            <select name="requirement-workflow-edge-target" autoComplete="off"
+            <Select name="requirement-workflow-edge-target" autoComplete="off"
               aria-label={t("requirementWorkflow.edgeTarget")}
               value={edgeTargetNodeId}
               onChange={(event) => setEdgeTargetNodeId(event.target.value)}
@@ -413,7 +414,7 @@ export const RequirementWorkflowNodeEditor = forwardRef<
                   {node.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           <div className="workflow-node-editor-actions">
             <button

@@ -1,4 +1,5 @@
-import { Plus, X } from "lucide-react";
+import { Plus, X
+} from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -14,6 +15,7 @@ import type {
   SpaceDto,
 } from "../../shared/business";
 import { MissedRunPolicyField } from "../features/schedules/MissedRunPolicyField";
+import { useScheduleRunRefresh } from "../features/schedules/use-schedule-run-refresh";
 import { RecentScheduleRuns } from "../features/schedules/SchedulePageSections";
 import { ScheduleRecommendations } from "../features/schedules/ScheduleRecommendations";
 import { ScheduledTaskList } from "../features/schedules/ScheduledTaskList";
@@ -25,6 +27,8 @@ import { useUrlQueryState } from "../navigation/url-query-state";
 import { toSkillCatalogOptions } from "../features/capabilities/catalog-skill-options";
 import {
   createScheduleCommandId,
+  enabledScheduleModels,
+  availableScheduleConnectors,
   scheduleRecommendations,
   type ModelPool,
   type ScheduleDraft,
@@ -45,6 +49,7 @@ import {
   TabList,
   Tabs,
   Toolbar,
+  Select,
 } from "../components/ui";
 
 export default function SchedulePage(): JSX.Element {
@@ -110,6 +115,8 @@ export default function SchedulePage(): JSX.Element {
     void load();
   }, [load]);
 
+  useScheduleRunRefresh(business, pageActive, setRuns);
+
   useEffect(() => {
     if (!draft || !pageActive) return;
     const closeOnEscape = (event: KeyboardEvent): void => {
@@ -119,14 +126,7 @@ export default function SchedulePage(): JSX.Element {
     return () => document.removeEventListener("keydown", closeOnEscape);
   }, [draft, pageActive]);
 
-  const enabledProfiles = useMemo(() => {
-    const enabledProviders = new Set(
-      models.providers.filter((item) => item.enabled).map((item) => item.id),
-    );
-    return models.profiles.filter(
-      (profile) => profile.enabled && enabledProviders.has(profile.providerId),
-    );
-  }, [models]);
+  const enabledProfiles = useMemo(() => enabledScheduleModels(models), [models]);
 
   const enabledSkills = useMemo(
     () =>
@@ -140,14 +140,7 @@ export default function SchedulePage(): JSX.Element {
     [skills],
   );
 
-  const availableConnectors = useMemo(
-    () =>
-      connectors.filter(
-        ({ connector }) =>
-          connector.enabled && connector.validation?.status === "available",
-      ),
-    [connectors],
-  );
+  const availableConnectors = useMemo(() => availableScheduleConnectors(connectors), [connectors]);
 
   const recommendations = scheduleRecommendations.map((item) => ({
     ...item,
@@ -158,6 +151,7 @@ export default function SchedulePage(): JSX.Element {
   function openCreate(preset?: (typeof recommendations)[number]): void {
     const skill = enabledSkills[0];
     setDraft({
+      approvalProfileId: "protected",
       name: preset?.name ?? "",
       description: preset?.description ?? "",
       cronExpression: preset?.cronExpression ?? "0 9 * * 1-5",
@@ -179,6 +173,7 @@ export default function SchedulePage(): JSX.Element {
 
   function openEdit(schedule: ScheduleDto): void {
     setDraft({
+      approvalProfileId: schedule.approvalProfile.id,
       id: schedule.id,
       expectedRevision: schedule.revision,
       name: schedule.name,
@@ -243,6 +238,7 @@ export default function SchedulePage(): JSX.Element {
       (item) => item.id === draft.skillVersionId,
     );
     const definition = {
+      approvalProfileId: draft.approvalProfileId,
       name: draft.name,
       description: draft.description,
       cronExpression: draft.cronExpression,
@@ -560,7 +556,7 @@ export default function SchedulePage(): JSX.Element {
                 onChange={(missedRunPolicy) => updateDraft({ missedRunPolicy })}
               />
               <Field name="schedule-form-workspace" label={t("schedule.form.workspace")}>
-                <select
+                <Select
                   aria-label={t("schedule.form.workspace")}
                   required
                   value={draft.workspaceId}
@@ -573,10 +569,10 @@ export default function SchedulePage(): JSX.Element {
                       {space.label}
                     </option>
                   ))}
-                </select>
+                </Select>
               </Field>
               <Field name="schedule-form-model" label={t("schedule.form.model")}>
-                <select
+                <Select
                   aria-label={t("schedule.form.model")}
                   required
                   value={draft.modelProfileId}
@@ -589,13 +585,13 @@ export default function SchedulePage(): JSX.Element {
                       {profile.displayName}
                     </option>
                   ))}
-                </select>
+                </Select>
               </Field>
               <Field name="schedule-form-skill-version"
                 className="schedule-field-wide"
                 label={t("schedule.form.skillVersion")}
               >
-                <select
+                <Select
                   aria-label={t("schedule.form.skillVersion")}
                   required
                   value={draft.skillVersionId}
@@ -606,11 +602,11 @@ export default function SchedulePage(): JSX.Element {
                       {skill.name} · {skill.version}
                     </option>
                   ))}
-                </select>
+                </Select>
               </Field>
               {(selectedSkill?.network.services ?? []).map((service) => (
                 <Field name={`schedule-connector-${service}`} label={`Connector · ${service}`} key={service}>
-                  <select
+                  <Select
                     aria-label={`Connector ${service}`}
                     required
                     value={draft.connectorIds[service] ?? ""}
@@ -628,7 +624,7 @@ export default function SchedulePage(): JSX.Element {
                         {connector.name}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </Field>
               ))}
               <Field name="schedule-form-skill-input"
@@ -645,6 +641,15 @@ export default function SchedulePage(): JSX.Element {
                     updateDraft({ skillInputText: event.target.value })
                   }
                 />
+              </Field>
+              <Field name="schedule-approval" label={t("composer.permissionLabel")}
+                description={t("schedule.approval.review")}>
+                <Select aria-label={t("composer.permissionLabel")} value={draft.approvalProfileId}
+                  onChange={event => updateDraft({ approvalProfileId: event.target.value as ScheduleDraft["approvalProfileId"] })}>
+                  <option value="cautious">{t("composer.permission.ask")}</option>
+                  <option value="protected">{t("composer.permission.default")}</option>
+                  <option value="trusted">{t("composer.permission.allow")}</option>
+                </Select>
               </Field>
             </DialogBody>
             <DialogFooter className="schedule-create-dialog__footer">

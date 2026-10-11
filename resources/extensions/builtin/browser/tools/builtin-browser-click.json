@@ -3,7 +3,7 @@
   "id": "builtin.browser.click",
   "version": "1.0.0",
   "name": "Click browser element",
-  "description": "Click a visible unobstructed element using a current snapshot ref. May submit data.",
+  "description": "Click a visible unobstructed element in the current Run browser using a current snapshot ref. May submit data.",
   "tags": [
     "browser"
   ],
@@ -16,10 +16,18 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "sessionId": {
-        "type": "string",
-        "pattern": "^browser-[A-Za-z0-9-]+$",
-        "maxLength": 120
+      "target": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "current_run"
+          }
+        }
       },
       "ref": {
         "type": "string",
@@ -28,7 +36,7 @@
       }
     },
     "required": [
-      "sessionId",
+      "target",
       "ref"
     ]
   },

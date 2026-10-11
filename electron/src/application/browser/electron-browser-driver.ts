@@ -1,5 +1,6 @@
 import type { JsonObject } from '../../../../domain/tool-protocol-validation'
-import type { BrowserAction, BrowserDriver, BrowserSession } from './browser-runtime-port'
+import type { BrowserAction, BrowserDriver, BrowserSession, BrowserEffectEvidence } from './browser-runtime-port'
+import { createHash } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import { ScopePathResolver } from '../tools/scope-path-resolver'
 import { BrowserArtifacts, browserUrl, MAX_BROWSER_ARTIFACT_BYTES, publicBrowserUrl } from './browser-artifacts'
@@ -45,6 +46,37 @@ export class ElectronBrowserDriver implements BrowserDriver {
     const page = this.pages.get(id)
     this.pages.delete(id)
     if (page && !page.window.isDestroyed()) page.window.destroy()
+  }
+
+  async describe(
+    session: BrowserSession, action: BrowserAction, args: JsonObject, signal: AbortSignal
+  ): Promise<BrowserEffectEvidence> {
+    signal.throwIfAborted()
+    const page = this.pages.get(session.id)
+    if (!page || page.window.isDestroyed()) throw new Error('Browser session is closed')
+    const url = page.window.webContents.getURL()
+    const cookies = await page.window.webContents.session.cookies.get({})
+    const privateSession = cookies.length > 0 ||
+      /(?:account|login|auth|dashboard|checkout|billing|admin|inbox|settings)(?:[/?#]|$)/i.test(url) ||
+      /[?&](?:token|key|auth|session|code)=/i.test(url)
+    let semantic: BrowserEffectEvidence['semantic'] = 'read'
+    let target: JsonObject = {}
+    if (['click', 'fill', 'select', 'press', 'upload'].includes(action)) {
+      const result = await page.evaluate(`globalThis.__realmflowBrowser.describe(${JSON.stringify(text(args, 'ref'))})`)
+      target = result.value
+      semantic = action === 'upload' || target.sensitive ? 'sensitive' :
+        action === 'click' && target.submits ||
+        action === 'press' && ['Enter', 'Space'].includes(String(args.key)) &&
+          (target.formPresent || target.tag === 'BUTTON' || target.role === 'button') ||
+        /send|submit|publish|purchase|pay|buy|delete|remove|confirm|发送|提交|发布|购买|支付|删除|确认/i.test(String(target.label ?? ''))
+          ? 'publish' : 'control'
+    }
+    if (action === 'navigate' || action === 'download') browserUrl(text(args, 'url'))
+    signal.throwIfAborted()
+    return {
+      url: publicBrowserUrl(url), privateSession, semantic,
+      targetDigest: createHash('sha256').update(JSON.stringify({ url, action, target, privateSession })).digest('hex')
+    }
   }
 
   async execute(

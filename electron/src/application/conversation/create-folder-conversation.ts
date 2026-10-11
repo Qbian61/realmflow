@@ -24,6 +24,7 @@ type CreateFolderConversationCommand = {
   folderPath?: string
   modelProfileId?: string
   reasoningMode?: ReasoningPreference
+  approvalProfileId?: import('../../../../domain/approval-profile').ApprovalProfileId
   applicationLocale?: 'zh-CN' | 'en' | 'ja'
   attachments?: ConversationAttachmentSubmission
 }
@@ -90,6 +91,7 @@ export class CreateFolderConversationUseCase {
         updatedAt: now
       },
       content: prompt,
+      ...(input.approvalProfileId ? { approvalProfileId: input.approvalProfileId } : {}),
       expectedRevision: 0,
       messageId: `${input.id}:message:1`,
       ...(onUpdate ? { onUpdate } : {}),

@@ -4,6 +4,7 @@ import type { WorkRootDto } from "../../shared/business";
 import { BackupSettings } from "../features/settings/BackupSettings";
 import { BuiltinProviderDialog } from "../features/settings/BuiltinProviderDialog";
 import { GeneralSettings } from "../features/settings/GeneralSettings";
+import { PermissionSettings } from "../features/settings/PermissionSettings";
 import { WebProviderSettings } from "../features/settings/WebProviderSettings";
 import {
   ProfileDeleteDialog,
@@ -111,6 +112,7 @@ export default function SettingsPage(): JSX.Element {
           ) : null}
 
           {activeSection === "general" ? (
+            <>
             <GeneralSettings
               currentWorkRoot={workRoot}
               historicalWorkRoots={historicalWorkRoots}
@@ -124,6 +126,8 @@ export default function SettingsPage(): JSX.Element {
                 void model.saveApplicationModelDefault(preference)
               }
             />
+            <PermissionSettings />
+            </>
           ) : activeSection === "models" ? (
             <ModelSettings
               providers={model.providers}

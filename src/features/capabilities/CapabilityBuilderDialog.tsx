@@ -23,7 +23,8 @@ import {
   DialogFooter,
   DialogHeader,
   Field,
-  IconButton
+  IconButton,
+  Select,
 } from '../../components/ui'
 import { useLocalization } from '../../localization/LocalizationProvider'
 
@@ -315,7 +316,7 @@ export function CapabilityBuilderDialog({
                     />
                   </Field>
                   <Field name="capabilities-builder-method" label={t('capabilities.builder.method')}>
-                    <select
+                    <Select
                       value={method}
                       onChange={(event) =>
                         setMethod(event.target.value as typeof method)
@@ -328,7 +329,7 @@ export function CapabilityBuilderDialog({
                           </option>
                         )
                       )}
-                    </select>
+                    </Select>
                   </Field>
                   <Field name="capabilities-builder-credentials" label={t('capabilities.builder.credentials')}>
                     <input
@@ -341,7 +342,7 @@ export function CapabilityBuilderDialog({
                 </>
               ) : null}
               <Field name="capabilities-builder-scope" label={t('capabilities.builder.scope')}>
-                <select
+                <Select
                   value={scopeKind}
                   onChange={(event) =>
                     setScopeKind(
@@ -358,7 +359,7 @@ export function CapabilityBuilderDialog({
                   <option value="requirement">
                     {t('capabilities.scope.requirement')}
                   </option>
-                </select>
+                </Select>
               </Field>
               {scopeKind === 'workspace' || scopeKind === 'requirement' ? (
                 <Field name="capabilities-builder-workspace-id" label={t('capabilities.builder.workspaceId')}>

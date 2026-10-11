@@ -49,9 +49,16 @@ it('renders accessible send and Composer actions in suggestion order', () => {
   const insertButton = screen.getByRole('button', {
     name: '添加到对话：解释设计'
   })
+  const firstInsertButton = screen.getByRole('button', {
+    name: '添加到对话：验证结果'
+  })
   // 视觉 title 只提示操作类型，不拼接建议内容
   expect(sendButton).toHaveAttribute('title', '发送建议')
   expect(insertButton).toHaveAttribute('title', '添加到对话')
+  expect(sendButton.parentElement).toHaveClass(
+    'follow-up-suggestion__actions'
+  )
+  expect(firstInsertButton.parentElement).toBe(sendButton.parentElement)
 
   fireEvent.click(sendButton)
   fireEvent.click(insertButton)

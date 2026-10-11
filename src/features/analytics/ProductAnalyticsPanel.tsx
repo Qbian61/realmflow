@@ -1,7 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState
+} from "react";
 import type { BusinessApi } from "../../../shared/business";
 import type { ProductAnalyticsResult } from "../../../shared/product-analytics";
-import { InlineAlert } from "../../components/ui";
+import {
+  InlineAlert,
+  Select,
+} from "../../components/ui";
 import { useLocalization } from "../../localization/LocalizationProvider";
 import ProductAnalyticsActivity from "./ProductAnalyticsActivity";
 import ProductAnalyticsDistributions from "./ProductAnalyticsDistributions";
@@ -84,7 +88,7 @@ export default function ProductAnalyticsPanel({
       {!fixedWorkspaceId ? (
         <label className="product-analytics-scope">
           <span>{t("productAnalytics.workspaceScope")}</span>
-          <select name="product-analytics-workspace-scope" autoComplete="off"
+          <Select name="product-analytics-workspace-scope" autoComplete="off"
             aria-label={t("productAnalytics.workspaceScope")}
             value={workspaceId ?? ""}
             disabled={!business}
@@ -98,7 +102,7 @@ export default function ProductAnalyticsPanel({
                 {workspace.label}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
       ) : null}
 

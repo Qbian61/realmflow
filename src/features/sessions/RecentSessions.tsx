@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState
+} from "react";
 import { ChevronDown, Ellipsis, ListFilter, MessageCircle } from "lucide-react";
 import { NavLink } from "react-router-dom";
 import type { WorkspaceSpace } from "../../domain/workspace";
@@ -13,6 +14,7 @@ import {
   IconButton,
   ListPagination,
   useListPagination,
+  Select,
 } from "../../components/ui";
 import { RecentSessionPreview } from "./RecentSessionPreview";
 import { ConversationActionsMenu } from "./ConversationActionsMenu";
@@ -164,7 +166,7 @@ export function RecentSessions({
           <div className="recent-filter-panel">
             <label className="recent-filter-row">
               <span>{t("recent.type")}</span>
-              <select name="recent-type-aria" autoComplete="off"
+              <Select name="recent-type-aria" autoComplete="off"
                 aria-label={t("recent.typeAria")}
                 value={filters.kind}
                 onChange={(event) =>
@@ -176,11 +178,11 @@ export function RecentSessions({
                 <option value="all">{t("recent.type.all")}</option>
                 <option value="general">{t("recent.type.general")}</option>
                 <option value="space">{t("recent.type.space")}</option>
-              </select>
+              </Select>
             </label>
             <label className="recent-filter-row">
               <span>{t("recent.context")}</span>
-              <select name="recent-context-aria" autoComplete="off"
+              <Select name="recent-context-aria" autoComplete="off"
                 aria-label={t("recent.contextAria")}
                 value={contextValue}
                 onChange={(event) => {
@@ -222,11 +224,11 @@ export function RecentSessions({
                       </option>
                     ))
                   : null}
-              </select>
+              </Select>
             </label>
             <label className="recent-filter-row">
               <span>{t("recent.time")}</span>
-              <select name="recent-time-aria" autoComplete="off"
+              <Select name="recent-time-aria" autoComplete="off"
                 aria-label={t("recent.timeAria")}
                 value={filters.timeRange}
                 onChange={(event) =>
@@ -240,7 +242,7 @@ export function RecentSessions({
                 <option value="day">{t("recent.time.day")}</option>
                 <option value="week">{t("recent.time.week")}</option>
                 <option value="month">{t("recent.time.month")}</option>
-              </select>
+              </Select>
             </label>
           </div>
         ) : null}
@@ -305,13 +307,11 @@ export function RecentSessions({
             </div>
           ))}
         </nav>
-      ) : open ? (
+      ) : open && (loading || activeFilters) ? (
         <p className="recent-empty">
           {loading
             ? t("recent.loading")
-            : activeFilters
-              ? t("recent.noMatch")
-              : t("recent.empty")}
+            : t("recent.noMatch")}
         </p>
       ) : null}
       {open ? (

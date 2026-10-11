@@ -1,5 +1,6 @@
 import type {
   PermissionDecisionCommand,
+  ReusableToolPermissionView,
   ToolPermissionRequestProjection
 } from '../../../../shared/tool-permissions'
 
@@ -9,8 +10,18 @@ export class ToolPermissionDecisionService {
       resolvePermission(
         command: PermissionDecisionCommand
       ): Promise<ToolPermissionRequestProjection>
+      listReusablePermissions(): Promise<ReusableToolPermissionView[]>
+      revokeReusablePermission(grantId: string): Promise<void>
     }
   ) {}
+
+  listGrants(): Promise<ReusableToolPermissionView[]> {
+    return this.executions.listReusablePermissions()
+  }
+
+  revokeGrant(grantId: string): Promise<void> {
+    return this.executions.revokeReusablePermission(grantId)
+  }
 
   resolve(
     command: PermissionDecisionCommand

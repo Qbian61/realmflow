@@ -52,8 +52,7 @@ export class AgentRunRecoveryConfigurationValidator {
       capabilitiesAvailable:
         immutable.capabilitiesAvailable && runtime.capabilitiesAvailable,
       modelAvailable: model.modelAvailable,
-      permissionValid:
-        run.status !== 'waiting_permission' && runtime.permissionValid,
+      permissionValid: runtime.permissionValid,
       credentialAvailable: model.credentialAvailable,
     }
   }

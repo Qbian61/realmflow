@@ -48,7 +48,7 @@ describe("CapabilitiesPage", () => {
     );
   });
 
-  it("uses the shared wide page, toolbar, badges and empty state primitives", async () => {
+  it("uses the shared wide page, product search, and empty state primitives", async () => {
     setRealmflow(createToolCatalog());
     const { container } = render(
       <LocalizationProvider>
@@ -64,11 +64,9 @@ describe("CapabilitiesPage", () => {
       "ui-page__body",
       "ui-page__body--wide",
     );
-    expect(screen.getByRole("toolbar", { name: "搜索能力" })).toHaveClass(
-      "ui-toolbar",
-    );
-    await screen.findByText("读取文件");
-    expect(container.querySelector(".ui-badge--success")).toBeInTheDocument();
+    expect(screen.getByRole("searchbox", { name: "搜索工具" })).toBeVisible();
+    await screen.findByText("文件系统");
+    expect(container.querySelector(".product-capability-grid")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: "智能体" }));
     expect(
@@ -115,10 +113,13 @@ describe("CapabilitiesPage", () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByText("读取文件")).toBeVisible();
+    expect(await screen.findByText("文件系统")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "switch locale" }));
-    expect(await screen.findByText("Read file")).toBeVisible();
-    expect(list).toHaveBeenLastCalledWith({ locale: "en" });
+    expect(await screen.findByText("Filesystem")).toBeVisible();
+    expect(list).toHaveBeenLastCalledWith({
+      locale: "en",
+      modelFacingMode: "facade",
+    });
   });
 
   it("uses the shared inline alert for page load failures", async () => {
@@ -165,10 +166,10 @@ describe("CapabilitiesPage", () => {
     expect(skillsTab).toHaveAttribute("aria-selected", "false");
     expect(agentsTab).toHaveAttribute("aria-selected", "false");
     expect(connectorsTab).toHaveAttribute("aria-selected", "false");
-    await screen.findByText("读取文件");
+    await screen.findByText("文件系统");
     expect(screen.queryByText("Remote Search")).not.toBeInTheDocument();
     expect(screen.queryByText("Docs")).not.toBeInTheDocument();
-    expect(screen.getByText("读取文件")).toBeVisible();
+    expect(screen.getByText("文件系统")).toBeVisible();
     expect(screen.queryByText("需求分析")).not.toBeInTheDocument();
 
     fireEvent.click(skillsTab);
@@ -176,7 +177,7 @@ describe("CapabilitiesPage", () => {
     expect(toolsTab).toHaveAttribute("aria-selected", "false");
     expect(skillsTab).toHaveAttribute("aria-selected", "true");
     expect(screen.getByText("需求分析")).toBeVisible();
-    expect(screen.queryByText("读取文件")).not.toBeInTheDocument();
+    expect(screen.queryByText("文件系统")).not.toBeInTheDocument();
     expect(
       screen.queryByRole("heading", { name: "HTTP 连接器" }),
     ).not.toBeInTheDocument();
@@ -188,7 +189,7 @@ describe("CapabilitiesPage", () => {
     expect(agentsTab).toHaveAttribute("aria-selected", "true");
     expect(screen.getByText("暂无智能体")).toBeVisible();
     expect(screen.queryByText("需求分析")).not.toBeInTheDocument();
-    expect(screen.queryByText("读取文件")).not.toBeInTheDocument();
+    expect(screen.queryByText("文件系统")).not.toBeInTheDocument();
 
     fireEvent.click(connectorsTab);
 
@@ -214,7 +215,121 @@ describe("CapabilitiesPage", () => {
     });
   });
 
-  it("shows the builtin Web package and web Tools in the user-facing Tools catalog", async () => {
+  it("shows one aggregated Tool per product capability without technical catalog sections", async () => {
+    const list = vi.fn(
+      async ({
+        modelFacingMode,
+      }: {
+        locale: "zh-CN" | "en" | "ja";
+        modelFacingMode?: "direct" | "facade" | "directory";
+      }) =>
+        modelFacingMode === "facade"
+          ? facadeCatalogFixture()
+          : catalogFixture(),
+    );
+    const duplicate = legacyCapabilityFixture({
+      id: "legacy.tool.filesystem_read",
+      kind: "tool",
+      name: "Filesystem read",
+      runtime: { kind: "tool", definitionId: "filesystem_read" },
+    });
+    window.realmflow = {
+      business: {
+        listConnectors: vi.fn().mockResolvedValue([]),
+      } as unknown as BusinessApi,
+      toolCatalog: createToolCatalog({ list }),
+      capabilityCatalog: {
+        list: vi.fn().mockResolvedValue({
+          definitions: [duplicate.definition],
+          installations: [duplicate.installation],
+          displayByDefinitionKey: {},
+        }),
+      },
+    } as unknown as typeof window.realmflow;
+
+    renderPage();
+
+    expect(await screen.findByText("文件系统")).toBeVisible();
+    expect(screen.getAllByText("文件系统")).toHaveLength(1);
+    expect(screen.queryByRole("heading", { name: "扩展包" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "工具目录" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "全部工具" })).toBeNull();
+    expect(screen.queryByText("17")).toBeNull();
+    expect(list).toHaveBeenLastCalledWith({
+      locale: "zh-CN",
+      modelFacingMode: "facade",
+    });
+    const controls = screen
+      .getByRole("group", { name: "按产品能力分组" })
+      .closest(".product-capability-directory-controls");
+    expect(controls).toContainElement(
+      screen.getByRole("searchbox", { name: "搜索工具" }),
+    );
+    expect(controls?.firstElementChild).toHaveClass(
+      "product-capability-groups",
+    );
+    const searchControl = screen
+      .getByRole("searchbox", { name: "搜索工具" })
+      .closest(".product-capability-directory-search");
+    expect(searchControl).toHaveAttribute("data-expanded", "false");
+    expect(screen.getByRole("searchbox", { name: "搜索工具" })).toHaveAttribute(
+      "tabindex",
+      "-1",
+    );
+    expect(
+      screen.getByRole("button", { name: "搜索" }),
+    ).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: "全部" })).toHaveClass(
+      "product-capability-group-all",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "搜索" }));
+
+    expect(searchControl).toHaveAttribute("data-expanded", "true");
+    expect(screen.getByRole("searchbox", { name: "搜索工具" })).toHaveFocus();
+
+    fireEvent.click(screen.getByRole("button", { name: "文件与知识" }));
+
+    expect(screen.getByText("文件系统")).toBeVisible();
+    expect(screen.queryByText("Document")).toBeNull();
+  });
+
+  it("shows one Skill per capability without registry or package sections", async () => {
+    const duplicate = legacyCapabilityFixture({
+      id: "legacy.skill.builtin.skill.requirement_analysis",
+      kind: "skill",
+      name: "需求分析",
+      runtime: {
+        kind: "skill",
+        instructionsPath: "skills/requirement-analysis/SKILL.md",
+        executable: false,
+      },
+    });
+    window.realmflow = {
+      business: {
+        listConnectors: vi.fn().mockResolvedValue([]),
+      } as unknown as BusinessApi,
+      toolCatalog: createToolCatalog(),
+      capabilityCatalog: {
+        list: vi.fn().mockResolvedValue({
+          definitions: [duplicate.definition],
+          installations: [duplicate.installation],
+          displayByDefinitionKey: {},
+        }),
+      },
+    } as unknown as typeof window.realmflow;
+
+    renderPage("/capabilities?tab=skills");
+
+    expect(await screen.findByText("需求分析")).toBeVisible();
+    expect(screen.getAllByText("需求分析")).toHaveLength(1);
+    expect(screen.queryByRole("heading", { name: "技能注册表" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "扩展包" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "技能目录" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "全部技能" })).toBeNull();
+  });
+
+  it("aggregates builtin web primitives into one Web product Tool", async () => {
     const catalog = catalogFixture();
     setRealmflow(
       createToolCatalog({
@@ -280,27 +395,26 @@ describe("CapabilitiesPage", () => {
 
     renderPage();
 
-    expect(await screen.findByText("Web")).toBeVisible();
-    expect(screen.getByText("Permissioned public web retrieval.")).toBeVisible();
-    expect(screen.getByText("Fetch web page")).toBeVisible();
+    expect(await screen.findByText("网页访问")).toBeVisible();
     expect(
-      screen.getByText(
-        "Fetch a public HTTP or HTTPS resource and return sanitized readable text.",
-      ),
+      screen.getByText("搜索公开网页并提取经过清理的可读内容。"),
     ).toBeVisible();
-    expect(screen.getByText("Search web")).toBeVisible();
-    expect(
-      screen.getByText(
-        "Search the web through an explicitly configured provider and return normalized results.",
-      ),
-    ).toBeVisible();
-    expect(screen.getAllByText("network.connect")).toHaveLength(2);
-    expect(
-      screen.getByRole("switch", { name: "停用Fetch web page" }),
-    ).toHaveAttribute("aria-checked", "true");
-    expect(
-      screen.getByRole("switch", { name: "停用Search web" }),
-    ).toHaveAttribute("aria-checked", "true");
+    const row = screen
+      .getByRole("button", { name: /网页访问/ })
+      .closest(".product-capability-row");
+    expect(row).toHaveClass("product-capability-row--interactive");
+    expect(row?.querySelector(".product-capability-icon")).toBeInTheDocument();
+    expect(within(row as HTMLElement).queryByText(/覆盖/)).toBeNull();
+    expect(within(row as HTMLElement).queryByText("可用")).toBeNull();
+    expect(screen.queryByText("Fetch web page")).toBeNull();
+    expect(screen.queryByText("Search web")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /网页访问/ }));
+
+    const dialog = screen.getByRole("dialog", { name: "网页访问" });
+    expect(within(dialog).getByText("覆盖 2 个原子工具")).toBeVisible();
+    expect(within(dialog).getByText("可用")).toBeVisible();
+    expect(within(dialog).queryByText("关闭")).toBeNull();
   });
 
   it("shows Plugin contributions, permission review, sandbox, and dependency state before enablement", async () => {
@@ -388,6 +502,7 @@ describe("CapabilitiesPage", () => {
     );
 
     renderPage();
+    await openCatalogManagement();
 
     expect(await screen.findByText("Research")).toBeVisible();
     expect(
@@ -451,6 +566,7 @@ describe("CapabilitiesPage", () => {
     );
 
     renderPage();
+    await openCatalogManagement();
     const version = await screen.findByRole("combobox", {
       name: "Research 版本",
     });
@@ -482,30 +598,32 @@ describe("CapabilitiesPage", () => {
 
     renderPage();
 
-    expect(await screen.findByText("读取文件")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "模型可见" }));
+    expect(await screen.findByText("文件系统")).toBeVisible();
+    const dialog = await openCatalogManagement();
+    expect(await within(dialog).findByText("读取文件")).toBeVisible();
+    fireEvent.click(within(dialog).getByRole("button", { name: "模型可见" }));
 
-    expect(await screen.findByText("Ask user")).toBeVisible();
-    expect(screen.getByText("Secrets")).toBeVisible();
-    expect(screen.getByText("Sessions")).toBeVisible();
-    expect(screen.getByText("Subagents")).toBeVisible();
-    expect(screen.getByText("Progress card")).toBeVisible();
-    expect(screen.getByText("Capabilities")).toBeVisible();
-    expect(await screen.findByText("Filesystem read")).toBeVisible();
-    expect(screen.getAllByText("覆盖 0 个原子工具").length).toBeGreaterThanOrEqual(6);
-    expect(screen.getByText("覆盖 5 个原子工具")).toBeVisible();
-    expect(screen.getAllByText("最高风险：low").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("Document")).toBeVisible();
-    expect(screen.getByText("覆盖 14 个原子工具")).toBeVisible();
-    expect(screen.getAllByText("最高风险：medium").length).toBeGreaterThanOrEqual(1);
+    expect(await within(dialog).findByText("Ask user")).toBeVisible();
+    expect(within(dialog).getByText("Secrets")).toBeVisible();
+    expect(within(dialog).getByText("Sessions")).toBeVisible();
+    expect(within(dialog).getByText("Subagents")).toBeVisible();
+    expect(within(dialog).getByText("Progress card")).toBeVisible();
+    expect(within(dialog).getByText("Capabilities")).toBeVisible();
+    expect(await within(dialog).findByText("Filesystem read")).toBeVisible();
+    expect(within(dialog).getAllByText("覆盖 0 个原子工具").length).toBeGreaterThanOrEqual(6);
+    expect(within(dialog).getByText("覆盖 5 个原子工具")).toBeVisible();
+    expect(within(dialog).getAllByText("最高风险：low").length).toBeGreaterThanOrEqual(1);
+    expect(within(dialog).getByText("Document")).toBeVisible();
+    expect(within(dialog).getByText("覆盖 14 个原子工具")).toBeVisible();
+    expect(within(dialog).getAllByText("最高风险：medium").length).toBeGreaterThanOrEqual(1);
     expect(list).toHaveBeenLastCalledWith({
       locale: "zh-CN",
       modelFacingMode: "facade",
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "原子工具" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "原子工具" }));
 
-    expect(await screen.findByText("读取文件")).toBeVisible();
+    expect(await within(dialog).findByText("读取文件")).toBeVisible();
     expect(list).toHaveBeenLastCalledWith({ locale: "zh-CN" });
   });
 
@@ -524,16 +642,17 @@ describe("CapabilitiesPage", () => {
     setRealmflow(createToolCatalog({ list }));
 
     renderPage();
-    fireEvent.click(screen.getByRole("button", { name: "目录检索" }));
+    const dialog = await openCatalogManagement();
+    fireEvent.click(within(dialog).getByRole("button", { name: "目录检索" }));
 
-    expect(await screen.findByText("Tool search")).toBeVisible();
-    expect(screen.getByText("Tool describe")).toBeVisible();
-    expect(screen.getByText("Tool call")).toBeVisible();
-    expect(screen.getByText("Ask user")).toBeVisible();
-    expect(screen.getByText("Progress card")).toBeVisible();
-    expect(screen.getAllByText("覆盖 0 个原子工具").length).toBeGreaterThanOrEqual(6);
-    expect(screen.getByText("Read file")).toBeVisible();
-    expect(screen.getAllByText("目录检索").length).toBeGreaterThanOrEqual(2);
+    expect(await within(dialog).findByText("Tool search")).toBeVisible();
+    expect(within(dialog).getByText("Tool describe")).toBeVisible();
+    expect(within(dialog).getByText("Tool call")).toBeVisible();
+    expect(within(dialog).getByText("Ask user")).toBeVisible();
+    expect(within(dialog).getByText("Progress card")).toBeVisible();
+    expect(within(dialog).getAllByText("覆盖 0 个原子工具").length).toBeGreaterThanOrEqual(6);
+    expect(within(dialog).getByText("Read file")).toBeVisible();
+    expect(within(dialog).getAllByText("目录检索").length).toBeGreaterThanOrEqual(2);
     expect(list).toHaveBeenLastCalledWith({
       locale: "zh-CN",
       modelFacingMode: "directory",
@@ -834,7 +953,7 @@ describe("CapabilitiesPage", () => {
     expect(screen.getByText("Review Agent")).toBeVisible();
 
     fireEvent.click(screen.getByRole("tab", { name: "工具" }));
-    expect(screen.getByRole("searchbox", { name: "搜索能力" })).toHaveValue(
+    expect(screen.getByRole("searchbox", { name: "搜索工具" })).toHaveValue(
       "review",
     );
   });
@@ -843,6 +962,7 @@ describe("CapabilitiesPage", () => {
     setRealmflow(createToolCatalog());
 
     const tools = renderPage("/capabilities?origin=mcp");
+    await openCatalogManagement();
     expect(screen.getByRole("button", { name: "MCP" })).toHaveAttribute(
       "aria-pressed",
       "true",
@@ -875,7 +995,8 @@ describe("CapabilitiesPage", () => {
     } as typeof window.realmflow;
 
     renderPage();
-    const toggle = await screen.findByRole("switch", {
+    const dialog = await openCatalogManagement();
+    const toggle = await within(dialog).findByRole("switch", {
       name: "停用读取文件",
     });
     fireEvent.click(toggle);
@@ -1023,8 +1144,9 @@ describe("CapabilitiesPage", () => {
     setRealmflow(toolCatalog);
     renderPage();
 
+    const dialog = await openCatalogManagement();
     fireEvent.click(
-      await screen.findByRole("switch", { name: "停用读取文件" }),
+      await within(dialog).findByRole("switch", { name: "停用读取文件" }),
     );
 
     expect(await screen.findByText("无法更新启用状态")).toBeVisible();
@@ -1043,6 +1165,7 @@ describe("CapabilitiesPage", () => {
     setRealmflow(toolCatalog);
     renderPage();
 
+    await openCatalogManagement();
     fireEvent.click(await screen.findByRole("button", { name: "导入压缩包" }));
 
     expect(await screen.findByText("无法导入扩展包")).toBeVisible();
@@ -1221,6 +1344,55 @@ function capabilityDefinitionFixture(version: string) {
   } as const;
 }
 
+function legacyCapabilityFixture(input: {
+  id: string;
+  kind: "tool" | "skill";
+  name: string;
+  runtime: Record<string, unknown>;
+}) {
+  const definition = {
+    schemaVersion: 1,
+    id: input.id,
+    kind: input.kind,
+    version: "1.0.0",
+    source: "builtin",
+    manifestDigest: "a".repeat(64),
+    definitionDigest: "b".repeat(64),
+    name: input.name,
+    description: `${input.name} legacy projection`,
+    runtime: input.runtime,
+    permissions: {
+      capabilities: [],
+      maximumRisk: "low",
+      pathPrefixes: [],
+      networkTargets: [],
+    },
+    dependencies: [],
+    compatibility: {
+      realmflowVersionRange: ">=0.1.0",
+      platforms: ["darwin"],
+    },
+    testPlan: [],
+    publishedAt: 100,
+  };
+  return {
+    definition,
+    installation: {
+      id: `installation.${input.id}`,
+      capabilityId: input.id,
+      capabilityVersion: "1.0.0",
+      capabilityDigest: definition.definitionDigest,
+      scope: { kind: "global" },
+      enabled: true,
+      permissionCeiling: definition.permissions,
+      status: "enabled",
+      revision: 1,
+      installedAt: 100,
+      updatedAt: 100,
+    },
+  };
+}
+
 function capabilityInstallationFixture(
   definition: ReturnType<typeof capabilityDefinitionFixture>,
   input: Partial<{
@@ -1363,6 +1535,20 @@ function LocaleSwitchingCapabilities(): JSX.Element {
 async function openConnectorsTab(): Promise<void> {
   fireEvent.click(screen.getByRole("tab", { name: "连接器" }));
   await screen.findByRole("button", { name: "MCP" });
+}
+
+async function openCatalogManagement(): Promise<HTMLElement> {
+  fireEvent.click(screen.getByRole("button", { name: "添加能力" }));
+  fireEvent.click(
+    await screen.findByRole("menuitem", {
+      name: "管理扩展包与原子目录",
+    }),
+  );
+  const dialog = await screen.findByRole("dialog", {
+    name: "扩展包与原子目录",
+  });
+  expect(dialog).toBeVisible();
+  return dialog;
 }
 
 function setRealmflow(toolCatalog: ToolCatalogApi): void {

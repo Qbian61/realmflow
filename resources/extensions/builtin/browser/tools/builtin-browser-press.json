@@ -3,7 +3,7 @@
   "id": "builtin.browser.press",
   "version": "1.0.0",
   "name": "Press browser key",
-  "description": "Send a supported key to a current snapshot ref. May submit data.",
+  "description": "Send a supported key to a current snapshot ref in the current Run browser. May submit data.",
   "tags": [
     "browser"
   ],
@@ -16,10 +16,18 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "sessionId": {
-        "type": "string",
-        "pattern": "^browser-[A-Za-z0-9-]+$",
-        "maxLength": 120
+      "target": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "current_run"
+          }
+        }
       },
       "ref": {
         "type": "string",
@@ -43,7 +51,7 @@
       }
     },
     "required": [
-      "sessionId",
+      "target",
       "ref",
       "key"
     ]

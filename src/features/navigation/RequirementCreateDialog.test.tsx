@@ -82,8 +82,12 @@ describe("RequirementCreateDialog", () => {
     expect(
       screen.getByRole("textbox", { name: "需求名称" }).closest(".ui-field"),
     ).not.toBeNull();
-    expect(within(template).getByText("Standard delivery · v2")).toBeVisible();
-    expect(within(template).queryByText(/v3/)).not.toBeInTheDocument();
+    fireEvent.click(template);
+    expect(
+      screen.getByRole("option", { name: "Standard delivery · v2" }),
+    ).toBeVisible();
+    expect(screen.queryByRole("option", { name: /v3/ })).not.toBeInTheDocument();
+    fireEvent.click(template);
     fireEvent.change(screen.getByRole("textbox", { name: "需求名称" }), {
       target: { value: "  Improve workflow  " },
     });
@@ -114,7 +118,7 @@ describe("RequirementCreateDialog", () => {
 
     const template = await screen.findByRole("combobox", { name: "流程模板" });
     expect(template).toBeDisabled();
-    expect(template).toHaveTextContent("暂无已发布的流程模板");
+    expect(screen.getByText("暂无已发布的流程模板")).toBeVisible();
     expect(
       screen.getByRole("button", { name: "确认新建需求" }),
     ).toBeDisabled();
@@ -189,9 +193,16 @@ describe("RequirementCreateDialog", () => {
 
     const template = await screen.findByRole("combobox", { name: "流程模板" });
     expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
-    expect(within(template).getByText("Selected delivery · v1")).toBeVisible();
-    expect(within(template).getByText("Planning flow · v2")).toBeVisible();
-    expect(within(template).getByText("Hidden flow · v3")).toBeVisible();
+    fireEvent.click(template);
+    expect(
+      screen.getByRole("option", { name: "Selected delivery · v1" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("option", { name: "Planning flow · v2" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("option", { name: "Hidden flow · v3" }),
+    ).toBeVisible();
   });
 });
 

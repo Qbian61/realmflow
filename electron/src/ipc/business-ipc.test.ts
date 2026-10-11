@@ -4138,6 +4138,8 @@ function createHandlers(): BusinessHandlers {
     listRecentConversations: handler(),
     listWorkspaceConversations: handler(),
     getConversation: handler(),
+    getConversationContextDiagnostics: handler(),
+    searchConversationTranscript: handler(),
     renameConversation: handler(),
     deleteConversation: handler(),
     createConversation: handler(),

@@ -1,4 +1,5 @@
-import { BookMarked, Save } from "lucide-react";
+import { BookMarked, Save
+} from "lucide-react";
 import { useState, type FormEvent } from "react";
 import type {
   BusinessApi,
@@ -14,6 +15,7 @@ import {
   DialogFooter,
   DialogHeader,
   Field,
+  Select,
 } from "../../components/ui";
 
 type Props = {
@@ -87,7 +89,7 @@ export function SaveKnowledgeNoteDialog({
         </DialogHeader>
         <DialogBody className="knowledge-note-dialog__body">
           <Field name="knowledge-note-kind" label={t("knowledgeNote.kind")}>
-            <select
+            <Select
               value={kind}
               onChange={(event) =>
                 setKind(event.target.value as KnowledgeNoteKind)
@@ -100,7 +102,7 @@ export function SaveKnowledgeNoteDialog({
               <option value="retrospective">
                 {t("knowledgeNote.kind.retrospective")}
               </option>
-            </select>
+            </Select>
           </Field>
           <Field name="knowledge-note-title" label={t("knowledgeNote.title")}>
             <input

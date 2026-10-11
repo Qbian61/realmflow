@@ -10,6 +10,7 @@ export type ScheduleEventOperation =
   | 'paused'
   | 'resumed'
   | 'run_started'
+  | 'run_waiting_permission'
   | 'run_succeeded'
   | 'run_failed'
   | 'run_cancelled'

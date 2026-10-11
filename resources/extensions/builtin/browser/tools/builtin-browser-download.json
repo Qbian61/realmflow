@@ -3,7 +3,7 @@
   "id": "builtin.browser.download",
   "version": "1.0.0",
   "name": "Download browser file",
-  "description": "Download up to 32 MiB using the owned profile into authorized roots without overwrite. Redirects are rejected. Also writes a .realmflow-browser.json provenance sidecar.",
+  "description": "Download up to 32 MiB with the current Run browser into authorized roots without overwrite. Redirects are rejected. Also writes a .realmflow-browser.json provenance sidecar.",
   "tags": [
     "browser"
   ],
@@ -16,10 +16,18 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "sessionId": {
-        "type": "string",
-        "pattern": "^browser-[A-Za-z0-9-]+$",
-        "maxLength": 120
+      "target": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "current_run"
+          }
+        }
       },
       "url": {
         "type": "string",
@@ -38,7 +46,7 @@
       }
     },
     "required": [
-      "sessionId",
+      "target",
       "url",
       "path",
       "expectedAbsent"

@@ -1065,7 +1065,9 @@ describe('preload and main IPC contract', () => {
           listPendingPermissions: vi.fn()
         },
         decisions: {
-          resolve: vi.fn()
+          resolve: vi.fn(),
+          listGrants: vi.fn(),
+          revokeGrant: vi.fn()
         }
       },
       capabilityCatalog: {
@@ -1263,6 +1265,11 @@ describe('preload and main IPC contract', () => {
       enabled: true, expectedRevision: 1, requestId: 'activate-1'
     })
     await api.toolPermissions.listPending()
+    await api.toolPermissions.listGrants()
+    await api.toolPermissions.getDefault!()
+    await api.toolPermissions.setDefault!({ approvalProfileId: 'cautious', revision: 0 })
+    await api.toolPermissions.history!({ risk: 'L3', limit: 50 })
+    await api.toolPermissions.revokeGrant('grant-1')
     await api.toolPermissions.resolve({
       requestId: 'permission-1',
       expectedRevision: 1,
@@ -2021,6 +2028,13 @@ async function invokeEveryApiCommand(api: RealmFlowApi): Promise<void> {
     business.listRecentConversations({}),
     business.listWorkspaceConversations({ workspaceId: 'space-1' }),
     business.getConversation({ sessionId: 'conversation-1' }),
+    business.getConversationContextDiagnostics({
+      sessionId: 'conversation-1'
+    }),
+    business.searchConversationTranscript({
+      sessionId: 'conversation-1',
+      query: 'runtime_resource_stale'
+    }),
     business.renameConversation({
       id: 'conversation-1',
       expectedRevision: 1,

@@ -9,6 +9,7 @@ import type {
   ToolPermissionRequestProjection
 } from '../../../../shared/tool-permissions'
 import { basename, win32 } from 'node:path'
+import { normalizeApprovalProfile } from '../../../../domain/approval-profile'
 import type { ToolEventStore } from './tool-event-store'
 import type { ToolProjectionStore } from './tool-projection-store'
 
@@ -207,7 +208,13 @@ function permissionRequestedProjection(
 ): ToolPermissionRequestProjection {
   const payload = event.payload
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
+    approvalProfileId: normalizeApprovalProfile(payload.approvalProfileId),
+    approvalProfileDigest: requiredString(payload.approvalProfileDigest, 'approval profile digest'),
+    effectiveRisk: requiredApprovalRisk(payload.effectiveRisk),
+    maxGrant: requiredGrantCeiling(payload.maxGrant),
+    ...(typeof payload.workspaceId === 'string' ? { workspaceId: payload.workspaceId } : {}),
+    ...(typeof payload.requirementId === 'string' ? { requirementId: payload.requirementId } : {}),
     id: requiredString(payload.requestId, 'request ID'),
     executionId: requiredString(payload.executionId, 'execution ID'),
     runId: requiredString(payload.runId, 'run ID'),
@@ -302,7 +309,8 @@ function requiredInteger(value: unknown, field: string): number {
 
 function requiredDecision(value: unknown): NonNullable<ToolPermissionRequestProjection['decision']> {
   if (value !== 'allow_once' && value !== 'deny' &&
-      value !== 'allow_session' && value !== 'allow_always') {
+      value !== 'allow_session' && value !== 'allow_requirement' &&
+      value !== 'allow_space' && value !== 'allow_always') {
     throw new Error('Tool permission decision is invalid')
   }
   return value
@@ -316,9 +324,24 @@ function requiredReason(
     value !== 'out_of_scope' &&
     value !== 'process' &&
     value !== 'system' &&
-    value !== 'external'
+    value !== 'external' &&
+    value !== 'write'
   ) {
     throw new Error('Tool permission reason is invalid')
+  }
+  return value
+}
+
+function requiredApprovalRisk(value: unknown): ToolPermissionRequestProjection['effectiveRisk'] {
+  if (value !== 'L0' && value !== 'L1' && value !== 'L2' && value !== 'L3' && value !== 'L4') {
+    throw new Error('Tool permission effective risk is invalid')
+  }
+  return value
+}
+
+function requiredGrantCeiling(value: unknown): ToolPermissionRequestProjection['maxGrant'] {
+  if (value !== 'once' && value !== 'session' && value !== 'space' && value !== 'persistent') {
+    throw new Error('Tool permission grant ceiling is invalid')
   }
   return value
 }

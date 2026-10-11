@@ -8,6 +8,7 @@ const runtimeRun: AgentRuntimeRun = {
   status: 'running',
   snapshot: {
     schemaVersion: 1,
+    approvalProfile: { schemaVersion: 1, id: 'protected', policyVersion: '1.0.0', digest: 'a'.repeat(64) },
     runId: 'public-run-1',
     conversationId: 'conversation-1',
     rootRunId: 'public-run-1',

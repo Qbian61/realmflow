@@ -43,8 +43,7 @@ describe('BuiltinToolAdapter', () => {
     const request = { ...invocation, arguments: { query: 'guide' } }
     expect(await adapter.planEffects(binding, request)).toEqual({
       outcome: 'planned', effects: [
-        { kind: 'external', capability: 'network.connect', resourceKey: 'https://api.search.brave.com' },
-        { kind: 'external', capability: 'credential.use', resourceKey: 'web-credential-brave' }
+        { kind: 'network.public_read', origin: 'https://api.search.brave.com', localDataEgress: false, providerId: 'brave' }
       ]
     })
     expect(await adapter.execute(binding, request, { emit: vi.fn() }, new AbortController().signal))
@@ -91,7 +90,9 @@ describe('BuiltinToolAdapter', () => {
       handlerName: 'files.read',
       capabilities: definition.capabilities,
       arguments: invocation.arguments,
-      scopeRoots: invocation.scopeRoots
+      scopeRoots: invocation.scopeRoots,
+      context,
+      executionId: invocation.executionId
     })
   })
 

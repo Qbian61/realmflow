@@ -89,4 +89,24 @@ describe('browser page DOM runtime', () => {
     document.body.innerHTML = '<label>Color <select><option>Red</option><option>Blue</option></select></label>'
     expect(installBrowserPage().snapshot('s').elements[0].name).toBe('Color')
   })
+
+  it('describes actual form submission and detects target changes without exposing field values', () => {
+    document.body.innerHTML = '<form action="https://example.com/pay" method="post"><input value="private"><button>Confirm purchase</button></form>'
+    const page = installBrowserPage()
+    const ref = page.snapshot('s').elements.find(el => el.role === 'button')!.ref
+    const describe = () => (page as unknown as { describe(ref: string): unknown }).describe(ref)
+    expect(describe()).toMatchObject({ submits: true, sensitive: false, label: 'Confirm purchase' })
+    expect(JSON.stringify(describe())).not.toContain('private')
+    const first = describe()
+    document.querySelector('button')!.textContent = 'Delete account'
+    expect(describe()).not.toEqual(first)
+  })
+
+  it('recognizes a credential field and refuses detached targets during description', () => {
+    const page = installBrowserPage()
+    const ref = page.snapshot('s').elements.find(el => el.name === 'Password')!.ref
+    expect((page as unknown as { describe(ref: string): unknown }).describe(ref)).toMatchObject({ sensitive: true })
+    document.querySelector('#password')!.remove()
+    expect(() => (page as unknown as { describe(ref: string): unknown }).describe(ref)).toThrow('reference')
+  })
 })

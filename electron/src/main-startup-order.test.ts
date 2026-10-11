@@ -3,6 +3,19 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 describe('Main startup recovery order', () => {
+  it('excludes a second instance before starting local services and cleans up on terminal signals', () => {
+    const source = readFileSync(resolve('electron/src/main.ts'), 'utf8')
+    const lock = source.indexOf('app.requestSingleInstanceLock()')
+    const ready = source.indexOf('.whenReady()')
+    expect(lock).toBeGreaterThan(-1)
+    expect(lock).toBeLessThan(ready)
+    expect(source).toContain('if (!hasInstanceLock) app.exit(0)')
+    expect(source).toContain('registerTerminationSignals(process')
+    const signal = source.slice(source.indexOf('registerTerminationSignals(process'), ready)
+    expect(signal).toContain('rendererCloseApproved = true')
+    expect(signal).toContain('app.quit()')
+  })
+
   it('owns the sanitized Gateway Runtime and binds it to audited Main services', () => {
     const mainSource = readFileSync(resolve('electron/src/main.ts'), 'utf8')
     const gatewayStart = mainSource.indexOf('new GatewayRuntimeService')

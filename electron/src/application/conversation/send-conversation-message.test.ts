@@ -10,6 +10,83 @@ import type {
 import { SendConversationMessageUseCase } from './send-conversation-message'
 
 describe('SendConversationMessageUseCase', () => {
+  it('uses Main default approval only for a new conversation and preserves its mode later', async () => {
+    let session: Revisioned<ChatSessionRecord> | undefined
+    const fresh: ChatSessionRecord = { id: 'default-approval', kind: 'general', title: 'Default',
+      sortOrder: 0, messages: [], createdAt: 1, updatedAt: 1 }
+    const getDefaultApprovalProfile = vi.fn().mockResolvedValue('cautious')
+    const createRun = vi.fn().mockResolvedValue({ runId: 'default-run' })
+    const useCase = new SendConversationMessageUseCase({
+      sessions: createTestRepository(() => session!, next => { session = next }),
+      getDefaultApprovalProfile,
+      gateway: { createRun, cancelRun: vi.fn(),
+        streamEvents: async function* () { yield event(1, 'run.completed', {}, 'default-run') } }
+    })
+    await useCase.execute({ sessionId: fresh.id, session: fresh, content: 'Hello', expectedRevision: 0 })
+    expect(session?.approvalProfileId).toBe('cautious')
+    getDefaultApprovalProfile.mockResolvedValue('trusted')
+    await useCase.execute({ sessionId: fresh.id, content: 'Continue', expectedRevision: session!.revision })
+    expect(session?.approvalProfileId).toBe('cautious')
+    expect(getDefaultApprovalProfile).toHaveBeenCalledOnce()
+  })
+
+  it('persists the chosen approval mode and passes it to every new run', async () => {
+    let session: Revisioned<ChatSessionRecord> = {
+      id: 'conversation-approval', kind: 'general', title: 'Approval',
+      sortOrder: 0, messages: [], revision: 0, createdAt: 1, updatedAt: 1
+    }
+    const createRun = vi.fn().mockResolvedValue({ runId: 'approval-run' })
+    const useCase = new SendConversationMessageUseCase({
+      sessions: createTestRepository(() => session, next => { session = next }),
+      gateway: {
+        createRun, cancelRun: vi.fn(),
+        streamEvents: async function* () {
+          yield event(1, 'run.completed', {}, 'approval-run')
+        }
+      }
+    })
+    await useCase.execute({
+      sessionId: session.id, content: 'Hello', expectedRevision: 0,
+      approvalProfileId: 'cautious'
+    })
+    expect(session.approvalProfileId).toBe('cautious')
+    expect(createRun).toHaveBeenLastCalledWith(
+      expect.objectContaining({ approvalProfileId: 'cautious' }), undefined
+    )
+    await useCase.execute({
+      sessionId: session.id, content: 'Continue', expectedRevision: session.revision
+    })
+    expect(createRun).toHaveBeenLastCalledWith(
+      expect.objectContaining({ approvalProfileId: 'cautious' }), undefined
+    )
+    await useCase.execute({
+      sessionId: session.id, content: 'Continue again', expectedRevision: session.revision,
+      approvalProfileId: 'trusted'
+    })
+    expect(session.approvalProfileId).toBe('trusted')
+    expect(createRun).toHaveBeenLastCalledWith(
+      expect.objectContaining({ approvalProfileId: 'trusted' }), undefined
+    )
+  })
+
+  it('rejects an unknown approval mode before persisting a message', async () => {
+    let session: Revisioned<ChatSessionRecord> = {
+      id: 'conversation-invalid-approval', kind: 'general', title: 'Approval',
+      sortOrder: 0, messages: [], revision: 0, createdAt: 1, updatedAt: 1
+    }
+    const createRun = vi.fn()
+    const useCase = new SendConversationMessageUseCase({
+      sessions: createTestRepository(() => session, next => { session = next }),
+      gateway: { createRun, cancelRun: vi.fn(), streamEvents: async function* () {} }
+    })
+    await expect(useCase.execute({
+      sessionId: session.id, content: 'Hello', expectedRevision: 0,
+      approvalProfileId: 'allow-all' as never
+    })).rejects.toThrow('Approval profile is invalid')
+    expect(session.messages).toEqual([])
+    expect(createRun).not.toHaveBeenCalled()
+  })
+
   it('completes a system Slash Command without routing or starting a model run', async () => {
     let session: Revisioned<ChatSessionRecord> = {
       id: 'conversation-command',
@@ -182,6 +259,105 @@ describe('SendConversationMessageUseCase', () => {
       id: 'message-assistant-2',
       status: 'completed',
       content: '只读分析结果'
+    })
+  })
+
+  it('starts an unrelated message as a fresh turn after a clarification wait', async () => {
+    let session: Revisioned<ChatSessionRecord> = {
+      id: 'conversation-new-topic-after-wait',
+      kind: 'general',
+      title: 'New topic after wait',
+      sortOrder: 0,
+      messages: [],
+      revision: 0,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const createRun = vi.fn().mockResolvedValue({ runId: 'provider-run-new-topic' })
+    const createWaitingInputRun = vi
+      .fn()
+      .mockResolvedValue({ runId: 'runtime-waiting-capability' })
+    const resolveWaitingInputRun = vi.fn().mockResolvedValue(undefined)
+    const ids = [
+      'message-user-capability',
+      'message-assistant-capability',
+      'message-user-new-topic',
+      'message-assistant-new-topic'
+    ]
+    const createUseCase = () =>
+      new SendConversationMessageUseCase({
+        sessions: createTestRepository(
+          () => session,
+          (next) => {
+            session = next
+          }
+        ),
+        gateway: {
+          createRun,
+          createWaitingInputRun,
+          resolveWaitingInputRun,
+          cancelRun: vi.fn(),
+          streamEvents: async function* () {
+            yield event(
+              1,
+              'answer.delta',
+              { delta: '开发者客栈是开发者服务平台。' },
+              'provider-run-new-topic'
+            )
+            yield event(2, 'run.completed', {}, 'provider-run-new-topic')
+          }
+        },
+        now: () => 100,
+        createId: () => ids.shift() as string
+      })
+
+    const waiting = await createUseCase().execute({
+      sessionId: session.id,
+      content: '创建一个查询问题的 HTTP 连接器',
+      expectedRevision: 0,
+      capabilityReferences: ['com.example.query-connector']
+    })
+    const completed = await createUseCase().execute({
+      sessionId: session.id,
+      content: '开发者客栈是做什么的，都有哪些功能模块',
+      expectedRevision: waiting.revision
+    })
+
+    expect(createWaitingInputRun).toHaveBeenCalledOnce()
+    expect(resolveWaitingInputRun).toHaveBeenCalledWith(
+      'runtime-waiting-capability'
+    )
+    expect(createRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [
+          {
+            role: 'user',
+            content: '开发者客栈是做什么的，都有哪些功能模块'
+          }
+        ],
+        processing: expect.objectContaining({
+          semanticUnderstanding: expect.objectContaining({
+            sourceMessageId: 'message-user-new-topic',
+            objective: '开发者客栈是做什么的，都有哪些功能模块',
+            intent: 'answer',
+            entities: [],
+            ambiguity: [],
+            revision: 1
+          })
+        })
+      }),
+      undefined
+    )
+    const newTopic = completed.messages.find(
+      ({ id }) => id === 'message-user-new-topic'
+    )
+    expect(newTopic?.processing?.semanticUnderstanding).not.toHaveProperty(
+      'supersedesMessageId'
+    )
+    expect(completed.messages.at(-1)).toMatchObject({
+      id: 'message-assistant-new-topic',
+      status: 'completed',
+      content: '开发者客栈是开发者服务平台。'
     })
   })
 

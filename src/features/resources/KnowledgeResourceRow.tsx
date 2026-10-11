@@ -9,7 +9,11 @@ import {
 } from "lucide-react";
 import type { KnowledgeRefreshPreset } from "../../../domain/knowledge-refresh";
 import type { SpaceResource } from "../../domain/space-resource";
-import { Badge, IconButton } from "../../components/ui";
+import {
+  Badge,
+  IconButton,
+  Select,
+} from "../../components/ui";
 import { useLocalization } from "../../localization/LocalizationProvider";
 import type { TranslationKey } from "../../localization/translate";
 
@@ -178,7 +182,7 @@ export function KnowledgeResourceRow({
       </span>
       <span className="space-resource-row-actions" role="cell">
         {resource.refresh ? (
-          <select name="resources-refresh-aria" autoComplete="off"
+          <Select name="resources-refresh-aria" autoComplete="off"
             aria-label={t("resources.refresh.aria", { name: resource.name })}
             value={resource.refresh.preset}
             onChange={(event) =>
@@ -193,7 +197,7 @@ export function KnowledgeResourceRow({
                 {t(preset.label)}
               </option>
             ))}
-          </select>
+          </Select>
         ) : null}
         {canIndex ? (
           <IconButton

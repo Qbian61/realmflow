@@ -16,6 +16,27 @@ const activeScope: BoundScopeAuthorization = {
 }
 
 describe('authorizeToolEffects', () => {
+  it('records the effective risk even when a public read is automatically allowed', () => {
+    expect(authorizeToolEffects({
+      effects: [{ kind: 'network.public_read', resourceKey: 'https://example.com' }] as ToolEffect[],
+      risk: 'low', context: { sessionId: 'chat-1' }, appSessionId: 'app-1',
+      boundScopes: [], explicitGrants: [], approvalProfile: 'protected'
+    })).toMatchObject({ outcome: 'authorized', effectiveRisk: 'L0' })
+  })
+
+  it.each(['cautious', 'protected', 'trusted'] as const)('allows public browser reads in %s and gates publication once', (approvalProfile) => {
+    const common = { risk: 'high' as const, context: { sessionId: 'conversation-1', workspaceId: 'workspace-1' },
+      appSessionId: 'app-session-1', boundScopes: [activeScope], explicitGrants: [], approvalProfile }
+    expect(authorizeToolEffects({ ...common, effects: [{
+      kind: 'browser.page.read', sessionId: 'browser-one', origin: 'https://example.com', privateSession: false,
+      targetDigest: 'a'.repeat(64)
+    }] as unknown as ToolEffect[] })).toMatchObject({ outcome: 'authorized' })
+    expect(authorizeToolEffects({ ...common, effects: [{
+      kind: 'browser.page.control', sessionId: 'browser-one', origin: 'https://example.com',
+      semantic: 'publish', targetDigest: 'b'.repeat(64)
+    }] as unknown as ToolEffect[] })).toMatchObject({ outcome: 'ask', effectiveRisk: 'L4', maxGrant: 'once' })
+  })
+
   it('authorizes ordinary writes inside an active bound root regardless of static risk', () => {
     expect(
       decide(
@@ -25,7 +46,8 @@ describe('authorizeToolEffects', () => {
     ).toEqual({
       outcome: 'authorized',
       source: 'bound_scope',
-      authorizationIds: ['scope-1']
+      authorizationIds: ['scope-1'],
+      effectiveRisk: 'L1'
     })
   })
 
@@ -51,7 +73,7 @@ describe('authorizeToolEffects', () => {
     })
   })
 
-  it('authorizes process execution inside an active bound root', () => {
+  it('authorizes classified safe sandbox execution inside an active bound root', () => {
     expect(
       decide([
         {
@@ -59,13 +81,16 @@ describe('authorizeToolEffects', () => {
           executableDigest: 'a'.repeat(64),
           executableDisplayName: 'node',
           argsFingerprint: 'b'.repeat(64),
-          workingDirectory: '/workspace'
+          workingDirectory: '/workspace',
+          execution: 'sandboxed',
+          commandClass: 'safe',
         }
       ])
     ).toEqual({
       outcome: 'authorized',
       source: 'bound_scope',
-      authorizationIds: ['scope-1']
+      authorizationIds: ['scope-1'],
+      effectiveRisk: 'L1'
     })
   })
 
@@ -112,7 +137,7 @@ describe('authorizeToolEffects', () => {
     }
   })
 
-  it('uses an explicit grant for an otherwise sensitive exact resource', () => {
+  it('does not reuse an explicit grant for deletion', () => {
     const grant: PermissionGrant = {
       id: 'grant-1',
       grantKey: 'grant-key-1',
@@ -146,10 +171,10 @@ describe('authorizeToolEffects', () => {
         ],
         { grants: [grant] }
       )
-    ).toEqual({
-      outcome: 'authorized',
-      source: 'explicit_grant',
-      grantIds: ['grant-1']
+    ).toMatchObject({
+      outcome: 'ask',
+      reason: 'delete',
+      maxGrant: 'once',
     })
   })
 

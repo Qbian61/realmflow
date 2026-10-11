@@ -1,4 +1,5 @@
-import { ArrowRight, X } from "lucide-react";
+import { ArrowRight, X
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   TemplateMigrationCandidateListDto,
@@ -18,6 +19,7 @@ import {
   Field,
   IconButton,
   Spinner,
+  Select,
 } from "../../components/ui";
 import { useLocalization } from "../../localization/LocalizationProvider";
 import type { TranslationKey } from "../../localization/translate";
@@ -205,7 +207,7 @@ export function TemplateMigrationDialog({
                 />
                 <ArrowRight size={18} aria-hidden="true" />
                 <Field name="template-migration-target-version" label={t("templateMigration.targetVersion")}>
-                  <select
+                  <Select
                     aria-label={t("templateMigration.targetVersion")}
                     value={targetId}
                     disabled={pending}
@@ -218,7 +220,7 @@ export function TemplateMigrationDialog({
                         })}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </Field>
               </div>
               {loadingPreview ? (

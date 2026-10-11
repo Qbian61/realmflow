@@ -86,7 +86,7 @@ describe('ScheduleService', () => {
     expect(harness.store.save).not.toHaveBeenCalled()
   })
 
-  it.each(['permission_required', 'permission_denied'] as const)(
+  it.each(['permission_denied'] as const)(
     'rejects D09 %s without saving a schedule',
     async (outcome) => {
       const harness = createHarness({ prepareOutcome: outcome })
@@ -97,14 +97,77 @@ describe('ScheduleService', () => {
           idempotencyKey: 'create-1'
         })
       ).rejects.toMatchObject({
-        code:
-          outcome === 'permission_required'
-            ? 'schedule_permission_required'
-            : 'schedule_permission_denied'
+        code: 'schedule_permission_denied'
       })
       expect(harness.store.save).not.toHaveBeenCalled()
     }
   )
+
+  it('saves a reviewed schedule whose future operation still needs approval', async () => {
+    const harness = createHarness({ prepareOutcome: 'permission_required' })
+    await expect(harness.service.create({ definition, idempotencyKey: 'reviewed-create' }))
+      .resolves.toMatchObject({ outcome: 'saved', schedule: { approvalProfile: { id: 'protected' } } })
+  })
+
+  it('persists permission waiting with the original tool execution identity', async () => {
+    const harness = createHarness({ current: createSchedule({
+      id: 'schedule-1', definition: { ...definition, executionTarget: { ...definition.executionTarget, kind: 'tool' } }, at: 100
+    }) })
+    harness.tools.execute.mockResolvedValueOnce({
+      outcome: 'permission_required', executionId: 'pending-original', permissionRequests: [{ id: 'request-original' }]
+    } as never)
+    await expect(harness.service.runNow({ id: 'schedule-1', idempotencyKey: 'waiting-run' }))
+      .resolves.toMatchObject({ run: { status: 'waiting_permission', toolExecutionId: 'pending-original', permissionRequestId: 'request-original' } })
+    expect(harness.store.finishRun).toHaveBeenCalledWith(expect.objectContaining({
+      run: expect.not.objectContaining({ finishedAt: expect.any(Number) })
+    }))
+  })
+
+  it('finishes the original waiting run after approval without executing again', async () => {
+    const harness = createHarness()
+    const waiting = { ...createScheduleRun({ id: 'waiting-run', schedule: schedule(), triggerSource: 'manual', at: 110 }),
+      status: 'waiting_permission' as const, toolExecutionId: 'original-tool', revision: 2 }
+    harness.store.listRuns.mockResolvedValueOnce([waiting] as never)
+    const lookup = vi.fn(async () => ({ id: 'original-tool', status: 'succeeded' as const, finishedAt: 120 }))
+    const service = new ScheduleService({ store: harness.store, models: harness.models, tools: harness.tools,
+      skills: harness.skills, getToolExecution: lookup, now: () => 120 })
+    await expect(service.reconcilePermissions()).resolves.toBe(1)
+    expect(harness.store.finishRun).toHaveBeenCalledWith(expect.objectContaining({
+      expectedRunRevision: 2, run: expect.objectContaining({ id: 'waiting-run', status: 'succeeded', toolExecutionId: 'original-tool' })
+    }))
+    expect(harness.tools.execute).not.toHaveBeenCalled()
+    expect(harness.skills.execute).not.toHaveBeenCalled()
+  })
+
+  it('waits for the whole model task to finish after its tool approval', async () => {
+    const harness = createHarness()
+    const waiting = { ...createScheduleRun({ id: 'waiting-model', schedule: schedule(), triggerSource: 'manual', at: 110 }),
+      status: 'waiting_permission' as const, toolExecutionId: 'original-tool', providerRunId: 'model-run', revision: 2 }
+    harness.store.listRuns.mockResolvedValue([waiting] as never)
+    const getModelExecution = vi.fn(async () => ({ id: 'model-run', status: 'completed', finishedAt: 120 }))
+    const service = new ScheduleService({ store: harness.store, models: harness.models, tools: harness.tools,
+      skills: harness.skills, getModelExecution, now: () => 120 })
+    await expect(service.reconcilePermissions()).resolves.toBe(1)
+    expect(getModelExecution).toHaveBeenCalledWith('model-run')
+    expect(harness.store.finishRun).toHaveBeenCalledWith(expect.objectContaining({
+      run: expect.objectContaining({ id: 'waiting-model', status: 'succeeded' })
+    }))
+  })
+
+  it('does not turn a denied tool into schedule success when the model claims completion', async () => {
+    const harness = createHarness()
+    const waiting = { ...createScheduleRun({ id: 'denied-model', schedule: schedule(), triggerSource: 'manual', at: 110 }),
+      status: 'waiting_permission' as const, toolExecutionId: 'denied-tool', providerRunId: 'model-run', revision: 2 }
+    harness.store.listRuns.mockResolvedValue([waiting] as never)
+    const service = new ScheduleService({ store: harness.store, models: harness.models, tools: harness.tools,
+      skills: harness.skills, getModelExecution: async () => ({ id: 'model-run', status: 'completed', finishedAt: 120 }),
+      getToolExecution: async () => ({ id: 'denied-tool', status: 'failed', error: { code: 'permission_denied' }, finishedAt: 120 }),
+      now: () => 120 })
+    await service.reconcilePermissions()
+    expect(harness.store.finishRun).toHaveBeenCalledWith(expect.objectContaining({
+      run: expect.objectContaining({ status: 'failed', errorCode: 'permission_denied' })
+    }))
+  })
 
   it('maps D09 dependency errors to a safe schedule error', async () => {
     const harness = createHarness({
@@ -230,7 +293,8 @@ describe('ScheduleService', () => {
         id: 'schedule-1',
         executionTarget: definition.executionTarget
       }),
-      scheduleRunId: 'schedule-run-1'
+      scheduleRunId: 'schedule-run-1',
+      onPermissionRequired: expect.any(Function)
     })
   })
 
