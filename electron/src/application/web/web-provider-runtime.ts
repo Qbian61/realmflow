@@ -3,7 +3,7 @@ import type { WebProviderConfiguration } from '../../../../shared/web-provider'
 import { normalizeWebText, readableWebContent } from './web-readable-content'
 import {
   hashWebContent, parseWebUrl, readWebResponse, sanitizeWebUrl, webError,
-  type WebRequestPort
+  type WebHostResolver, type WebRequestPort
 } from './web-response'
 import {
   normalizeWebSearchResults, webEnum, webInteger, webSearchProviders, webText
@@ -20,6 +20,7 @@ export type WebProviderRuntimeDependencies = {
   timeoutMs?: number
   cacheLimit?: number
   ttlMs?: number
+  resolveHost?: WebHostResolver
 }
 
 /** One instance per Main composition. Neither environment nor model arguments select credentials. */
@@ -64,7 +65,8 @@ export class WebProviderRuntime implements WebFetchProvider {
       const response = await readWebResponse({
         request: this.request, url, signal, headers,
         timeoutMs: this.dependencies.timeoutMs ?? 15_000,
-        maxBytes: 256 * 1024, maxRedirects: 0
+        maxBytes: 256 * 1024, maxRedirects: 0,
+        resolveHost: this.dependencies.resolveHost
       })
       if (!response.response.ok || response.truncated) return failed(provider, 'provider_error')
       const payload: unknown = JSON.parse(new TextDecoder().decode(response.bytes))
@@ -95,6 +97,7 @@ export class WebProviderRuntime implements WebFetchProvider {
       maxBytes: webInteger(args.maxBytes, 256 * 1024, 1024, 1_048_576),
       maxRedirects: webInteger(args.maxRedirects, 5, 0, 10),
       publicOnly: true,
+      resolveHost: this.dependencies.resolveHost,
       headers: { accept: 'text/html,application/xhtml+xml,application/json,text/plain,*/*;q=0.8' }
     })
     const contentType = response.response.headers.get('content-type') ?? ''

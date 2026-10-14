@@ -35,6 +35,23 @@ describe('repository ingestion DTO mapping', () => {
         byteSize: 8
       }
     ],
+    documents: [
+      {
+        sourcePath: 'README.md',
+        unitKey: 'content',
+        title: 'README.md',
+        content: '# Secret',
+        checksum: 'content-checksum',
+        byteSize: 8
+      }
+    ],
+    skippedFiles: [
+      {
+        relativePath: 'large.txt',
+        reason: 'file_too_large' as const,
+        byteSize: 5 * 1024 * 1024 + 1
+      }
+    ],
     scannedAt: 20
   }
 
@@ -68,6 +85,13 @@ describe('repository ingestion DTO mapping', () => {
             relativePath: 'README.md',
             contentChecksum: 'content-checksum',
             byteSize: 8
+          }
+        ],
+        skippedFiles: [
+          {
+            relativePath: 'large.txt',
+            reason: 'file_too_large',
+            byteSize: 5 * 1024 * 1024 + 1
           }
         ],
         scannedAt: 20

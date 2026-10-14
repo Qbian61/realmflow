@@ -185,6 +185,13 @@
   animation: ui-fade-in var(--ui-motion-default) ease-out;
 }
 
+.ui-dialog-backdrop--workspace {
+  align-items: start;
+  justify-items: center;
+  padding-top: calc(var(--workspace-header-height) + 16px);
+  padding-bottom: 16px;
+}
+
 .ui-dialog {
   display: flex;
   width: min(540px, 100%);

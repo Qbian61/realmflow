@@ -60,6 +60,11 @@ export type ImageAdapterPort = {
     operation: ImageTransformOperation,
     parameters: Record<string, unknown>
   ): Promise<ImageTransformResult>
+  renderForOcr?(
+    content: Uint8Array,
+    declaredFormat: ImageFormat,
+    maxDimension?: number
+  ): Promise<{ content: Buffer; width: number; height: number }>
 }
 
 export type ImageOcrBlock = {
@@ -119,6 +124,62 @@ export class LocalImageSessionService {
       modelVision?: ImageOcrPort
     }
   ) {}
+
+  async ocrBytes(
+    bytes: Uint8Array,
+    fileName: string,
+    format: ImageFormat,
+    signal: AbortSignal,
+    options: {
+      language?: string
+      maxDimension?: number
+    } = {}
+  ): Promise<ImageOcrResult> {
+    if (!this.dependencies.localOcr) {
+      throw new ImageSessionError(
+        'image_ocr_unavailable',
+        'Local image OCR is unavailable'
+      )
+    }
+    assertNotAborted(signal)
+    const rendered = this.dependencies.adapter.renderForOcr
+      ? await this.dependencies.adapter.renderForOcr(
+          Uint8Array.from(bytes),
+          format,
+          options.maxDimension
+        )
+      : {
+          content: Buffer.from(bytes),
+          ...(await this.dependencies.adapter.inspect(bytes, format))
+        }
+    assertNotAborted(signal)
+    const result = await this.dependencies.localOcr.recognize(
+      {
+        content: rendered.content,
+        sourcePath: fileName,
+        language: options.language
+      },
+      signal
+    )
+    validateOcrResult(result, {
+      format,
+      width: rendered.width,
+      height: rendered.height,
+      orientation: 1,
+      colorSpace: 'srgb',
+      hasAlpha: false,
+      animated: false,
+      pages: 1,
+      exif: {}
+    })
+    return {
+      language: result.language,
+      blocks: result.blocks.map((block) => ({
+        ...block,
+        bounds: { ...block.bounds }
+      }))
+    }
+  }
 
   async open(input: {
     canonicalPath: string

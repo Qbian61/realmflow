@@ -163,6 +163,7 @@ function resolveExecutionLevel(
   if (
     input.capabilities.some((capability) =>
       [
+        'process.inspect',
         'process.discover',
         'process.execute',
         'process.manage'

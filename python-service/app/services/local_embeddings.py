@@ -68,6 +68,11 @@ class ModelAssetManifest:
 class EmbeddingBackend(Protocol):
     def count_tokens(self, text: str) -> int: ...
 
+    def tokenize_with_offsets(
+        self,
+        text: str,
+    ) -> tuple[int, list[tuple[int, int]]]: ...
+
     def token_offsets(self, text: str) -> list[tuple[int, int]]: ...
 
     def infer(
@@ -317,6 +322,20 @@ class OnnxEmbeddingBackend:
 
     def count_tokens(self, text: str) -> int:
         return len(self._tokenizer.encode(text).ids)
+
+    def tokenize_with_offsets(
+        self,
+        text: str,
+    ) -> tuple[int, list[tuple[int, int]]]:
+        encoding = self._tokenizer.encode(text)
+        return (
+            len(encoding.ids),
+            [
+                (start, end)
+                for start, end in encoding.offsets
+                if end > start
+            ],
+        )
 
     def token_offsets(self, text: str) -> list[tuple[int, int]]:
         return [

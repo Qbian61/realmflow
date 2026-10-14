@@ -36,8 +36,7 @@ function render(
 }
 
 function openScheduledTasks(): void {
-  const tabs = within(screen.getByRole("tablist")).getAllByRole("tab");
-  fireEvent.click(tabs[1]!);
+  return;
 }
 
 const schedule: ScheduleDto = {
@@ -69,8 +68,7 @@ const schedule: ScheduleDto = {
 it("reviews the approval mode and warns that scheduled operations may wait", async () => {
   installBusiness(createBusiness());
   render(<SchedulePage />);
-  await screen.findByRole("heading", { name: "工作周报" });
-  fireEvent.click(screen.getByRole("button", { name: "使用推荐任务 工作周报" }));
+  fireEvent.click(await screen.findByRole("button", { name: "新建任务" }));
   expect(screen.getByRole("combobox", { name: "审批模式" })).toBeVisible();
   expect(screen.getByText("每次运行仍会检查实际操作，需要授权时任务会等待你的决定。")).toBeVisible();
 });
@@ -81,29 +79,18 @@ describe("SchedulePage", () => {
     delete window.realmflow;
   });
 
-  it("restores the active tab from a deep link and rejects invalid values", async () => {
+  it("ignores retired schedule tab deep links", async () => {
     installBusiness(createBusiness());
 
-    const page = render(
-      <SchedulePage />,
-      undefined,
-      "/schedule?tab=schedules",
-    );
+    render(<SchedulePage />, undefined, "/schedule?tab=templates");
 
     expect(
-      await screen.findByRole("tab", { name: "进行中任务 (1)" }),
-    ).toHaveAttribute("aria-selected", "true");
-
-    page.unmount();
-    render(<SchedulePage />, undefined, "/schedule?tab=unknown");
-
-    expect(screen.getByRole("tab", { name: "任务模板" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+      await screen.findByRole("button", { name: "Daily summary" }),
+    ).toHaveAttribute("aria-current", "page");
+    expect(screen.queryByRole("tab")).toBeNull();
   });
 
-  it("uses the shared page, toolbar, badge and empty state primitives", async () => {
+  it("uses the shared split page with an empty navigation hint and blank detail", async () => {
     const business = createBusiness([]);
     installBusiness(business);
 
@@ -111,23 +98,25 @@ describe("SchedulePage", () => {
 
     expect(page.container.firstElementChild).toHaveClass("schedule-page");
     expect(page.container.firstElementChild).not.toHaveClass("ui-page");
-    expect(page.container.querySelector(".schedule-content")).toHaveClass(
-      "ui-page__body",
-      "ui-page__body--wide",
-    );
-    expect(screen.getByRole("toolbar", { name: "定时任务视图" })).toHaveClass(
-      "ui-toolbar",
-      "ui-toolbar--workspace-header",
-    );
+    expect(screen.getByTestId("workbench-split-page")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "新建任务" })).toHaveClass(
       "ui-button",
-      "ui-button--primary",
+      "ui-button--ghost",
     );
-
-    openScheduledTasks();
+    expect(screen.getByRole("button", { name: "新建任务" })).toHaveTextContent(
+      /^$/,
+    );
+    expect(screen.getByRole("button", { name: "新建任务" })).toHaveAttribute(
+      "title",
+      "新建",
+    );
+    const navigation = screen.getByRole("navigation", { name: "工具列表" });
     expect(
-      (await screen.findByText("尚未创建定时任务")).closest(".ui-empty-state"),
-    ).toBeTruthy();
+      await within(navigation).findByText("下方 + 新建"),
+    ).toHaveClass("workbench-navigation-empty");
+    expect(screen.getByRole("region", { name: "工具内容" })).toHaveTextContent(
+      /^$/,
+    );
   });
 
   it("hides raw IPC failures behind the localized load error", async () => {
@@ -151,69 +140,64 @@ describe("SchedulePage", () => {
     });
   });
 
-  it("separates task templates and scheduled tasks into header tabs", async () => {
-    const business = createBusiness();
+  it("uses a task list and selected execution detail without template tabs", async () => {
+    const secondSchedule = {
+      ...schedule,
+      id: "schedule-2",
+      name: "Risk review",
+      description: "Review project risks",
+    };
+    const business = createBusiness([schedule, secondSchedule]);
+    vi.mocked(business.listScheduleRuns).mockResolvedValueOnce([
+      run("daily-run", "manual"),
+      {
+        ...run("risk-run", "cron"),
+        scheduleId: secondSchedule.id,
+        scheduleName: secondSchedule.name,
+      },
+    ]);
     installBusiness(business);
 
     render(<SchedulePage />);
 
-    const templatesTab = screen.getByRole("tab", { name: "任务模板" });
-    const schedulesTab = await screen.findByRole("tab", {
-      name: "进行中任务 (1)",
+    expect(screen.queryByRole("tab", { name: "任务模板" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "工作周报" })).toBeNull();
+    const navigation = await screen.findByRole("navigation", {
+      name: "工具列表",
     });
+    expect(
+      within(navigation).getByRole("button", { name: "Daily summary" }),
+    ).toHaveAttribute("aria-current", "page");
+    expect(
+      within(navigation).queryByLabelText(/拖拽排序/),
+    ).toBeNull();
+    const content = screen.getByRole("region", { name: "工具内容" });
+    expect(within(content).getByTestId("schedule-run-daily-run"))
+      .toBeInTheDocument();
+    expect(within(content).queryByTestId("schedule-run-risk-run")).toBeNull();
 
-    expect(screen.getByRole("tablist")).toHaveClass(
-      "ui-tab-list",
-      "ui-tab-list--page",
+    fireEvent.click(
+      within(navigation).getByRole("button", { name: "Risk review" }),
     );
-    expect(screen.getByRole("tablist").parentElement).toHaveClass(
-      "ui-tabs",
-      "ui-tabs--page",
-    );
-    templatesTab.focus();
-    fireEvent.keyDown(templatesTab, { key: "ArrowRight" });
-    expect(schedulesTab).toHaveFocus();
-    expect(templatesTab).toHaveAttribute("aria-selected", "true");
-    expect(templatesTab).toHaveAttribute("aria-selected", "true");
-    expect(schedulesTab).toHaveAttribute("aria-selected", "false");
-    expect(
-      screen.getByRole("heading", { level: 1, name: "定时任务" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByText("管理本地自动化的执行周期、绑定和运行状态。"),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("heading", { name: "为你推荐" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: "工作周报" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("heading", { name: "Daily summary" }),
-    ).not.toBeInTheDocument();
 
-    fireEvent.click(schedulesTab);
-
-    expect(templatesTab).toHaveAttribute("aria-selected", "false");
-    expect(schedulesTab).toHaveAttribute("aria-selected", "true");
     expect(
-      await screen.findByRole("heading", { name: "Daily summary" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("heading", { name: "进行中" }),
-    ).not.toBeInTheDocument();
+      within(navigation).getByRole("button", { name: "Risk review" }),
+    ).toHaveAttribute("aria-current", "page");
+    expect(within(content).getByTestId("schedule-run-risk-run"))
+      .toBeInTheDocument();
+    expect(within(content).queryByTestId("schedule-run-daily-run")).toBeNull();
   });
 
-  it("places the create action in the schedule header", async () => {
+  it("places the create action in the task list footer", async () => {
     const business = createBusiness();
     installBusiness(business);
 
     render(<SchedulePage />);
-    await screen.findByRole("tab", { name: "进行中任务 (1)" });
 
     const createButton = screen.getByRole("button", { name: "新建任务" });
-    expect(createButton.closest(".schedule-page-header")).not.toBeNull();
-    expect(createButton.closest(".schedule-heading")).toBeNull();
+    expect(
+      createButton.closest(".workbench-split-navigation-tools"),
+    ).not.toBeNull();
 
     fireEvent.click(createButton);
     const dialog = screen.getByRole("dialog", { name: "新建定时任务" });
@@ -236,7 +220,7 @@ describe("SchedulePage", () => {
     render(<SchedulePage />);
     openScheduledTasks();
 
-    expect(screen.getByText("正在加载定时任务…")).toBeInTheDocument();
+    expect(screen.getAllByText("正在加载定时任务…")).toHaveLength(1);
     const scheduleHeading = await screen.findByRole("heading", {
       name: "Daily summary",
     });
@@ -244,7 +228,9 @@ describe("SchedulePage", () => {
       "ui-card",
       "ui-card--compact",
     );
-    expect(screen.getByText("运行中")).toHaveClass(
+    expect(
+      within(scheduleHeading.closest("article")!).getByText("运行中"),
+    ).toHaveClass(
       "ui-badge",
       "ui-badge--success",
     );
@@ -276,11 +262,6 @@ describe("SchedulePage", () => {
     installBusiness(business);
 
     render(<SchedulePage />, storageWithLocale("ja"));
-    openScheduledTasks();
-
-    expect(
-      await screen.findByRole("tab", { name: "実行中のタスク (1)" }),
-    ).toBeVisible();
     expect(
       await screen.findByRole("heading", { name: "Daily summary" }),
     ).toBeVisible();
@@ -289,7 +270,7 @@ describe("SchedulePage", () => {
     ).toBeVisible();
   });
 
-  it("prefills a recommendation and only persists after explicit submit", async () => {
+  it("creates a task only after explicit submit", async () => {
     const business = createBusiness([]);
     vi.mocked(business.listSchedules)
       .mockResolvedValueOnce([])
@@ -297,22 +278,16 @@ describe("SchedulePage", () => {
     installBusiness(business);
 
     render(<SchedulePage />);
-    const recommendationHeading = await screen.findByRole("heading", {
-      name: "工作周报",
-    });
-    expect(recommendationHeading.closest("article")).toHaveClass(
-      "ui-card",
-      "ui-card--compact",
-      "ui-card--interactive",
-    );
-
-    fireEvent.click(
-      screen.getByRole("button", { name: "使用推荐任务 工作周报" }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: "新建任务" }));
     const dialog = screen.getByRole("dialog", { name: "新建定时任务" });
-    expect(
+    fireEvent.change(
       within(dialog).getByRole("textbox", { name: "任务名称" }),
-    ).toHaveValue("工作周报");
+      { target: { value: "工作周报" } },
+    );
+    fireEvent.change(
+      within(dialog).getByRole("textbox", { name: "定时任务描述" }),
+      { target: { value: "自动汇总本周工作进展" } },
+    );
     expect(
       within(dialog).getByRole("combobox", { name: "错过执行策略" }),
     ).toHaveValue("skip");
@@ -329,8 +304,8 @@ describe("SchedulePage", () => {
       definition: {
         approvalProfileId: "protected",
         name: "工作周报",
-        description: "自动汇总本周工作进展，一键生成周报",
-        cronExpression: "0 18 * * 5",
+        description: "自动汇总本周工作进展",
+        cronExpression: "0 9 * * 1-5",
         timeZone: "Asia/Shanghai",
         missedRunPolicy: "skip",
         workspaceId: "workspace-1",
@@ -452,12 +427,16 @@ describe("SchedulePage", () => {
     installBusiness(business);
 
     render(<SchedulePage />);
-    fireEvent.click(
-      await screen.findByRole("button", {
-        name: "使用推荐任务 工作周报",
-      }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: "新建任务" }));
     const dialog = screen.getByRole("dialog", { name: "新建定时任务" });
+    fireEvent.change(
+      within(dialog).getByRole("textbox", { name: "任务名称" }),
+      { target: { value: "Failure task" } },
+    );
+    fireEvent.change(
+      within(dialog).getByRole("textbox", { name: "定时任务描述" }),
+      { target: { value: "Failure description" } },
+    );
     fireEvent.click(within(dialog).getByRole("button", { name: "创建任务" }));
 
     const alert = await screen.findByRole("alert");

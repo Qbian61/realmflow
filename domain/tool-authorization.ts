@@ -22,6 +22,13 @@ type ApplicationEffectTarget = {
   displayName: string
 }
 
+type ProcessEffectOwner =
+  | { type: 'conversation'; id: string }
+  | { type: 'node_run'; id: string }
+  | { type: 'requirement'; id: string }
+  | { type: 'schedule_run'; id: string }
+  | { type: 'application'; id: string }
+
 export type ToolEffect =
   | { kind: 'filesystem.read'; path: string; sensitivity?: 'normal' | 'sensitive' }
   | { kind: 'filesystem.write'; path: string }
@@ -42,6 +49,7 @@ export type ToolEffect =
   | { kind: 'browser.page.read'; sessionId: string; origin: string; privateSession: boolean; targetDigest: string }
   | { kind: 'browser.page.control'; sessionId: string; origin: string; semantic: 'control' | 'sensitive' | 'publish'; targetDigest: string }
   | { kind: 'process.inspect'; workingDirectory: string }
+  | { kind: 'process.inspect'; owner: ProcessEffectOwner }
   | { kind: 'process.manage'; processId: string; currentRun: boolean; fingerprint: string }
   | { kind: 'repository.local_write'; repositoryRoot: string }
   | {
@@ -202,7 +210,7 @@ function matchingBoundAuthorization(
 function isAutomaticallyAllowed(effect: ToolEffect, inScope: boolean, profile: ApprovalProfileId): boolean {
   if (effect.kind === 'network.public_read') return true
   if (effect.kind === 'browser.page.read') return !effect.privateSession
-  if (effect.kind === 'process.inspect') return inScope
+  if (effect.kind === 'process.inspect') return effectPath(effect) ? inScope : true
   if (effect.kind === 'process.manage') return effect.currentRun && profile !== 'cautious'
   if (effect.kind === 'browser.session.create' || effect.kind === 'browser.session.close') {
     return profile !== 'cautious'
@@ -233,7 +241,7 @@ function effectRisk(effect: ToolEffect, inScope: boolean): EffectiveRisk {
     case 'browser.profile.attach': return 'L3'
     case 'browser.page.read': return effect.privateSession ? 'L2' : 'L0'
     case 'browser.page.control': return effect.semantic === 'publish' ? 'L4' : effect.semantic === 'sensitive' ? 'L3' : 'L2'
-    case 'process.inspect': return inScope ? 'L0' : 'L2'
+    case 'process.inspect': return effectPath(effect) ? inScope ? 'L0' : 'L2' : 'L0'
     case 'process.manage': return effect.currentRun ? 'L2' : 'L3'
     case 'process.execute': return effect.execution !== 'sandboxed' ||
       !effect.commandClass || effect.commandClass === 'dangerous' ? 'L3'
@@ -253,7 +261,9 @@ function effectPath(effect: ToolEffect): string | undefined {
     return effect.path
   }
   if (effect.kind === 'process.execute') return effect.workingDirectory
-  if (effect.kind === 'process.inspect') return effect.workingDirectory
+  if (effect.kind === 'process.inspect' && 'workingDirectory' in effect) {
+    return effect.workingDirectory
+  }
   if (effect.kind === 'repository.publish' || effect.kind === 'repository.local_write') return effect.repositoryRoot
   return undefined
 }
@@ -291,8 +301,16 @@ function permissionRequestForEffect(
         risk
       }
     case 'process.inspect':
+      if (!('workingDirectory' in effect)) {
+        return {
+          capability: 'process.inspect',
+          resource: businessScope(context),
+          context: { ...context },
+          risk
+        }
+      }
       return {
-        capability: 'process.discover',
+        capability: 'process.inspect',
         resource: { kind: 'path', canonicalPath: effect.workingDirectory, access: 'directory' },
         context: { ...context }, risk,
       }

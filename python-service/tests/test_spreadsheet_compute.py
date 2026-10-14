@@ -267,6 +267,45 @@ def test_inspects_xlsx_sheets_merges_freeze_panes_and_formulas() -> None:
     }
 
 
+def test_extracts_delimited_text_with_bounded_rows() -> None:
+    result = compute(
+        operation="extract_text",
+        text='name,notes\nRealmFlow,"local\nfirst"\n',
+    )
+
+    assert result["modified"] is False
+    assert result["result"] == {
+        "sheets": [
+            {
+                "name": "Sheet1",
+                "rows": [["name", "notes"], ["RealmFlow", "local\nfirst"]],
+                "nonEmptyCellCount": 4,
+            }
+        ]
+    }
+
+
+def test_extracts_xlsx_sheets_and_formula_text_in_source_order() -> None:
+    result = compute_bytes(operation="extract_text", document=xlsx_fixture())
+
+    assert result["modified"] is False
+    assert result["result"]["sheets"] == [
+        {
+            "name": "Summary",
+            "rows": [
+                ["Metric", "Value", ""],
+                ["Count", "12", "=B2*2"],
+            ],
+            "nonEmptyCellCount": 5,
+        },
+        {
+            "name": "Data",
+            "rows": [["Raw"]],
+            "nonEmptyCellCount": 1,
+        },
+    ]
+
+
 def test_reads_and_mutates_xlsx_with_typed_cells() -> None:
     read = compute_bytes(
         operation="read_range",

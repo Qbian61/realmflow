@@ -87,19 +87,16 @@ describe("TaskTableNavigation", () => {
     expect(props.onDelete).toHaveBeenCalledWith(tables[0]);
   });
 
-  it("right-aligns compact drag, copy, and delete actions after the name", () => {
+  it("uses the table name as the drag target and keeps compact actions after it", () => {
     renderNavigation();
 
     const name = screen.getByRole("button", { name: "发布计划" });
-    const drag = screen.getByLabelText("拖拽排序 发布计划");
     const copy = screen.getByRole("button", { name: "复制发布计划" });
     const remove = screen.getByRole("button", { name: "删除发布计划" });
 
-    expect(
-      name.compareDocumentPosition(drag) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(drag.parentElement).toHaveClass("workbench-task-table-actions");
-    expect(drag.nextElementSibling).toBe(copy);
+    expect(name).toHaveAttribute("draggable", "true");
+    expect(screen.queryByLabelText("拖拽排序 发布计划")).toBeNull();
+    expect(copy.parentElement).toHaveClass("workbench-task-table-actions");
     expect(copy.nextElementSibling).toBe(remove);
   });
 
@@ -130,7 +127,7 @@ describe("TaskTableNavigation", () => {
     expect(screen.queryByRole("menu")).toBeNull();
   });
 
-  it("moves a table by dropping its drag handle on a target row", () => {
+  it("moves a table by dragging its name onto a target row", () => {
     const props = renderNavigation();
     let draggedId = "";
     const dataTransfer = {
@@ -143,7 +140,7 @@ describe("TaskTableNavigation", () => {
     };
 
     fireEvent.dragStart(
-      screen.getByLabelText("拖拽排序 发布计划"),
+      screen.getByRole("button", { name: "发布计划" }),
       { dataTransfer },
     );
     fireEvent.drop(screen.getByRole("button", { name: "内容排期" }).parentElement!, {
@@ -151,16 +148,5 @@ describe("TaskTableNavigation", () => {
     });
 
     expect(props.onMove).toHaveBeenCalledWith(tables[0], 1);
-  });
-
-  it("does not open a reorder menu when the drag handle is clicked", () => {
-    const props = renderNavigation();
-    const handle = screen.getByLabelText("拖拽排序 发布计划");
-
-    fireEvent.click(handle);
-
-    expect(handle.tagName).toBe("SPAN");
-    expect(screen.queryByRole("menu")).toBeNull();
-    expect(props.onMove).not.toHaveBeenCalled();
   });
 });

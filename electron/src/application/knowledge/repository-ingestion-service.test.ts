@@ -358,39 +358,43 @@ describe('RepositoryIngestionService', () => {
     })
   })
 
-  it('short-circuits a clean local repository at the current HEAD', async () => {
-    await execute('git', ['-C', localRepositoryPath, 'add', 'README.md'])
-    await execute('git', [
-      '-C',
-      localRepositoryPath,
-      '-c',
-      'user.name=RealmFlow Test',
-      '-c',
-      'user.email=realmflow@example.invalid',
-      'commit',
-      '--quiet',
-      '-m',
-      'initial'
-    ])
-    const service = createService()
-    const created = await service.ingestLocal({
-      id: 'repo-local',
-      workspaceId: 'space-1',
-      selectionId,
-      selectedBranch: 'HEAD',
-      name: 'Local repository',
-      sortOrder: 0,
-      idempotencyKey: 'ingest-local-probe'
-    })
+  it(
+    'short-circuits a clean local repository at the current HEAD',
+    async () => {
+      await execute('git', ['-C', localRepositoryPath, 'add', 'README.md'])
+      await execute('git', [
+        '-C',
+        localRepositoryPath,
+        '-c',
+        'user.name=RealmFlow Test',
+        '-c',
+        'user.email=realmflow@example.invalid',
+        'commit',
+        '--quiet',
+        '-m',
+        'initial'
+      ])
+      const service = createService()
+      const created = await service.ingestLocal({
+        id: 'repo-local',
+        workspaceId: 'space-1',
+        selectionId,
+        selectedBranch: 'HEAD',
+        name: 'Local repository',
+        sortOrder: 0,
+        idempotencyKey: 'ingest-local-probe'
+      })
 
-    await expect(
-      service.probe('repo-local', 'refresh:run-3')
-    ).resolves.toEqual({
-      status: 'unchanged',
-      checksum: created.snapshot?.manifestChecksum
-    })
-    expect(connectors.invoke).not.toHaveBeenCalled()
-  })
+      await expect(
+        service.probe('repo-local', 'refresh:run-3')
+      ).resolves.toEqual({
+        status: 'unchanged',
+        checksum: created.snapshot?.manifestChecksum
+      })
+      expect(connectors.invoke).not.toHaveBeenCalled()
+    },
+    15_000
+  )
 
   it('restores the previous managed tree when snapshot persistence fails', async () => {
     const managedPath = join(

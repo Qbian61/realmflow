@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.files.read",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "name": "Read file",
   "description": "Read UTF-8 text in bounded chunks. Use Read document for PDF and DOCX files.",
   "tags": [
@@ -21,22 +21,46 @@
     "properties": {
       "path": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Authorized local path as a relative path under the authorized root. Do not invent or pass absolute local paths.",
+        "examples": [
+          "docs/example.md"
+        ]
       },
       "scopeRoot": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Optional authorized root override. Omit or pass \".\" to use the current authorized root.",
+        "examples": [
+          "."
+        ]
       },
       "offset": {
         "type": "integer",
-        "minimum": 0
+        "minimum": 0,
+        "description": "Byte offset where bounded UTF-8 text reading begins.",
+        "examples": [
+          0
+        ]
       },
       "limit": {
         "type": "integer",
         "minimum": 1,
-        "maximum": 1048576
+        "maximum": 1048576,
+        "description": "Maximum number of bytes or results returned by the operation.",
+        "examples": [
+          1
+        ]
       }
-    }
+    },
+    "examples": [
+      {
+        "path": "docs/example.md",
+        "scopeRoot": ".",
+        "offset": 0,
+        "limit": 1
+      }
+    ]
   },
   "outputSchema": {
     "type": "object",

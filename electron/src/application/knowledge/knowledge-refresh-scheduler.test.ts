@@ -143,4 +143,108 @@ describe('KnowledgeRefreshScheduler', () => {
     expect(execute).not.toHaveBeenCalled()
     expect(clearTimer).toHaveBeenCalledTimes(1)
   })
+
+  it('rearms without executing or reporting an error when a retry is blocked', async () => {
+    const callbacks: Array<() => void> = []
+    const wakeups = [
+      {
+        kind: 'retry' as const,
+        sourceId: 'source-1',
+        runId: 'run-retry',
+        policyRevision: 1,
+        nextDueAt: 1_000
+      },
+      undefined
+    ]
+    const store = {
+      listEnabledPolicies: vi.fn().mockResolvedValue([]),
+      reconcile: vi.fn(),
+      getNextWakeup: vi.fn().mockImplementation(async () => wakeups.shift()),
+      getPolicy: vi.fn(),
+      claimScheduled: vi.fn(),
+      claimRetry: vi.fn().mockResolvedValue({
+        status: 'blocked',
+        run: { id: 'run-active' }
+      })
+    }
+    const execute = vi.fn()
+    const onError = vi.fn()
+    const scheduler = new KnowledgeRefreshScheduler({
+      store,
+      planner: { next: vi.fn() },
+      execute,
+      now: () => 1_000,
+      setTimer: (callback) => {
+        callbacks.push(callback)
+        return `timer-${callbacks.length}`
+      },
+      clearTimer: vi.fn(),
+      onError
+    })
+    await scheduler.start()
+
+    callbacks[0]?.()
+    await vi.waitFor(() => {
+      expect(store.claimRetry).toHaveBeenCalledWith({
+        runId: 'run-retry',
+        expectedNextAttemptAt: 1_000,
+        at: 1_000
+      })
+      expect(callbacks).toHaveLength(2)
+    })
+
+    expect(execute).not.toHaveBeenCalled()
+    expect(onError).not.toHaveBeenCalled()
+  })
+
+  it('polls again when no wakeup exists so newly created policies are discovered', async () => {
+    const callbacks: Array<() => void> = []
+    const store = {
+      listEnabledPolicies: vi
+        .fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([
+          {
+            sourceId: 'source-1',
+            cronExpression: '*/5 * * * *',
+            timeZone: 'UTC',
+            revision: 1
+          }
+        ]),
+      reconcile: vi.fn(),
+      getNextWakeup: vi.fn().mockResolvedValue(undefined),
+      getPolicy: vi.fn(),
+      claimScheduled: vi.fn(),
+      claimRetry: vi.fn()
+    }
+    const scheduler = new KnowledgeRefreshScheduler({
+      store,
+      planner: { next: vi.fn().mockReturnValue(300_000) },
+      execute: vi.fn(),
+      now: () => 0,
+      setTimer: (callback, delay) => {
+        callbacks.push(callback)
+        return `timer-${delay}`
+      },
+      clearTimer: vi.fn()
+    })
+
+    await scheduler.start()
+
+    expect(callbacks).toHaveLength(1)
+    callbacks[0]?.()
+    await vi.waitFor(() => {
+      expect(store.reconcile).toHaveBeenLastCalledWith({
+        planned: [
+          {
+            sourceId: 'source-1',
+            policyRevision: 1,
+            nextDueAt: 300_000
+          }
+        ],
+        at: 0,
+        preserveOverdue: true
+      })
+    })
+  })
 })

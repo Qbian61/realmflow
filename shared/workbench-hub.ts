@@ -15,7 +15,7 @@ export const WORKBENCH_MODULE_IDS = [
   'sites',
   'memos',
   'terminal',
-  'system'
+  'schedules'
 ] as const
 
 export type WorkbenchModuleId = (typeof WORKBENCH_MODULE_IDS)[number]
@@ -27,9 +27,9 @@ export type ConfigurableWorkbenchModuleId = Exclude<
 export const DEFAULT_WORKBENCH_MODULE_ORDER = [
   'tasks',
   'sites',
+  'schedules',
   'memos',
-  'terminal',
-  'system'
+  'terminal'
 ] as const satisfies readonly ConfigurableWorkbenchModuleId[]
 
 export type WorkbenchLayout = {

@@ -57,6 +57,22 @@ export type CapabilitySpec = {
   }
 }
 
+export type CapabilityContractValidationReport = {
+  status: 'passed'
+  diagnostics: string[]
+}
+
+export type CapabilityValidationReport = {
+  compatible: true
+  dependencyStatus: 'resolved'
+  contract: CapabilityContractValidationReport
+  tests: Array<{
+    id: string
+    status: 'passed'
+    detail?: string
+  }>
+}
+
 export type CapabilitySpecSource = Omit<CapabilitySpec, 'specDigest' | 'runtime'> & {
   runtime:
     | (Omit<Extract<CapabilityBuilderRuntime, { kind: 'connector' }>, 'connectorKind'> & {
@@ -83,15 +99,7 @@ export type CapabilityGenerationProposal = {
   scope: CapabilityScope
   draftRevision: number
   definition: CapabilityDefinition
-  validationReport: {
-    compatible: true
-    dependencyStatus: 'resolved'
-    tests: Array<{
-      id: string
-      status: 'passed'
-      detail?: string
-    }>
-  }
+  validationReport: CapabilityValidationReport
   fileNames: string[]
   byteSize: number
   fileCount: number

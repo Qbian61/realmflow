@@ -1,4 +1,5 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -9,10 +10,18 @@ import { ToolExecutionApplicationService } from './tool-execution-application-se
 import { ToolOutboxDispatcher } from './tool-outbox-dispatcher'
 import { ToolProjectionRunner } from './tool-projection-runner'
 import { projectModelFacingToolCatalog } from './tool-model-facing-projection'
+import { BuiltinCatalogLoader } from './builtin-catalog-loader'
+import {
+  APPLICATION_TOOL_HANDLER_NAMES,
+  createBuiltinToolAdapter,
+  type BuiltinToolRuntimeDependencies
+} from './builtin-tool-runtime'
+import { HybridKnowledgeSearchService } from '../knowledge/hybrid-knowledge-search-service'
 import {
   openRealmFlowDatabase,
   type RealmFlowDatabase
 } from '../../infrastructure/sqlite/database'
+import { createIsolatedVectorIndexProfile } from '../../../../domain/vector-index-profile'
 import { SqliteToolEventStore } from '../../infrastructure/sqlite/tool-event-store'
 import { SqliteToolOutboxRepository } from '../../infrastructure/sqlite/tool-outbox-repository'
 import { SqliteToolProjectionStore } from '../../infrastructure/sqlite/tool-projection-store'
@@ -22,6 +31,7 @@ import { EncryptedPendingToolInvocationCheckpointStore } from './pending-tool-in
 import { ToolPolicyEngine } from './tool-policy-engine'
 import type { ToolPolicySnapshot } from '../../../../domain/tool-policy'
 import { createApprovalProfileSnapshot, type ApprovalProfileId } from '../../../../domain/approval-profile'
+import type { KnowledgeSearchQueryInput } from '../../../../domain/knowledge-search'
 
 let directory: string
 let database: RealmFlowDatabase
@@ -277,6 +287,445 @@ afterEach(async () => {
 })
 
 describe('ToolExecutionApplicationService', () => {
+  it('executes knowledge search through the real builtin adapter and hybrid search service', async () => {
+    const catalog = await new BuiltinCatalogLoader(
+      join(process.cwd(), 'resources', 'extensions', 'builtin')
+    ).load()
+    const knowledgeDefinition = catalog
+      .flatMap(({ tools }) => tools)
+      .find(({ id }) => id === 'builtin.knowledge.search')
+    if (!knowledgeDefinition) throw new Error('Missing knowledge search definition')
+    await seedPackage(events, knowledgeDefinition, 'catalog-package-knowledge')
+    await seedToolDefinition(
+      events,
+      knowledgeDefinition,
+      'catalog-event-knowledge-search'
+    )
+    await projectionRunner.rebuildCatalogProjection()
+
+    const profile = createIsolatedVectorIndexProfile('tool-runtime')
+    const searchStore = {
+      resolveScope: vi.fn().mockResolvedValue({
+        workspaces: [{ id: 'workspace-1', name: 'Workspace One' }],
+        generations: []
+      })
+    }
+    const searchService = new HybridKnowledgeSearchService({
+      profile,
+      store: searchStore,
+      sidecar: {
+        embedKnowledgeQuery: vi.fn()
+      },
+      qdrant: {
+        search: vi.fn()
+      }
+    })
+    let runtime!: ToolExecutionApplicationService
+    const realDispatcher = new ToolOutboxDispatcher({
+      repository: new SqliteToolOutboxRepository(database),
+      publish: (message) => runtime.dispatch(message),
+      owner: 'tool-runtime',
+      now: () => 200
+    })
+    runtime = new ToolExecutionApplicationService({
+      events,
+      projections,
+      projectionRunner,
+      adapters: new ToolAdapterRegistry([
+        createBuiltinToolAdapter(
+          builtinRuntimeDependencies({
+            'knowledge.search': async ({ arguments: args }) => ({
+              results: await searchService.search(
+                args as unknown as KnowledgeSearchQueryInput
+              )
+            })
+          })
+        )
+      ]),
+      pendingCheckpoints: checkpoints,
+      dispatcher: realDispatcher,
+      aiRuns: {
+        suspendToolCall,
+        submitToolResult
+      },
+      now: () => 200,
+      resolveRunPolicy: async () => runPolicy,
+      resolveApprovalProfile: async () =>
+        createApprovalProfileSnapshot(approvalProfileId),
+      createId: idFactory(),
+      resolveScopeRoots: async () => ['/workspace'],
+      resolveBoundScopes: async () => [
+        {
+          authorizationId: 'bound-scope-1',
+          source: {
+            kind: 'requirement',
+            requirementId: 'requirement-1',
+            workspaceId: 'workspace-1'
+          },
+          roots: [{ canonicalPath: '/workspace', access: 'read-write' }],
+          bindingRevision: 1,
+          status: 'active',
+          createdAt: 100
+        }
+      ]
+    })
+
+    const result = await runtime.execute({
+      definition: reference(knowledgeDefinition),
+      triggerSource: 'model',
+      context: {
+        scope: { kind: 'conversation', conversationId: 'conversation-1' },
+        workspaceId: 'workspace-1',
+        requirementId: 'requirement-1',
+        conversationId: 'conversation-1',
+        parentExecutionId: 'ai-run-1',
+        toolCallId: 'tool-call-1'
+      },
+      input: { query: 'release risk', topK: 3 },
+      idempotencyKey: 'knowledge-search-runtime'
+    })
+
+    expect(result).toMatchObject({
+      outcome: 'executed',
+      execution: {
+        status: 'succeeded',
+        output: { results: [] }
+      }
+    })
+    expect(searchStore.resolveScope).toHaveBeenCalledWith({
+      scope: { kind: 'workspace', workspaceId: 'workspace-1' },
+      profileId: profile.id
+    })
+  })
+
+  it('executes structured files.search modes through catalog argument validation', async () => {
+    const catalog = await new BuiltinCatalogLoader(
+      join(process.cwd(), 'resources', 'extensions', 'builtin')
+    ).load()
+    const searchDefinition = catalog
+      .flatMap(({ tools }) => tools)
+      .find(({ id }) => id === 'builtin.files.search')
+    if (!searchDefinition) throw new Error('Missing files search definition')
+    await seedToolDefinition(
+      events,
+      searchDefinition,
+      'catalog-event-files-search'
+    )
+    await projectionRunner.rebuildCatalogProjection()
+    externalDefinition = searchDefinition
+
+    const scopeRoot = join(directory, 'scope')
+    const bytes = Buffer.from('%PDF-1.7')
+    const sourceChecksum = prefixedSha256(bytes)
+    await mkdir(scopeRoot)
+    await writeFile(join(scopeRoot, 'report.pdf'), bytes)
+
+    const contentExtractor = {
+      getCached: vi.fn().mockResolvedValue({
+        sourceChecksum,
+        format: 'pdf',
+        extractorVersion: 'pdf-v1',
+        units: [
+          {
+            key: 'page/000002',
+            title: 'Page 2',
+            text: 'Quarterly revenue increased.',
+            checksum: prefixedSha256('Quarterly revenue increased.'),
+            byteSize: 29
+          }
+        ]
+      }),
+      extract: vi.fn().mockResolvedValue({
+        sourceChecksum,
+        format: 'pdf',
+        extractorVersion: 'pdf-v1',
+        units: [
+          {
+            key: 'page/000001',
+            title: 'Page 1',
+            text: 'Approved architecture',
+            checksum: prefixedSha256('Approved architecture'),
+            byteSize: 21
+          }
+        ]
+      })
+    }
+    const runtimeDependencies = builtinRuntimeDependencies({})
+    runtimeDependencies.files.contentExtractor = contentExtractor
+
+    let runtime!: ToolExecutionApplicationService
+    const realDispatcher = new ToolOutboxDispatcher({
+      repository: new SqliteToolOutboxRepository(database),
+      publish: (message) => runtime.dispatch(message),
+      owner: 'tool-runtime',
+      now: () => 200
+    })
+    runtime = new ToolExecutionApplicationService({
+      events,
+      projections,
+      projectionRunner,
+      adapters: new ToolAdapterRegistry([
+        createBuiltinToolAdapter(runtimeDependencies)
+      ]),
+      pendingCheckpoints: checkpoints,
+      dispatcher: realDispatcher,
+      aiRuns: {
+        suspendToolCall,
+        submitToolResult
+      },
+      now: () => 200,
+      resolveRunPolicy: async () => runPolicy,
+      resolveApprovalProfile: async () =>
+        createApprovalProfileSnapshot(approvalProfileId),
+      createId: idFactory(),
+      resolveDefinition: async (reference) =>
+        externalDefinition?.id === reference.id &&
+        externalDefinition.version === reference.version &&
+        externalDefinition.definitionDigest === reference.digest
+          ? externalDefinition
+          : undefined,
+      resolveScopeRoots: async () => [scopeRoot],
+      resolveBoundScopes: async () => [
+        {
+          authorizationId: 'bound-scope-files-search',
+          source: {
+            kind: 'requirement',
+            requirementId: 'requirement-1',
+            workspaceId: 'workspace-1'
+          },
+          roots: [{ canonicalPath: scopeRoot, access: 'read-write' }],
+          bindingRevision: 1,
+          status: 'active',
+          createdAt: 100
+        }
+      ]
+    })
+
+    const executeSearch = (input: Record<string, unknown>, key: string) =>
+      runtime.execute({
+        definition: reference(searchDefinition),
+        triggerSource: 'model',
+        context: {
+          scope: { kind: 'conversation', conversationId: 'conversation-1' },
+          workspaceId: 'workspace-1',
+          conversationId: 'conversation-1',
+          parentExecutionId: 'ai-run-1',
+          toolCallId: key
+        },
+        input,
+        idempotencyKey: key
+      })
+
+    const cached = await executeSearch(
+      {
+        query: 'revenue',
+        mode: 'content',
+        contentMode: 'structured_cached'
+      },
+      'files-search-structured-cached'
+    )
+    expect(cached.outcome).toBe('permission_required')
+    if (cached.outcome !== 'permission_required') {
+      throw new Error('Expected file search approval')
+    }
+    await runtime.resolvePermission({
+      requestId: String(cached.permissionRequests[0].id),
+      expectedRevision: 1,
+      decision: 'allow_once'
+    })
+    await expect(projections.getExecution(cached.executionId)).resolves.toMatchObject({
+        status: 'succeeded',
+        output: {
+          matches: [
+            {
+              path: 'report.pdf',
+              unitKey: 'page/000002',
+              title: 'Page 2',
+              preview: 'Quarterly revenue increased.'
+            }
+          ]
+        }
+      }
+    )
+    expect(contentExtractor.getCached).toHaveBeenCalledOnce()
+    expect(contentExtractor.extract).not.toHaveBeenCalled()
+
+    const extracted = await executeSearch(
+      {
+        query: 'architecture',
+        mode: 'content',
+        contentMode: 'structured_extract'
+      },
+      'files-search-structured-extract'
+    )
+    expect(extracted.outcome).toBe('permission_required')
+    if (extracted.outcome !== 'permission_required') {
+      throw new Error('Expected file search approval')
+    }
+    await runtime.resolvePermission({
+      requestId: String(extracted.permissionRequests[0].id),
+      expectedRevision: 1,
+      decision: 'allow_once'
+    })
+    await expect(
+      projections.getExecution(extracted.executionId)
+    ).resolves.toMatchObject({
+        status: 'succeeded',
+        output: {
+          matches: [
+            {
+              path: 'report.pdf',
+              unitKey: 'page/000001',
+              title: 'Page 1',
+              preview: 'Approved architecture'
+            }
+          ]
+        }
+      }
+    )
+    expect(contentExtractor.extract).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fileName: 'report.pdf',
+        sourceChecksum,
+        policy: {
+          consumer: 'file_search',
+          allowLocalOcr: true,
+          allowLocalConversion: true,
+          maxCharacters: 1_000_000,
+          maxUnits: 1_000
+        }
+      })
+    )
+  })
+
+  it('executes process.list for the current owner without a file scope root', async () => {
+    const catalog = await new BuiltinCatalogLoader(
+      join(process.cwd(), 'resources', 'extensions', 'builtin')
+    ).load()
+    const processDefinition = catalog
+      .flatMap(({ tools }) => tools)
+      .find(({ id }) => id === 'builtin.process.list')
+    if (!processDefinition) throw new Error('Missing process list definition')
+    await seedPackage(events, processDefinition, 'catalog-package-process')
+    await seedToolDefinition(
+      events,
+      processDefinition,
+      'catalog-event-process-list'
+    )
+    await projectionRunner.rebuildCatalogProjection()
+
+    const listProcesses = vi.fn().mockResolvedValue([
+      {
+        processId: 'process-1',
+        executable: 'npm',
+        status: 'running'
+      }
+    ])
+    const runtimeDependencies = builtinRuntimeDependencies({})
+    runtimeDependencies.processes = {
+      discover: vi.fn().mockResolvedValue([]),
+      run: vi.fn().mockResolvedValue({}),
+      start: vi.fn().mockResolvedValue({}),
+      list: listProcesses,
+      stop: vi.fn().mockResolvedValue({})
+    }
+
+    let runtime!: ToolExecutionApplicationService
+    const realDispatcher = new ToolOutboxDispatcher({
+      repository: new SqliteToolOutboxRepository(database),
+      publish: (message) => runtime.dispatch(message),
+      owner: 'tool-runtime',
+      now: () => 200
+    })
+    runtime = new ToolExecutionApplicationService({
+      events,
+      projections,
+      projectionRunner,
+      adapters: new ToolAdapterRegistry([
+        createBuiltinToolAdapter(runtimeDependencies)
+      ]),
+      pendingCheckpoints: checkpoints,
+      dispatcher: realDispatcher,
+      aiRuns: {
+        suspendToolCall,
+        submitToolResult
+      },
+      now: () => 200,
+      resolveRunPolicy: async () => runPolicy,
+      resolveApprovalProfile: async () =>
+        createApprovalProfileSnapshot(approvalProfileId),
+      createId: idFactory(),
+      resolveScopeRoots: async () => [],
+      resolveBoundScopes: async () => []
+    })
+
+    const result = await runtime.execute({
+      definition: reference(processDefinition),
+      triggerSource: 'model',
+      context: {
+        scope: { kind: 'conversation', conversationId: 'conversation-1' },
+        conversationId: 'conversation-1'
+      },
+      input: {},
+      idempotencyKey: 'process-list-no-scope'
+    })
+
+    expect(result).toMatchObject({
+      outcome: 'executed',
+      execution: {
+        status: 'succeeded',
+        output: {
+          processes: [
+            {
+              processId: 'process-1',
+              status: 'running'
+            }
+          ]
+        }
+      }
+    })
+    expect(listProcesses).toHaveBeenCalledWith({
+      type: 'conversation',
+      id: 'conversation-1'
+    })
+  })
+
+  it('rejects the legacy code knowledge source kind with repository guidance', async () => {
+    const catalog = await new BuiltinCatalogLoader(
+      join(process.cwd(), 'resources', 'extensions', 'builtin')
+    ).load()
+    const knowledgeDefinition = catalog
+      .flatMap(({ tools }) => tools)
+      .find(({ id }) => id === 'builtin.knowledge.search')
+    if (!knowledgeDefinition) throw new Error('Missing knowledge search definition')
+    await seedPackage(events, knowledgeDefinition, 'catalog-package-knowledge')
+    await seedToolDefinition(
+      events,
+      knowledgeDefinition,
+      'catalog-event-knowledge-search'
+    )
+    await projectionRunner.rebuildCatalogProjection()
+
+    await expect(
+      service.execute({
+        definition: reference(knowledgeDefinition),
+        triggerSource: 'model',
+        context: {
+          scope: { kind: 'conversation', conversationId: 'conversation-1' },
+          workspaceId: 'workspace-1',
+          conversationId: 'conversation-1'
+        },
+        input: { query: 'repo auth', sourceKinds: ['code'] },
+        idempotencyKey: 'invalid-knowledge-source-kind'
+      })
+    ).rejects.toMatchObject({
+      code: 'tool_arguments_invalid',
+      message: expect.stringContaining(
+        'Use sourceKinds value "repository" for code repository knowledge'
+      )
+    })
+  })
+
   it('publishes successful primitive completion to the persisted Plugin Hook outbox only once', async () => {
     const result = await service.execute({
       definition: reference(definition),
@@ -411,6 +860,78 @@ describe('ToolExecutionApplicationService', () => {
     expect(stream.some((item) => item.eventType === 'tool.attempt_succeeded')).toBe(false)
     expect(JSON.stringify(stream)).not.toContain('PRIVATE_INVALID_RESULT')
     expect(JSON.stringify(submitToolResult.mock.calls)).not.toContain('PRIVATE_INVALID_RESULT')
+    await expect(checkpoints.load(pending.executionId)).resolves.toBeUndefined()
+  })
+
+  it('redacts terminal adapter errors before event persistence and model result delivery', async () => {
+    const sensitiveMessage =
+      'Current run has no active runtime resource at /Users/me/project?token=secret https://internal.example.test/session?api_key=abc'
+    vi.mocked(adapter.planEffects!).mockResolvedValue({
+      outcome: 'planned',
+      effects: [{ kind: 'filesystem.write', path: '/outside/result.txt' }],
+    })
+    vi.mocked(adapter.execute).mockResolvedValue({
+      outcome: 'failed',
+      error: {
+        code: 'runtime_resource_stale',
+        message: sensitiveMessage,
+        retryable: true,
+      },
+      metrics: { durationMs: 7, outputBytes: 0 },
+    })
+    const pending = await service.execute({
+      definition: reference(definition),
+      triggerSource: 'model',
+      context: {
+        scope: { kind: 'conversation', conversationId: 'conversation-1' },
+        conversationId: 'conversation-1',
+        parentExecutionId: 'run-sensitive-error',
+        toolCallId: 'call-sensitive-error',
+      },
+      input: { path: 'README.md' },
+      idempotencyKey: 'sensitive-error',
+    })
+    if (pending.outcome !== 'permission_required') throw new Error('Expected approval')
+
+    await service.resolvePermission({
+      requestId: String(pending.permissionRequests[0].id),
+      expectedRevision: 1,
+      decision: 'allow_once',
+    })
+
+    await expect(projections.getExecution(pending.executionId)).resolves.toMatchObject({
+      status: 'failed',
+      error: {
+        code: 'runtime_resource_stale',
+        message: 'Runtime resource is stale for the current run',
+        publicMessage: 'Runtime resource is stale for the current run',
+        retryable: true,
+        category: 'transient',
+        recoveryHint: 'Retry the tool after refreshing the runtime resource.',
+        diagnosticId: expect.stringMatching(/^toolerr_[a-f0-9]{16}$/),
+      },
+    })
+    expect(submitToolResult).toHaveBeenCalledWith(
+      'run-sensitive-error',
+      expect.objectContaining({
+        callId: 'call-sensitive-error',
+        status: 'failed',
+        errorCode: 'runtime_resource_stale',
+        message: 'Runtime resource is stale for the current run',
+        diagnosticId: expect.stringMatching(/^toolerr_[a-f0-9]{16}$/),
+        toolExecutionId: pending.executionId,
+      }),
+    )
+    const persisted = JSON.stringify(await events.loadStream(pending.executionId))
+    const delivered = JSON.stringify(submitToolResult.mock.calls)
+    expect(persisted).not.toContain('/Users/me')
+    expect(persisted).not.toContain('token=secret')
+    expect(persisted).not.toContain('api_key=abc')
+    expect(persisted).not.toContain('internal.example.test')
+    expect(delivered).not.toContain('/Users/me')
+    expect(delivered).not.toContain('token=secret')
+    expect(delivered).not.toContain('api_key=abc')
+    expect(delivered).not.toContain('internal.example.test')
     await expect(checkpoints.load(pending.executionId)).resolves.toBeUndefined()
   })
 
@@ -1919,6 +2440,327 @@ describe('ToolExecutionApplicationService', () => {
     }
   )
 
+  it('retries a retryable read invocation until success with continuous attempts', async () => {
+    const retryDefinition: ToolDefinition = {
+      ...definition,
+      id: 'builtin.files.read.retryable',
+      definitionDigest: '1'.repeat(64),
+      resources: { ...definition.resources, maxAttempts: 2 }
+    }
+    await seedToolDefinition(events, retryDefinition, 'catalog-event-retryable-read')
+    await projectionRunner.rebuildCatalogProjection()
+    vi.mocked(adapter.execute)
+      .mockResolvedValueOnce({
+        outcome: 'failed',
+        error: {
+          code: 'runtime_resource_stale',
+          message: 'Runtime resource became stale',
+          retryable: true
+        },
+        metrics: { durationMs: 5, outputBytes: 0 }
+      })
+      .mockResolvedValueOnce({
+        outcome: 'succeeded',
+        output: { content: 'RealmFlow after retry' },
+        metrics: { durationMs: 8, outputBytes: 21 }
+      })
+
+    const result = await service.execute({
+      definition: reference(retryDefinition),
+      triggerSource: 'model',
+      context: {
+        scope: { kind: 'conversation', conversationId: 'conversation-1' },
+        conversationId: 'conversation-1'
+      },
+      input: { path: 'README.md' },
+      idempotencyKey: 'retryable-read'
+    })
+
+    if (result.outcome !== 'executed') throw new Error('Expected execution')
+    expect(result.execution).toMatchObject({
+      status: 'succeeded',
+      output: { content: 'RealmFlow after retry' }
+    })
+    expect(adapter.execute).toHaveBeenCalledTimes(2)
+    expect(
+      vi.mocked(adapter.execute).mock.calls.map(([, invocation]) => ({
+        attempt: invocation.attempt,
+        attemptId: invocation.attemptId
+      }))
+    ).toEqual([
+      { attempt: 1, attemptId: expect.any(String) },
+      { attempt: 2, attemptId: expect.any(String) }
+    ])
+    expect(
+      vi.mocked(adapter.execute).mock.calls[0][1].attemptId
+    ).not.toBe(vi.mocked(adapter.execute).mock.calls[1][1].attemptId)
+    expect(
+      (await events.loadStream(result.execution.id)).map(({ eventType }) => eventType)
+    ).toEqual([
+      'tool.invocation_requested',
+      'tool.arguments_validated',
+      'tool.binding_resolved',
+      'tool.effects_planned',
+      'tool.authorization_auto_granted',
+      'tool.dispatch_enqueued',
+      'tool.attempt_started',
+      'tool.attempt_failed',
+      'tool.retry_scheduled',
+      'tool.attempt_started',
+      'tool.attempt_succeeded',
+      'tool.completed'
+    ])
+    await expect(checkpoints.load(result.execution.id)).resolves.toBeUndefined()
+  })
+
+  it('does not retry deterministic failures even when the adapter marks them retryable', async () => {
+    const retryDefinition: ToolDefinition = {
+      ...definition,
+      id: 'builtin.files.read.deterministic-retry',
+      definitionDigest: '2'.repeat(64),
+      resources: { ...definition.resources, maxAttempts: 2 }
+    }
+    await seedToolDefinition(events, retryDefinition, 'catalog-event-deterministic-retry')
+    await projectionRunner.rebuildCatalogProjection()
+    vi.mocked(adapter.execute)
+      .mockResolvedValueOnce({
+        outcome: 'failed',
+        error: {
+          code: 'tool_arguments_invalid',
+          message: 'The path argument is invalid',
+          retryable: true
+        },
+        metrics: { durationMs: 3, outputBytes: 0 }
+      })
+      .mockResolvedValueOnce({
+        outcome: 'succeeded',
+        output: { content: 'should-not-run' },
+        metrics: { durationMs: 3, outputBytes: 14 }
+      })
+
+    const result = await service.execute({
+      definition: reference(retryDefinition),
+      triggerSource: 'model',
+      context: {
+        scope: { kind: 'conversation', conversationId: 'conversation-1' },
+        conversationId: 'conversation-1'
+      },
+      input: { path: 'README.md' },
+      idempotencyKey: 'deterministic-retry'
+    })
+
+    expect(result).toMatchObject({
+      outcome: 'executed',
+      execution: {
+        status: 'failed',
+        error: { code: 'tool_arguments_invalid', retryable: false }
+      }
+    })
+    expect(adapter.execute).toHaveBeenCalledOnce()
+    const eventTypes = (await events.loadStream(
+      result.outcome === 'executed' ? result.execution.id : 'missing'
+    )).map(({ eventType }) => eventType)
+    expect(eventTypes).not.toContain('tool.retry_scheduled')
+  })
+
+  it('does not retry a write effect unless the tool requires idempotency', async () => {
+    const unsafeWriteDefinition: ToolDefinition = {
+      ...definition,
+      id: 'builtin.files.write.retry-unsafe',
+      definitionDigest: '3'.repeat(64),
+      invocation: { ...definition.invocation, idempotency: 'supported' },
+      resources: { ...definition.resources, maxAttempts: 2 }
+    }
+    await seedToolDefinition(events, unsafeWriteDefinition, 'catalog-event-write-retry-unsafe')
+    await projectionRunner.rebuildCatalogProjection()
+    vi.mocked(adapter.planEffects!).mockResolvedValue({
+      outcome: 'planned',
+      effects: [{ kind: 'filesystem.write', path: '/outside/result.txt' }]
+    })
+    vi.mocked(adapter.execute)
+      .mockResolvedValueOnce({
+        outcome: 'failed',
+        error: {
+          code: 'runtime_resource_stale',
+          message: 'Runtime resource became stale',
+          retryable: true
+        },
+        metrics: { durationMs: 6, outputBytes: 0 }
+      })
+      .mockResolvedValueOnce({
+        outcome: 'succeeded',
+        output: { content: 'unsafe duplicate write' },
+        metrics: { durationMs: 6, outputBytes: 22 }
+      })
+
+    const pending = await service.execute({
+      definition: reference(unsafeWriteDefinition),
+      triggerSource: 'model',
+      context: {
+        scope: { kind: 'conversation', conversationId: 'conversation-1' },
+        conversationId: 'conversation-1',
+        parentExecutionId: 'run-write-retry',
+        toolCallId: 'call-write-retry'
+      },
+      input: { path: 'README.md' },
+      idempotencyKey: 'write-retry-unsafe'
+    })
+    if (pending.outcome !== 'permission_required') throw new Error('Expected approval')
+
+    await service.resolvePermission({
+      requestId: String(pending.permissionRequests[0].id),
+      expectedRevision: 1,
+      decision: 'allow_once'
+    })
+
+    expect(adapter.execute).toHaveBeenCalledOnce()
+    await expect(projections.getExecution(pending.executionId)).resolves.toMatchObject({
+      status: 'failed',
+      error: { code: 'runtime_resource_stale' }
+    })
+    const eventTypes = (await events.loadStream(pending.executionId)).map(
+      ({ eventType }) => eventType
+    )
+    expect(eventTypes).not.toContain('tool.retry_scheduled')
+  })
+
+  it('restores a retry-wait invocation after restart and resumes the next attempt', async () => {
+    const retryDefinition: ToolDefinition = {
+      ...definition,
+      id: 'builtin.files.read.retry-restart',
+      definitionDigest: '4'.repeat(64),
+      resources: { ...definition.resources, maxAttempts: 2 }
+    }
+    await seedToolDefinition(events, retryDefinition, 'catalog-event-retry-restart')
+    await projectionRunner.rebuildCatalogProjection()
+    vi.mocked(adapter.execute)
+      .mockResolvedValueOnce({
+        outcome: 'failed',
+        error: {
+          code: 'runtime_resource_stale',
+          message: 'Runtime resource became stale before restart',
+          retryable: true
+        },
+        metrics: { durationMs: 5, outputBytes: 0 }
+      })
+      .mockResolvedValueOnce({
+        outcome: 'succeeded',
+        output: { content: 'RealmFlow after restart retry' },
+        metrics: { durationMs: 7, outputBytes: 29 }
+      })
+
+    const repository = new SqliteToolOutboxRepository(database)
+    let pausingService!: ToolExecutionApplicationService
+    const firstDispatchOnly = new ToolOutboxDispatcher({
+      repository,
+      publish: (message) => pausingService.dispatch(message),
+      owner: 'pausing-tool-runtime',
+      now: () => 200
+    })
+    let dispatchBatches = 0
+    pausingService = new ToolExecutionApplicationService({
+      events,
+      projections,
+      projectionRunner,
+      adapters,
+      pendingCheckpoints: checkpoints,
+      dispatcher: {
+        dispatchBatch: async () => {
+          if (dispatchBatches > 0) {
+            return { claimed: 0, published: 0, failed: 0 }
+          }
+          dispatchBatches += 1
+          return firstDispatchOnly.dispatchBatch()
+        }
+      },
+      now: () => 200,
+      createId: idFactory(),
+      resolveApprovalProfile: async () => createApprovalProfileSnapshot(approvalProfileId),
+      resolveScopeRoots: async () => ['/workspace'],
+      resolveBoundScopes: async () => [
+        {
+          authorizationId: 'bound-scope-1',
+          source: {
+            kind: 'requirement',
+            requirementId: 'requirement-1',
+            workspaceId: 'workspace-1'
+          },
+          roots: [{ canonicalPath: '/workspace', access: 'read-write' }],
+          bindingRevision: 1,
+          status: 'active',
+          createdAt: 100
+        }
+      ]
+    })
+
+    const first = await pausingService.execute({
+      definition: reference(retryDefinition),
+      triggerSource: 'model',
+      context: {
+        scope: { kind: 'conversation', conversationId: 'conversation-1' },
+        conversationId: 'conversation-1'
+      },
+      input: { path: 'README.md' },
+      idempotencyKey: 'retry-restart'
+    })
+    if (first.outcome !== 'executed') throw new Error('Expected execution')
+    expect(first.execution.status).toBe('running')
+    await expect(projections.getExecution(first.execution.id)).resolves.toMatchObject({
+      status: 'retry_wait',
+      error: { code: 'runtime_resource_stale' }
+    })
+    await expect(checkpoints.load(first.execution.id)).resolves.toMatchObject({
+      executionId: first.execution.id
+    })
+
+    let restarted!: ToolExecutionApplicationService
+    const restartedDispatcher = new ToolOutboxDispatcher({
+      repository,
+      publish: (message) => restarted.dispatch(message),
+      owner: 'restarted-retry-runtime',
+      now: () => 200
+    })
+    restarted = new ToolExecutionApplicationService({
+      events,
+      projections,
+      projectionRunner,
+      adapters,
+      pendingCheckpoints: checkpoints,
+      dispatcher: restartedDispatcher,
+      now: () => 200,
+      createId: prefixedIdFactory('restarted-retry'),
+      resolveApprovalProfile: async () => createApprovalProfileSnapshot(approvalProfileId),
+      resolveScopeRoots: async () => ['/workspace'],
+      resolveBoundScopes: async () => [
+        {
+          authorizationId: 'bound-scope-1',
+          source: {
+            kind: 'requirement',
+            requirementId: 'requirement-1',
+            workspaceId: 'workspace-1'
+          },
+          roots: [{ canonicalPath: '/workspace', access: 'read-write' }],
+          bindingRevision: 1,
+          status: 'active',
+          createdAt: 100
+        }
+      ]
+    })
+
+    await expect(restarted.recoverInterrupted()).resolves.toBe(1)
+    await expect(projections.getExecution(first.execution.id)).resolves.toMatchObject({
+      status: 'succeeded',
+      output: { content: 'RealmFlow after restart retry' }
+    })
+    expect(
+      vi.mocked(adapter.execute).mock.calls.map(([, invocation]) => invocation.attempt)
+    ).toEqual([1, 2])
+    expect(
+      vi.mocked(adapter.execute).mock.calls[0][1].attemptId
+    ).not.toBe(vi.mocked(adapter.execute).mock.calls[1][1].attemptId)
+    await expect(checkpoints.load(first.execution.id)).resolves.toBeUndefined()
+  })
+
   it('allows a pending invocation once without changing its identity', async () => {
     vi.mocked(adapter.planEffects!).mockResolvedValue({
       outcome: 'planned',
@@ -2488,6 +3330,130 @@ const imageRedactDefinition: ToolDefinition = {
   }
 }
 
+function builtinRuntimeDependencies(
+  applicationOverrides: Partial<BuiltinToolRuntimeDependencies['application']>
+): BuiltinToolRuntimeDependencies {
+  const application = Object.fromEntries(
+    APPLICATION_TOOL_HANDLER_NAMES.map((name) => [
+      name,
+      vi.fn().mockResolvedValue({ delegated: name })
+    ])
+  ) as unknown as BuiltinToolRuntimeDependencies['application']
+  Object.assign(application, applicationOverrides)
+  return {
+    files: {
+      trashItem: vi.fn().mockResolvedValue(undefined),
+      contentExtractor: {
+        getCached: vi.fn().mockResolvedValue(undefined),
+        extract: vi.fn().mockResolvedValue({
+          sourceChecksum: `sha256:${'a'.repeat(64)}`,
+          format: 'text',
+          extractorVersion: 'text-v1',
+          units: []
+        })
+      }
+    },
+    documents: {
+      extractor: {
+        extract: vi.fn().mockResolvedValue({
+          text: 'document',
+          extraction: 'docx',
+          characterCount: 8,
+          truncated: false
+        })
+      },
+      delivery: {
+        create: vi.fn().mockResolvedValue({}),
+        exportPdf: vi.fn().mockResolvedValue({}),
+        verify: vi.fn().mockResolvedValue({})
+      }
+    },
+    spreadsheets: {
+      sessions: {
+        open: vi.fn().mockResolvedValue({}),
+        execute: vi.fn().mockResolvedValue({}),
+        save: vi.fn().mockResolvedValue({})
+      }
+    },
+    wordDocuments: {
+      sessions: {
+        open: vi.fn().mockResolvedValue({}),
+        execute: vi.fn().mockResolvedValue({}),
+        save: vi.fn().mockResolvedValue({})
+      }
+    },
+    images: {
+      sessions: {
+        open: vi.fn().mockResolvedValue({}),
+        transform: vi.fn().mockResolvedValue({}),
+        ocr: vi.fn().mockResolvedValue({}),
+        save: vi.fn().mockResolvedValue({})
+      }
+    },
+    pdf: {
+      sessions: {
+        open: vi.fn().mockResolvedValue({}),
+        thumbnail: vi.fn().mockResolvedValue({}),
+        ocr: vi.fn().mockResolvedValue({}),
+        mutate: vi.fn().mockResolvedValue({}),
+        save: vi.fn().mockResolvedValue({}),
+        exportRevision: vi.fn().mockResolvedValue({})
+      }
+    },
+    presentations: {
+      sessions: {
+        open: vi.fn().mockResolvedValue({}),
+        execute: vi.fn().mockResolvedValue({}),
+        save: vi.fn().mockResolvedValue({})
+      }
+    },
+    legacyOffice: {
+      importer: {
+        import: vi.fn().mockResolvedValue({})
+      }
+    },
+    officeSafeCopy: {
+      safeCopy: {
+        create: vi.fn().mockResolvedValue({})
+      }
+    },
+    officeReadOnly: {
+      sessions: {
+        open: vi.fn().mockResolvedValue({})
+      }
+    },
+    archives: {
+      archives: {
+        list: vi.fn().mockResolvedValue({}),
+        extract: vi.fn().mockResolvedValue({}),
+        create: vi.fn().mockResolvedValue({})
+      }
+    },
+    fixedLayout: {
+      fixedLayout: {
+        inspect: vi.fn().mockResolvedValue({}),
+        ocr: vi.fn().mockResolvedValue({})
+      }
+    },
+    git: {
+      run: vi.fn().mockResolvedValue({
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+        truncated: false
+      })
+    },
+    processes: {
+      discover: vi.fn().mockResolvedValue([]),
+      run: vi.fn().mockResolvedValue({}),
+      start: vi.fn().mockResolvedValue({}),
+      list: vi.fn().mockResolvedValue([]),
+      stop: vi.fn().mockResolvedValue({})
+    },
+    application
+  }
+}
+
 async function seedCatalog(store: SqliteToolEventStore): Promise<void> {
   await seedPackage(store, definition, 'catalog-event-1')
   await seedToolDefinition(store, definition, 'catalog-event-2')
@@ -2670,4 +3636,13 @@ function pendingEvent(
 function idFactory(): () => string {
   let next = 0
   return () => `runtime-${++next}`
+}
+
+function prefixedSha256(value: Buffer | string): string {
+  return `sha256:${createHash('sha256').update(value).digest('hex')}`
+}
+
+function prefixedIdFactory(prefix: string): () => string {
+  let next = 0
+  return () => `${prefix}-${++next}`
 }

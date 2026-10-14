@@ -724,8 +724,16 @@ describe("TaskWorkbenchPage", () => {
     const createButton = await screen.findByRole("button", {
       name: "新建表格",
     });
+    expect(
+      within(screen.getByRole("navigation", { name: "工具列表" })).getByText(
+        "下方 + 新建",
+      ),
+    ).toHaveClass("workbench-navigation-empty");
+    expect(screen.getByRole("region", { name: "工具内容" })).toHaveTextContent(
+      /^$/,
+    );
     expect(within(createButton).queryByText("新建表格")).toBeNull();
-    expect(createButton).toHaveAttribute("title", "新增");
+    expect(createButton).toHaveAttribute("title", "新建");
     fireEvent.click(createButton);
 
     expect(api.createTable).toHaveBeenCalledWith({
@@ -976,6 +984,7 @@ function createAttachmentApi(): WorkbenchAttachmentApi {
     list: vi.fn().mockResolvedValue([]),
     pickAndAttach: vi.fn(),
     readImage: vi.fn(),
+    readExtracted: vi.fn(),
     open: vi.fn(),
     reveal: vi.fn(),
     delete: vi.fn(),

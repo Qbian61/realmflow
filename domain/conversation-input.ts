@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { extname } from 'node:path'
+import { classifyExtractableContent } from './content-extraction'
 import {
   classifyLocalFileCapability,
   LocalFileCapabilityError
@@ -123,32 +124,72 @@ export type ConversationSlashCommandResult =
 
 const MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
   '.csv': 'text/csv',
+  '.doc': 'application/msword',
+  '.docm': 'application/vnd.ms-word.document.macroenabled.12',
   '.docx':
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.dot': 'application/msword',
+  '.dotm': 'application/vnd.ms-word.template.macroenabled.12',
+  '.dotx':
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.template',
+  '.eml': 'message/rfc822',
+  '.epub': 'application/epub+zip',
   '.gif': 'image/gif',
+  '.gz': 'application/gzip',
   '.jpeg': 'image/jpeg',
   '.jpg': 'image/jpeg',
   '.json': 'application/json',
+  '.key': 'application/vnd.apple.keynote',
+  '.mbox': 'application/mbox',
   '.md': 'text/markdown',
   '.markdown': 'text/markdown',
+  '.mht': 'multipart/related',
+  '.mhtml': 'multipart/related',
+  '.mpp': 'application/vnd.ms-project',
+  '.msg': 'application/vnd.ms-outlook',
+  '.numbers': 'application/vnd.apple.numbers',
+  '.odp': 'application/vnd.oasis.opendocument.presentation',
+  '.ods': 'application/vnd.oasis.opendocument.spreadsheet',
+  '.odt': 'application/vnd.oasis.opendocument.text',
+  '.ofd': 'application/ofd',
+  '.pages': 'application/vnd.apple.pages',
   '.pdf': 'application/pdf',
   '.png': 'image/png',
+  '.pot': 'application/vnd.ms-powerpoint',
+  '.potm': 'application/vnd.ms-powerpoint.template.macroenabled.12',
+  '.potx':
+    'application/vnd.openxmlformats-officedocument.presentationml.template',
+  '.pps': 'application/vnd.ms-powerpoint',
+  '.ppsm': 'application/vnd.ms-powerpoint.slideshow.macroenabled.12',
+  '.ppt': 'application/vnd.ms-powerpoint',
+  '.pptm': 'application/vnd.ms-powerpoint.presentation.macroenabled.12',
+  '.pptx':
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  '.pub': 'application/vnd.ms-publisher',
+  '.rtf': 'application/rtf',
+  '.svg': 'image/svg+xml',
+  '.tar': 'application/x-tar',
+  '.tgz': 'application/gzip',
   '.txt': 'text/plain',
+  '.tsv': 'text/tab-separated-values',
+  '.vsd': 'application/vnd.visio',
+  '.vsdx': 'application/vnd.ms-visio.drawing',
+  '.wps': 'application/vnd.ms-works',
+  '.wpt': 'application/vnd.ms-works',
+  '.xls': 'application/vnd.ms-excel',
+  '.xlsm': 'application/vnd.ms-excel.sheet.macroenabled.12',
+  '.xlsx':
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.xlt': 'application/vnd.ms-excel',
+  '.xltm': 'application/vnd.ms-excel.template.macroenabled.12',
+  '.xltx':
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.template',
   '.xml': 'application/xml',
   '.yaml': 'application/yaml',
   '.yml': 'application/yaml',
-  '.webp': 'image/webp'
+  '.webp': 'image/webp',
+  '.zip': 'application/zip'
 }
-
-const ARCHIVE_EXTENSIONS = new Set([
-  '.7z',
-  '.bz2',
-  '.gz',
-  '.rar',
-  '.tar',
-  '.tgz',
-  '.zip'
-])
 
 const IMAGE_SIGNATURES: Readonly<
   Record<string, (prefix: Uint8Array) => boolean>
@@ -171,9 +212,8 @@ export function probeConversationAttachment(input: {
   prefix: Uint8Array
 }): ConversationAttachmentProbe {
   const extension = extname(input.fileName).toLowerCase()
-  let capability
   try {
-    capability = classifyLocalFileCapability({
+    classifyLocalFileCapability({
       fileName: input.fileName,
       mimeType: input.declaredMimeType,
       head: input.prefix
@@ -186,29 +226,26 @@ export function probeConversationAttachment(input: {
       message: '文件内容与扩展名不一致'
     }
   }
-  if (
-    ARCHIVE_EXTENSIONS.has(extension) ||
-    (isArchiveSignature(input.prefix) && capability.format !== 'docx')
-  ) {
-    return {
-      outcome: 'rejected',
-      code: 'unsupported_archive',
-      message: '暂不支持压缩包附件'
-    }
-  }
-  const mimeType = MIME_BY_EXTENSION[extension]
-  if (!mimeType) {
+  const format = classifyExtractableContent({
+    fileName: input.fileName,
+    ...(input.declaredMimeType
+      ? { mimeType: input.declaredMimeType }
+      : {}),
+    head: input.prefix
+  })
+  if (format.support === 'unsupported') {
     return {
       outcome: 'rejected',
       code: 'unsupported_type',
       message: '不支持此文件类型'
     }
   }
-  const mediaKind: ConversationAttachmentMediaKind = mimeType.startsWith(
-    'image/'
-  )
-    ? 'image'
-    : 'document'
+  const mimeType =
+    MIME_BY_EXTENSION[extension] ??
+    input.declaredMimeType ??
+    'application/octet-stream'
+  const mediaKind: ConversationAttachmentMediaKind =
+    format.strategy === 'image_ocr' ? 'image' : 'document'
   const maxSizeBytes = CONVERSATION_ATTACHMENT_LIMITS[mediaKind]
   if (input.sizeBytes > maxSizeBytes) {
     return {
@@ -230,6 +267,7 @@ export function probeConversationAttachment(input: {
   }
   if (
     mediaKind === 'image' &&
+    mimeType !== 'image/svg+xml' &&
     !IMAGE_SIGNATURES[mimeType]?.(input.prefix)
   ) {
     return {
@@ -376,13 +414,5 @@ function startsWithBytes(
   return (
     value.length >= expected.length &&
     expected.every((byte, index) => value[index] === byte)
-  )
-}
-
-function isArchiveSignature(prefix: Uint8Array): boolean {
-  return (
-    startsWithBytes(prefix, [0x50, 0x4b, 0x03, 0x04]) ||
-    startsWithBytes(prefix, [0x1f, 0x8b]) ||
-    startsWithAscii(prefix, 'Rar!\u001a\u0007')
   )
 }

@@ -6,6 +6,7 @@ import type {
 } from '../domain/capability'
 import type {
   CapabilityGenerationSession,
+  CapabilityValidationReport,
   CapabilitySpecSource
 } from '../domain/capability-builder'
 import type {
@@ -25,15 +26,7 @@ export type CapabilityImportProposalDto = {
   }
   byteSize: number
   fileCount: number
-  validationReport: {
-    compatible: true
-    dependencyStatus: 'resolved'
-    tests: Array<{
-      id: string
-      status: 'passed'
-      detail?: string
-    }>
-  }
+  validationReport: CapabilityValidationReport
 }
 
 export type ChooseCapabilityPackageCommand = {

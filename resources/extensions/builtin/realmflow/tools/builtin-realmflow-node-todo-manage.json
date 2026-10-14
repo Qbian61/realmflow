@@ -26,25 +26,45 @@
         "enum": [
           "save",
           "delete"
+        ],
+        "description": "Mutation operation to perform. Allowed values: save, delete.",
+        "examples": [
+          "save"
         ]
       },
       "id": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 200
+        "maxLength": 200,
+        "description": "Stable RealmFlow entity ID for the requested operation.",
+        "examples": [
+          "item-1"
+        ]
       },
       "nodeRunId": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 200
+        "maxLength": 200,
+        "description": "Stable NodeRun ID that owns the question, todo, or approval.",
+        "examples": [
+          "node-run-1"
+        ]
       },
       "title": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 500
+        "maxLength": 500,
+        "description": "User-visible title.",
+        "examples": [
+          "Quarterly update"
+        ]
       },
       "required": {
-        "type": "boolean"
+        "type": "boolean",
+        "description": "Whether the todo is required before the node can complete.",
+        "examples": [
+          true
+        ]
       },
       "status": {
         "type": "string",
@@ -54,17 +74,41 @@
           "completed",
           "blocked",
           "cancelled"
+        ],
+        "description": "Target workflow, todo, requirement, or question status. Allowed values: pending, in_progress, completed, blocked, cancelled.",
+        "examples": [
+          "pending"
         ]
       },
       "reason": {
         "type": "string",
-        "maxLength": 1000
+        "maxLength": 1000,
+        "description": "Short reason recorded for the state change.",
+        "examples": [
+          "User requested this state change."
+        ]
       },
       "expectedRevision": {
         "type": "integer",
-        "minimum": 0
+        "minimum": 0,
+        "description": "Expected revision used for optimistic concurrency control. Copy this value from the latest RealmFlow UI/API state; do not invent it.",
+        "examples": [
+          1
+        ]
       }
-    }
+    },
+    "examples": [
+      {
+        "operation": "save",
+        "id": "item-1",
+        "nodeRunId": "node-run-1",
+        "title": "Quarterly update",
+        "required": true,
+        "status": "pending",
+        "reason": "User requested this state change.",
+        "expectedRevision": 1
+      }
+    ]
   },
   "outputSchema": {
     "type": "object",

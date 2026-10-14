@@ -18,19 +18,35 @@
     "properties": {
       "sessionId": {
         "type": "string",
-        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$",
+        "description": "Stable local editing or browser session ID returned by an inspect/create tool.",
+        "examples": [
+          "12345678-1234-4234-9234-123456789abc"
+        ]
       },
       "expectedRevision": {
         "type": "integer",
-        "minimum": 0
+        "minimum": 0,
+        "description": "Expected revision used for optimistic concurrency control. Copy this value from the latest RealmFlow UI/API state; do not invent it.",
+        "examples": [
+          1
+        ]
       },
       "shapeId": {
         "type": "string",
-        "pattern": "^shape-[0-9]+-[0-9]+$"
+        "pattern": "^shape-[0-9]+-[0-9]+$",
+        "description": "Stable presentation shape ID.",
+        "examples": [
+          "shape-1-1"
+        ]
       },
       "text": {
         "type": "string",
-        "maxLength": 100000
+        "maxLength": 100000,
+        "description": "Text content used by the requested operation.",
+        "examples": [
+          "Example text."
+        ]
       }
     },
     "required": [
@@ -38,6 +54,14 @@
       "expectedRevision",
       "shapeId",
       "text"
+    ],
+    "examples": [
+      {
+        "sessionId": "12345678-1234-4234-9234-123456789abc",
+        "expectedRevision": 1,
+        "shapeId": "shape-1-1",
+        "text": "Example text."
+      }
     ]
   },
   "outputSchema": {

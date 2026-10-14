@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { JsonObject } from '../../../../domain/tool-protocol-validation'
 import type { LocalPdfSessionService } from '../files/local-pdf-session-service'
+import type { PdfGenerationService } from '../files/pdf-generation-service'
 import { createPdfToolHandlers } from './builtin-pdf-tool-handlers'
 
 describe('builtin PDF Tool handlers', () => {
@@ -13,6 +14,7 @@ describe('builtin PDF Tool handlers', () => {
     LocalPdfSessionService,
     'open' | 'thumbnail' | 'ocr' | 'mutate' | 'save'
   >
+  let pdfGeneration: Pick<PdfGenerationService, 'generate'>
 
   beforeEach(async () => {
     temporaryDirectory = await mkdtemp(join(tmpdir(), 'realmflow-pdf-'))
@@ -48,6 +50,31 @@ describe('builtin PDF Tool handlers', () => {
         revision: 1
       })
     }
+    pdfGeneration = {
+      generate: vi.fn().mockResolvedValue({
+        requestId: 'correlation-1',
+        idempotencyFingerprint: `sha256:${'c'.repeat(64)}`,
+        status: 'succeeded',
+        artifact: {
+          path: 'copy.pdf',
+          format: 'pdf',
+          byteSize: 2048,
+          checksum: `sha256:${'d'.repeat(64)}`,
+          pageCount: 1,
+          backend: 'pdf_lib_session_save_as',
+          quality: 'edit_preserve',
+          warnings: []
+        },
+        route: {
+          selectedBackend: 'pdf_lib_session_save_as',
+          quality: 'edit_preserve',
+          degraded: false,
+          reasons: ['pdf_session_save_as'],
+          warnings: []
+        },
+        completedAt: 300
+      })
+    }
   })
 
   afterEach(async () => {
@@ -65,7 +92,8 @@ describe('builtin PDF Tool handlers', () => {
       'pdf.watermark',
       'pdf.form_fill',
       'pdf.annotation_add',
-      'pdf.save'
+      'pdf.save',
+      'pdf.save_as'
     ])
   })
 
@@ -148,8 +176,49 @@ describe('builtin PDF Tool handlers', () => {
     })
   })
 
-  async function run(name: string, arguments_: JsonObject) {
-    const handler = createPdfToolHandlers({ sessions }).find(
+  it('saves a PDF session to an authorized new output path through PdfGenerationService', async () => {
+    const signal = new AbortController().signal
+
+    await expect(
+      run(
+        'pdf.save_as',
+        {
+          sessionId: SESSION_ID,
+          expectedRevision: 1,
+          outputPath: 'copy.pdf',
+          expectedAbsent: true
+        },
+        signal
+      )
+    ).resolves.toMatchObject({
+      path: 'copy.pdf',
+      format: 'pdf',
+      backend: 'pdf_lib_session_save_as',
+      quality: 'edit_preserve'
+    })
+    expect(pdfGeneration.generate).toHaveBeenCalledWith(
+      {
+        requestId: 'correlation-1',
+        scopeRoot: await realpath(rootPath),
+        outputPath: 'copy.pdf',
+        expectedAbsent: true,
+        source: {
+          kind: 'pdf_session',
+          sessionId: SESSION_ID,
+          revision: 1
+        },
+        qualityPolicy: 'require_print_layout'
+      },
+      signal
+    )
+  })
+
+  async function run(
+    name: string,
+    arguments_: JsonObject,
+    signal = new AbortController().signal
+  ) {
+    const handler = createPdfToolHandlers({ sessions, pdfGeneration }).find(
       (candidate) => candidate.name === name
     )
     if (!handler) throw new Error(`Missing ${name} handler`)
@@ -162,7 +231,7 @@ describe('builtin PDF Tool handlers', () => {
         causationId: 'command-1'
       },
       scopeRoots: [rootPath],
-      signal: new AbortController().signal,
+      signal,
       sink: { emit: vi.fn() }
     })
   }

@@ -1,16 +1,17 @@
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import {
-  buildLongTextSummary,
   type ConversationAttachmentEnvelope,
   type ConversationAttachmentDescriptor,
   type ConversationImagePart,
   type PreparedConversationAttachment
 } from '../../../../domain/conversation-input'
 import type { ConversationAttachmentRepository } from '../../infrastructure/sqlite/conversation-attachment-repository'
-import type { DocumentTextExtractor } from '../documents/local-document-text-extractor'
+import type { LocalContentExtractionService } from '../content-extraction/local-content-extraction-service'
+import { adaptExtractedBundleForConversation } from './conversation-extraction-adapter'
 
 const MAX_DOCUMENT_CHARACTERS = 200_000
+const MAX_CONTENT_UNITS = 1_000
 
 type PreprocessorRepository = Pick<
   ConversationAttachmentRepository,
@@ -21,12 +22,10 @@ export class ConversationInputPreprocessor {
   private readonly longTextCharacters: number
   private readonly chunkCharacters: number
   private readonly summaryCharacters: number
-  private readonly ocr?: (input: {
-    attachmentId: string
-    mimeType: string
-    bytes: Uint8Array
-  }) => Promise<string>
-  private readonly documentTextExtractor?: DocumentTextExtractor
+  private readonly contentExtractor?: Pick<
+    LocalContentExtractionService,
+    'extract'
+  >
 
   constructor(
     private readonly repository: PreprocessorRepository,
@@ -35,15 +34,13 @@ export class ConversationInputPreprocessor {
       longTextCharacters?: number
       chunkCharacters?: number
       summaryCharacters?: number
-      ocr?: ConversationInputPreprocessor['ocr']
-      documentTextExtractor?: DocumentTextExtractor
+      contentExtractor?: Pick<LocalContentExtractionService, 'extract'>
     } = {}
   ) {
     this.longTextCharacters = options.longTextCharacters ?? 12_000
     this.chunkCharacters = options.chunkCharacters ?? 4_000
     this.summaryCharacters = options.summaryCharacters ?? 480
-    this.ocr = options.ocr
-    this.documentTextExtractor = options.documentTextExtractor
+    this.contentExtractor = options.contentExtractor
   }
 
   async prepare(input: {
@@ -83,16 +80,16 @@ export class ConversationInputPreprocessor {
           )
         )
         const prepared =
-          descriptor.mediaKind === 'image'
-            ? await this.prepareImage(
+          descriptor.mediaKind === 'image' &&
+          input.modelSupportsVision &&
+          input.allowImageEgress
+            ? this.prepareVisionImage(
                 descriptor,
                 bytes,
-                input.modelSupportsVision,
-                input.allowImageEgress,
                 imageParts,
                 contextSections
               )
-            : await this.prepareDocument(
+            : await this.prepareExtractedContent(
                 descriptor,
                 bytes,
                 contextSections
@@ -136,42 +133,19 @@ export class ConversationInputPreprocessor {
     }
   }
 
-  private async prepareImage(
+  private prepareVisionImage(
     descriptor: ConversationAttachmentDescriptor,
     bytes: Uint8Array,
-    modelSupportsVision: boolean,
-    allowImageEgress: boolean,
     imageParts: ConversationImagePart[],
     contextSections: string[]
-  ): Promise<PreparedConversationAttachment> {
-    if (modelSupportsVision && allowImageEgress) {
-      imageParts.push({
-        attachmentId: descriptor.id,
-        mimeType: descriptor.mimeType,
-        dataBase64: Buffer.from(bytes).toString('base64')
-      })
-      contextSections.push(
-        `[附件 ${descriptor.id}: ${descriptor.fileName}，图片内容将发送给所选模型]`
-      )
-      return {
-        attachmentId: descriptor.id,
-        fileName: descriptor.fileName,
-        mimeType: descriptor.mimeType,
-        kind: 'image',
-        status: 'ready',
-        extraction: 'vision'
-      }
-    }
-    if (!this.ocr) {
-      throw new Error('当前模型不支持图片，且本地 OCR 不可用')
-    }
-    const content = await this.ocr({
+  ): PreparedConversationAttachment {
+    imageParts.push({
       attachmentId: descriptor.id,
       mimeType: descriptor.mimeType,
-      bytes
+      dataBase64: Buffer.from(bytes).toString('base64')
     })
     contextSections.push(
-      `[附件 ${descriptor.id}: ${descriptor.fileName}，本地 OCR]\n${content}`
+      `[附件 ${descriptor.id}: ${descriptor.fileName}，图片内容将发送给所选模型]`
     )
     return {
       attachmentId: descriptor.id,
@@ -179,69 +153,43 @@ export class ConversationInputPreprocessor {
       mimeType: descriptor.mimeType,
       kind: 'image',
       status: 'ready',
-      extraction: 'ocr',
-      content
+      extraction: 'vision'
     }
   }
 
-  private async prepareDocument(
+  private async prepareExtractedContent(
     descriptor: ConversationAttachmentDescriptor,
     bytes: Uint8Array,
     contextSections: string[]
   ): Promise<PreparedConversationAttachment> {
-    const text = isPlainText(descriptor.mimeType)
-      ? decodeUtf8(bytes)
-      : await this.parseStructuredDocument(descriptor, bytes)
-    if (text.length > this.longTextCharacters) {
-      const summary = buildLongTextSummary({
-        attachmentId: descriptor.id,
-        text,
-        chunkCharacters: this.chunkCharacters,
-        summaryCharacters: this.summaryCharacters
-      })
-      await this.repository.replaceChunks(descriptor.id, summary.chunks)
-      contextSections.push(
-        `[附件 ${descriptor.id}: ${descriptor.fileName}，长文本摘要，可按 chunk id 回取]\n${summary.root.summary}`
-      )
-      return {
-        attachmentId: descriptor.id,
-        fileName: descriptor.fileName,
-        mimeType: descriptor.mimeType,
-        kind: 'document',
-        status: 'ready',
-        extraction: isPlainText(descriptor.mimeType) ? 'text' : 'parser',
-        summary
-      }
+    if (!this.contentExtractor) {
+      throw new Error('本地内容抽取服务不可用')
     }
-    await this.repository.replaceChunks(descriptor.id, [])
-    contextSections.push(
-      `[附件 ${descriptor.id}: ${descriptor.fileName}]\n${text}`
-    )
-    return {
-      attachmentId: descriptor.id,
-      fileName: descriptor.fileName,
-      mimeType: descriptor.mimeType,
-      kind: 'document',
-      status: 'ready',
-      extraction: isPlainText(descriptor.mimeType) ? 'text' : 'parser',
-      content: text
-    }
-  }
-
-  private async parseStructuredDocument(
-    descriptor: ConversationAttachmentDescriptor,
-    bytes: Uint8Array
-  ): Promise<string> {
-    if (!this.documentTextExtractor) {
-      throw new Error(`本地解析器暂不支持 ${descriptor.mimeType}`)
-    }
-    const result = await this.documentTextExtractor.extract({
+    const bundle = await this.contentExtractor.extract({
       fileName: descriptor.fileName,
       mimeType: descriptor.mimeType,
       bytes: Uint8Array.from(bytes),
-      maxCharacters: MAX_DOCUMENT_CHARACTERS
+      sourceChecksum: `sha256:${descriptor.checksumSha256}`,
+      signal: new AbortController().signal,
+      depth: 0,
+      policy: {
+        consumer: 'conversation',
+        allowLocalOcr: true,
+        allowLocalConversion: true,
+        maxCharacters: MAX_DOCUMENT_CHARACTERS,
+        maxUnits: MAX_CONTENT_UNITS
+      }
     })
-    return result.text
+    const result = adaptExtractedBundleForConversation({
+      attachment: descriptor,
+      bundle,
+      longTextCharacters: this.longTextCharacters,
+      chunkCharacters: this.chunkCharacters,
+      summaryCharacters: this.summaryCharacters
+    })
+    await this.repository.replaceChunks(descriptor.id, result.chunks)
+    contextSections.push(result.contextSection)
+    return result.attachment
   }
 
   private resolveManagedPath(relativePath: string): string {
@@ -252,14 +200,6 @@ export class ConversationInputPreprocessor {
     }
     return candidate
   }
-}
-
-function isPlainText(mimeType: string): boolean {
-  return mimeType.startsWith('text/') || mimeType === 'application/json'
-}
-
-function decodeUtf8(bytes: Uint8Array): string {
-  return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
 }
 
 function errorMessage(error: unknown): string {

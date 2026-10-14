@@ -2,14 +2,17 @@ import { readFile } from 'node:fs/promises'
 import type { JsonObject } from '../../../../domain/tool-protocol-validation'
 import type { PdfOperation } from '../files/pdf-adapter'
 import type { LocalPdfSessionService } from '../files/local-pdf-session-service'
+import type { PdfGenerationService } from '../files/pdf-generation-service'
 import { inspectLocalFileCapability } from '../files/local-file-capability-service'
 import type {
   BuiltinToolHandler,
   BuiltinToolHandlerInput
 } from './builtin-tool-adapter'
 import {
+  requireExpectedAbsent,
   requireInteger,
   requireString,
+  resolveCreation,
   resolveExisting
 } from './builtin-file-tool-support'
 
@@ -30,6 +33,7 @@ type PdfSessions = Pick<
 
 export function createPdfToolHandlers(dependencies: {
   sessions: PdfSessions
+  pdfGeneration?: Pick<PdfGenerationService, 'generate'>
 }): BuiltinToolHandler[] {
   return [
     {
@@ -57,6 +61,11 @@ export function createPdfToolHandlers(dependencies: {
       name: 'pdf.save',
       version: VERSION,
       execute: (input) => savePdf(input, dependencies.sessions)
+    },
+    {
+      name: 'pdf.save_as',
+      version: VERSION,
+      execute: (input) => savePdfAs(input, dependencies.pdfGeneration)
     }
   ]
 }
@@ -237,6 +246,56 @@ async function savePdf(
   )
 }
 
+async function savePdfAs(
+  input: BuiltinToolHandlerInput,
+  service: Pick<PdfGenerationService, 'generate'> | undefined
+): Promise<JsonObject> {
+  if (!service) throw new Error('PDF generation service is unavailable')
+  requireExpectedAbsent(input.arguments)
+  const outputPath = requireString(input.arguments, 'outputPath')!
+  const output = await resolveCreation(input.scopeRoots, {
+    ...input.arguments,
+    path: outputPath
+  })
+  const receipt = await service.generate(
+    {
+      requestId:
+        input.idempotencyKey ??
+        input.mutation?.idempotencyKey ??
+        input.context.correlationId,
+      scopeRoot: output.rootPath,
+      outputPath: output.relativePath,
+      expectedAbsent: true,
+      source: {
+        kind: 'pdf_session',
+        sessionId: requireString(input.arguments, 'sessionId')!,
+        revision: requireInteger(
+          input.arguments,
+          'expectedRevision',
+          -1,
+          Number.MAX_SAFE_INTEGER
+        )
+      },
+      qualityPolicy: 'require_print_layout',
+      ...(optionalBoolean(input.arguments.requireRenderSmokeTest, 'requireRenderSmokeTest') === undefined
+        ? {}
+        : {
+            verification: {
+              requireRenderSmokeTest: optionalBoolean(
+                input.arguments.requireRenderSmokeTest,
+                'requireRenderSmokeTest'
+              )
+            }
+          })
+    },
+    input.signal
+  )
+  return toJsonObject({
+    ...receipt.artifact,
+    routeDecision: receipt.route
+  })
+}
+
 function positiveInteger(input: JsonObject, key: string): number {
   const value = requireInteger(input, key, -1, Number.MAX_SAFE_INTEGER)
   if (value < 1) throw new Error(`PDF Tool ${key} is invalid`)
@@ -300,6 +359,17 @@ function objectValue(
     throw new Error(`PDF Tool ${name} is invalid`)
   }
   return value as Record<string, unknown>
+}
+
+function optionalBoolean(
+  value: unknown,
+  name: string
+): boolean | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== 'boolean') {
+    throw new Error(`PDF Tool ${name} is invalid`)
+  }
+  return value
 }
 
 function toJsonObject(value: unknown): JsonObject {

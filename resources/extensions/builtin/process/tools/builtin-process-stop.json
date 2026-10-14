@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.process.stop",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "name": "Stop process",
   "description": "Stop a RealmFlow-managed process.",
   "tags": [
@@ -21,9 +21,18 @@
     "properties": {
       "processId": {
         "type": "string",
-        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$"
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$",
+        "description": "RealmFlow-managed process identifier returned by process.start or process.list.",
+        "examples": [
+          "process-1"
+        ]
       }
-    }
+    },
+    "examples": [
+      {
+        "processId": "process-1"
+      }
+    ]
   },
   "outputSchema": {
     "type": "object",

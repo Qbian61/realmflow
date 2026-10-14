@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import Ajv from 'ajv'
 import {
   BUILTIN_SKILL_IDS,
   BUILTIN_TOOL_IDS,
@@ -7,7 +8,7 @@ import {
 
 describe('builtin extension catalog generator', () => {
   it('contains the complete stable Tool and Skill contract', () => {
-    expect(BUILTIN_TOOL_IDS).toHaveLength(132)
+    expect(BUILTIN_TOOL_IDS).toHaveLength(135)
     expect(BUILTIN_SKILL_IDS).toHaveLength(10)
     expect(BUILTIN_TOOL_IDS).toEqual([
       'builtin.archives.create',
@@ -40,6 +41,7 @@ describe('builtin extension catalog generator', () => {
       'builtin.document.comment_add',
       'builtin.document.comment_delete',
       'builtin.document.create',
+      'builtin.document.deliver_pdf',
       'builtin.document.export_pdf',
       'builtin.document.find',
       'builtin.document.insert_blocks',
@@ -83,7 +85,8 @@ describe('builtin extension catalog generator', () => {
       'builtin.image.rotate',
       'builtin.image.save',
       'builtin.knowledge.index.refresh',
-      'builtin.knowledge.note.save',
+      'builtin.knowledge.note.create',
+      'builtin.knowledge.note.edit',
       'builtin.knowledge.search',
       'builtin.knowledge.source.read',
       'builtin.office.create_safe_copy',
@@ -96,6 +99,7 @@ describe('builtin extension catalog generator', () => {
       'builtin.pdf.ocr',
       'builtin.pdf.rotate',
       'builtin.pdf.save',
+      'builtin.pdf.save_as',
       'builtin.pdf.split',
       'builtin.pdf.thumbnail',
       'builtin.pdf.watermark',
@@ -192,6 +196,96 @@ describe('builtin extension catalog generator', () => {
     expect(loose).toEqual([])
   })
 
+  it('publishes migrated descriptions and valid examples for every built-in Tool input parameter', () => {
+    const ajv = new Ajv({ strict: false, allErrors: true, validateFormats: false })
+    const violations = []
+    let propertyCount = 0
+
+    for (const tool of buildBuiltinCatalog().packages.flatMap(({ tools }) => tools)) {
+      const examples = Array.isArray(tool.inputSchema.examples)
+        ? tool.inputSchema.examples
+        : []
+      if (examples.length === 0) {
+        violations.push(`${tool.id}:inputSchema.examples`)
+      } else {
+        const validate = ajv.compile(tool.inputSchema)
+        examples.forEach((example, index) => {
+          if (!validate(example)) {
+            violations.push(`${tool.id}:inputSchema.examples[${index}]`)
+          }
+        })
+      }
+
+      for (const { name, schema } of topLevelProperties(tool.inputSchema)) {
+        propertyCount += 1
+        const description = descriptionOf(schema)
+        if (!description) {
+          violations.push(`${tool.id}:inputSchema.properties.${name}.description`)
+        }
+        if (isPlaceholderDescription(tool.id, name, description)) {
+          violations.push(
+            `${tool.id}:inputSchema.properties.${name}.description.placeholder`
+          )
+        }
+
+        const validateProperty = ajv.compile(schema)
+        const propertyExamples = Array.isArray(schema.examples)
+          ? schema.examples
+          : []
+        const hasPropertyExample = propertyExamples.some((example) =>
+          validateProperty(example)
+        )
+        const hasRootExample = examples.some(
+          (example) =>
+            example &&
+            typeof example === 'object' &&
+            !Array.isArray(example) &&
+            Object.hasOwn(example, name) &&
+            validateProperty(example[name])
+        )
+        if (!hasPropertyExample && !hasRootExample) {
+          violations.push(`${tool.id}:inputSchema.properties.${name}.examples`)
+        }
+      }
+    }
+
+    expect(propertyCount).toBe(500)
+    expect(violations).toEqual([])
+  })
+
+  it('publishes described strict schemas and valid examples for every built-in Skill', () => {
+    const ajv = new Ajv({ strict: false, allErrors: true })
+    const violations = []
+    for (const skill of buildBuiltinCatalog().packages.flatMap(({ skills }) => skills)) {
+      if (
+        skill.inputSchema.type !== 'object' ||
+        skill.inputSchema.additionalProperties !== false ||
+        !descriptionOf(skill.inputSchema)
+      ) {
+        violations.push(`${skill.id}:inputSchema`)
+      }
+      for (const { name, schema } of topLevelProperties(skill.inputSchema)) {
+        if (!descriptionOf(schema)) {
+          violations.push(`${skill.id}:inputSchema.properties.${name}.description`)
+        }
+      }
+      if (
+        skill.outputSchema.type !== 'object' ||
+        skill.outputSchema.additionalProperties !== false ||
+        !descriptionOf(skill.outputSchema)
+      ) {
+        violations.push(`${skill.id}:outputSchema`)
+      }
+      if (!Array.isArray(skill.examples) || skill.examples.length === 0) {
+        violations.push(`${skill.id}:examples`)
+      } else if (!ajv.compile(skill.inputSchema)(skill.examples[0])) {
+        violations.push(`${skill.id}:examples[0]`)
+      }
+    }
+
+    expect(violations).toEqual([])
+  })
+
   it('requires an optimistic precondition for every filesystem mutation Tool', () => {
     const writeTools = buildBuiltinCatalog().packages.flatMap(({ tools }) =>
       tools.filter(({ capabilities }) =>
@@ -216,7 +310,7 @@ describe('builtin extension catalog generator', () => {
       .tools
       .find(({ id }) => id === 'builtin.documents.read')
 
-    expect(filesPackage.manifest.version).toBe('1.3.1')
+    expect(filesPackage.manifest.version).toBe('1.3.2')
     expect(documentReader).toMatchObject({
       description: expect.stringContaining('PDF and DOCX'),
       inputSchema: {
@@ -269,7 +363,11 @@ describe('builtin extension catalog generator', () => {
         required: ['query'],
         properties: {
           query: { type: 'string', minLength: 1, maxLength: 2000 },
-          mode: { type: 'string', enum: ['name', 'content'] }
+          mode: { type: 'string', enum: ['name', 'content'] },
+          contentMode: {
+            type: 'string',
+            enum: ['text_only', 'structured_cached', 'structured_extract']
+          }
         }
       }
     })
@@ -356,7 +454,7 @@ describe('builtin extension catalog generator', () => {
     )
 
     expect(documents.manifest.version).toBe('1.1.0')
-    expect(documents.tools).toHaveLength(14)
+    expect(documents.tools).toHaveLength(15)
     expect(
       documents.tools.find(({ id }) => id === 'builtin.document.inspect')
     ).toMatchObject({
@@ -415,6 +513,28 @@ describe('builtin extension catalog generator', () => {
           'outputPath',
           'expectedAbsent'
         ]
+      }
+    })
+    expect(
+      documents.tools.find(
+        ({ id }) => id === 'builtin.document.deliver_pdf'
+      )
+    ).toMatchObject({
+      capabilities: ['filesystem.write'],
+      inputSchema: {
+        additionalProperties: false,
+        required: ['source', 'outputPath', 'expectedAbsent'],
+        properties: {
+          qualityPolicy: {
+            type: 'string',
+            enum: [
+              'require_print_layout',
+              'prefer_print_layout',
+              'allow_degraded_text'
+            ]
+          },
+          requireRenderSmokeTest: { type: 'boolean' }
+        }
       }
     })
     expect(
@@ -687,7 +807,7 @@ describe('builtin extension catalog generator', () => {
     )
 
     expect(pdf.manifest.version).toBe('1.0.1')
-    expect(pdf.tools).toHaveLength(10)
+    expect(pdf.tools).toHaveLength(11)
     expect(
       pdf.tools.find(({ id }) => id === 'builtin.pdf.inspect')
     ).toMatchObject({
@@ -727,6 +847,20 @@ describe('builtin extension catalog generator', () => {
       inputSchema: {
         additionalProperties: false,
         required: ['sessionId', 'expectedRevision']
+      }
+    })
+    expect(
+      pdf.tools.find(({ id }) => id === 'builtin.pdf.save_as')
+    ).toMatchObject({
+      capabilities: ['filesystem.write'],
+      inputSchema: {
+        additionalProperties: false,
+        required: [
+          'sessionId',
+          'expectedRevision',
+          'outputPath',
+          'expectedAbsent'
+        ]
       }
     })
   })
@@ -778,7 +912,7 @@ describe('builtin extension catalog generator', () => {
       processPackage.tools.map((tool) => [tool.id, tool])
     )
 
-    expect(processPackage.manifest.version).toBe('1.0.3')
+    expect(processPackage.manifest.version).toBe('1.0.4')
     expect(
       processPackage.tools.every(
         ({ inputSchema }) => inputSchema.additionalProperties === false
@@ -835,6 +969,8 @@ describe('builtin extension catalog generator', () => {
       }
     })
     expect(tools.get('builtin.process.list')).toMatchObject({
+      capabilities: ['process.inspect'],
+      effects: ['local_data.read'],
       inputSchema: {
         type: 'object',
         additionalProperties: false,
@@ -865,9 +1001,15 @@ describe('builtin extension catalog generator', () => {
     const sourceRead = knowledge.tools.find(
       ({ id }) => id === 'builtin.knowledge.source.read'
     )
+    const noteCreate = knowledge.tools.find(
+      ({ id }) => id === 'builtin.knowledge.note.create'
+    )
+    const noteEdit = knowledge.tools.find(
+      ({ id }) => id === 'builtin.knowledge.note.edit'
+    )
 
-    expect(knowledge.manifest.version).toBe('1.0.2')
-    expect(search.version).toBe('1.0.2')
+    expect(knowledge.manifest.version).toBe('1.0.3')
+    expect(search.version).toBe('1.0.3')
     expect(search.inputSchema).toMatchObject({
       additionalProperties: false,
       required: ['query'],
@@ -883,6 +1025,18 @@ describe('builtin extension catalog generator', () => {
     expect(sourceRead.inputSchema.properties).not.toHaveProperty(
       'workspaceId'
     )
+    expect(noteCreate.inputSchema).toMatchObject({
+      additionalProperties: false,
+      required: ['kind', 'sourceMessageIds', 'title', 'content']
+    })
+    expect(noteCreate.inputSchema.properties).not.toHaveProperty('sessionId')
+    expect(noteCreate.inputSchema.properties).not.toHaveProperty('workspaceId')
+    expect(noteCreate.inputSchema.properties).not.toHaveProperty('versionId')
+    expect(noteEdit.inputSchema).toMatchObject({
+      additionalProperties: false,
+      required: ['noteId', 'expectedRevision', 'title', 'content']
+    })
+    expect(noteEdit.inputSchema.properties).not.toHaveProperty('versionId')
   })
 })
 
@@ -953,4 +1107,29 @@ function declaresMutationPrecondition(schema) {
     '"expectedChecksum"',
     '"expectedAbsent"'
   ].some((property) => serialized.includes(property))
+}
+
+function topLevelProperties(schema) {
+  const properties = schema.properties
+  if (!properties || typeof properties !== 'object' || Array.isArray(properties)) {
+    return []
+  }
+  return Object.entries(properties)
+    .filter(([, value]) => value && typeof value === 'object' && !Array.isArray(value))
+    .map(([name, schema]) => ({ name, schema }))
+}
+
+function descriptionOf(schema) {
+  return typeof schema.description === 'string'
+    ? schema.description.trim()
+    : ''
+}
+
+function isPlaceholderDescription(toolId, name, description) {
+  const normalized = description.toLowerCase().replace(/\s+/g, ' ').trim()
+  return (
+    normalized === `the ${name.toLowerCase()}` ||
+    normalized === 'input value' ||
+    normalized.includes(`${name.toLowerCase()} argument for ${toolId}`)
+  )
 }

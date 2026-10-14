@@ -57,24 +57,33 @@ describe('Agent progress detector', () => {
     expect(third.ledger.repeatedCallFingerprints[fingerprint]).toBe(3)
   })
 
-  it('starts a new repetition streak when the requested operation changes', () => {
+  it('keeps a bounded repetition window when the requested operation changes', () => {
     const initial = createInitialRunBudgetLedger(
       DEFAULT_AGENT_EXECUTION_POLICY
     )
+    const firstFingerprint = canonicalToolCallFingerprint(
+      'files.read',
+      '{"path":"a"}'
+    )
+    const secondFingerprint = canonicalToolCallFingerprint(
+      'files.read',
+      '{"path":"b"}'
+    )
     const first = recordToolRequest(
       initial,
-      canonicalToolCallFingerprint('files.read', '{"path":"a"}'),
+      firstFingerprint,
       DEFAULT_AGENT_EXECUTION_POLICY
     )
     const changed = recordToolRequest(
       first.ledger,
-      canonicalToolCallFingerprint('files.read', '{"path":"b"}'),
+      secondFingerprint,
       DEFAULT_AGENT_EXECUTION_POLICY
     )
 
-    expect(Object.values(changed.ledger.repeatedCallFingerprints)).toEqual([
-      1
-    ])
+    expect(changed.ledger.repeatedCallFingerprints).toMatchObject({
+      [firstFingerprint]: 1,
+      [secondFingerprint]: 1
+    })
     expect(changed.blocked).toBe(false)
   })
 
@@ -100,6 +109,144 @@ describe('Agent progress detector', () => {
     })
     expect(recordSuccessfulToolExecution(fifth.ledger)).toMatchObject({
       consecutiveFailures: 0
+    })
+  })
+
+  it('blocks the second deterministic failure with the same root even when argument values change', () => {
+    let ledger = createInitialRunBudgetLedger(
+      DEFAULT_AGENT_EXECUTION_POLICY
+    )
+    const recordFailure = recordConsecutiveToolFailure as unknown as (
+      current: typeof ledger,
+      policy: typeof DEFAULT_AGENT_EXECUTION_POLICY,
+      failure: {
+        toolName: string
+        errorCode: string
+        targetScope: string
+        serializedArguments: string
+        retryable: boolean
+      }
+    ) => ReturnType<typeof recordConsecutiveToolFailure>
+
+    const first = recordFailure(ledger, DEFAULT_AGENT_EXECUTION_POLICY, {
+      toolName: 'knowledge.search',
+      errorCode: 'tool_arguments_invalid',
+      targetScope: 'workspace:space-1',
+      serializedArguments: '{"query":"first","sourceKinds":["code"]}',
+      retryable: false
+    })
+    ledger = first.ledger
+    const second = recordFailure(ledger, DEFAULT_AGENT_EXECUTION_POLICY, {
+      toolName: 'knowledge.search',
+      errorCode: 'tool_arguments_invalid',
+      targetScope: 'workspace:space-1',
+      serializedArguments: '{"query":"second","sourceKinds":["code"]}',
+      retryable: false
+    })
+
+    expect(first.blocked).toBe(false)
+    expect(second).toMatchObject({
+      blocked: true,
+      reason: 'deterministic_tool_failure'
+    })
+  })
+
+  it('keeps deterministic failure signatures across unrelated success and clears them after matching success', () => {
+    let ledger = createInitialRunBudgetLedger(
+      DEFAULT_AGENT_EXECUTION_POLICY
+    )
+    const recordFailure = recordConsecutiveToolFailure as unknown as (
+      current: typeof ledger,
+      policy: typeof DEFAULT_AGENT_EXECUTION_POLICY,
+      failure: {
+        toolName: string
+        errorCode: string
+        targetScope: string
+        serializedArguments: string
+        retryable: boolean
+      }
+    ) => ReturnType<typeof recordConsecutiveToolFailure>
+    const recordSuccess = recordSuccessfulToolExecution as unknown as (
+      current: typeof ledger,
+      success?: {
+        toolName: string
+        targetScope: string
+        serializedArguments: string
+      }
+    ) => typeof ledger
+
+    ledger = recordFailure(ledger, DEFAULT_AGENT_EXECUTION_POLICY, {
+      toolName: 'knowledge.search',
+      errorCode: 'tool_arguments_invalid',
+      targetScope: 'workspace:space-1',
+      serializedArguments: '{"query":"first","sourceKinds":["code"]}',
+      retryable: false
+    }).ledger
+    ledger = recordSuccess(ledger, {
+      toolName: 'files.read',
+      targetScope: 'workspace:space-1',
+      serializedArguments: '{"path":"notes.md"}'
+    })
+    const second = recordFailure(ledger, DEFAULT_AGENT_EXECUTION_POLICY, {
+      toolName: 'knowledge.search',
+      errorCode: 'tool_arguments_invalid',
+      targetScope: 'workspace:space-1',
+      serializedArguments: '{"query":"second","sourceKinds":["code"]}',
+      retryable: false
+    })
+
+    expect(second).toMatchObject({
+      blocked: true,
+      reason: 'deterministic_tool_failure'
+    })
+
+    const cleared = recordSuccess(second.ledger, {
+      toolName: 'knowledge.search',
+      targetScope: 'workspace:space-1',
+      serializedArguments: '{"query":"fixed","sourceKinds":["repository"]}'
+    })
+
+    expect(cleared).toMatchObject({
+      consecutiveFailures: 0,
+      deterministicFailureFingerprints: {}
+    })
+  })
+
+  it('treats non-retryable public scope categories as deterministic failures', () => {
+    let ledger = createInitialRunBudgetLedger(
+      DEFAULT_AGENT_EXECUTION_POLICY
+    )
+
+    const first = recordConsecutiveToolFailure(
+      ledger,
+      DEFAULT_AGENT_EXECUTION_POLICY,
+      {
+        toolName: 'files.read',
+        errorCode: 'tool_policy_denied',
+        targetScope: 'workspace:space-1',
+        serializedArguments: '{"path":"private.md"}',
+        retryable: false,
+        category: 'scope'
+      }
+    )
+    ledger = first.ledger
+    const second = recordConsecutiveToolFailure(
+      ledger,
+      DEFAULT_AGENT_EXECUTION_POLICY,
+      {
+        toolName: 'files.read',
+        errorCode: 'tool_policy_denied',
+        targetScope: 'workspace:space-1',
+        serializedArguments: '{"path":"other-private.md"}',
+        retryable: false,
+        category: 'scope'
+      }
+    )
+
+    expect(first.blocked).toBe(false)
+    expect(second).toMatchObject({
+      blocked: true,
+      reason: 'deterministic_tool_failure'
     })
   })
 })

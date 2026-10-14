@@ -1,12 +1,19 @@
 import { createHash } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
-import { isForcedRepositoryExclusion } from '../../../../domain/repository-source'
+import { basename } from 'node:path'
+import { CONTENT_EXTRACTION_LIMITS } from '../../../../domain/content-extraction'
+import {
+  isForcedRepositoryExclusion,
+  repositorySnapshotDocumentKey
+} from '../../../../domain/repository-source'
 import type { WorkspaceRepository } from '../ports/business-repositories'
 import { SecurePathService } from '../../workspace/secure-path-service'
 import type { LocalFileIngestionStore } from './local-file-ingestion-store'
 import type { OnlineDocumentStore } from './online-document-store'
 import type { RepositoryIngestionStore } from './repository-ingestion-store'
 import type { FrozenKnowledgeSourceSnapshot } from './knowledge-index-coordinator'
+import { mapExtractedBundleToKnowledgeDocuments } from './knowledge-extraction-adapter'
+import type { LocalContentExtractionService } from '../content-extraction/local-content-extraction-service'
 
 type SourceLookup = {
   get: (id: string) => Promise<
@@ -30,6 +37,7 @@ type ArtifactLookup = {
           nodeId?: string
           relativePath: string
           checksum: string
+          mediaType?: string
           version: number
           formal: boolean
         }
@@ -37,15 +45,20 @@ type ArtifactLookup = {
       }
     | undefined
   >
-  readContent: (artifact: {
+  readSource: (artifact: {
     id: string
     requirementId: string
     nodeId?: string
     relativePath: string
     checksum: string
+    mediaType?: string
     version: number
     formal: boolean
-  }) => Promise<string>
+  }) => Promise<{
+    bytes: Uint8Array
+    fileName: string
+    mimeType?: string
+  }>
 }
 
 type RequirementMemoryLookup = {
@@ -88,6 +101,8 @@ type KnowledgeNoteLookup = {
 
 export type KnowledgeSourceIdentity = Pick<
   FrozenKnowledgeSourceSnapshot,
+  | 'scopeKind'
+  | 'scopeId'
   | 'sourceKind'
   | 'sourceId'
   | 'sourceRevision'
@@ -108,6 +123,7 @@ export class MainKnowledgeIndexSourceReader {
       artifacts?: ArtifactLookup
       requirementMemories?: RequirementMemoryLookup
       knowledgeNotes?: KnowledgeNoteLookup
+      contentExtractor?: Pick<LocalContentExtractionService, 'extract'>
     }
   ) {}
 
@@ -130,14 +146,14 @@ export class MainKnowledgeIndexSourceReader {
         sourceRevision: source.revision,
         sourceVersion: `document:${snapshot.version}`,
         sourceChecksum: snapshot.contentChecksum,
-        documents: [
-          {
-            documentKey: 'content',
-            sourceEntityId: sourceId,
-            title: source.name,
-            content: snapshot.content
-          }
-        ]
+        documents: snapshot.documents.map((document) => ({
+          documentKey: document.unitKey,
+          sourceEntityId: sourceId,
+          title: document.title,
+          content: document.content,
+          checksum: document.checksum,
+          byteSize: document.byteSize
+        }))
       }
     }
     if (source.type === 'repository') {
@@ -152,17 +168,18 @@ export class MainKnowledgeIndexSourceReader {
         sourceRevision: source.revision,
         sourceVersion: `repository:${snapshot.version}`,
         sourceChecksum: snapshot.manifestChecksum,
-        documents: snapshot.files
+        documents: snapshot.documents
           .filter(
-            (file) => !isForcedRepositoryExclusion(file.relativePath)
+            (document) =>
+              !isForcedRepositoryExclusion(document.sourcePath)
           )
-          .map((file) => ({
-            documentKey: file.relativePath,
+          .map((document) => ({
+            documentKey: repositorySnapshotDocumentKey(document),
             sourceEntityId: sourceId,
-            title: file.relativePath,
-            content: file.content,
-            checksum: file.contentChecksum,
-            byteSize: file.byteSize
+            title: document.title,
+            content: document.content,
+            checksum: document.checksum,
+            byteSize: document.byteSize
           }))
       }
     }
@@ -189,7 +206,33 @@ export class MainKnowledgeIndexSourceReader {
     ) {
       throw new Error('Knowledge source changed during indexing')
     }
-    const content = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+    const documents = this.dependencies.contentExtractor
+      ? mapExtractedBundleToKnowledgeDocuments(
+          await this.dependencies.contentExtractor.extract({
+            bytes,
+            fileName: basename(path),
+            sourceChecksum: contentChecksum,
+            policy: {
+              consumer: 'knowledge_index',
+              allowLocalOcr: true,
+              allowLocalConversion: true,
+              maxCharacters:
+                CONTENT_EXTRACTION_LIMITS.maxExtractedCharacters,
+              maxUnits: CONTENT_EXTRACTION_LIMITS.maxArchiveEntries
+            },
+            signal: new AbortController().signal,
+            depth: 0
+          }),
+          sourceId
+        )
+      : [
+          {
+            documentKey: 'content',
+            sourceEntityId: sourceId,
+            title: source.name,
+            content: decodeLocalFileContent(bytes)
+          }
+        ]
     return {
       scopeKind: 'workspace',
       scopeId: source.workspaceId,
@@ -198,14 +241,7 @@ export class MainKnowledgeIndexSourceReader {
       sourceRevision: source.revision,
       sourceVersion: `file:${contentChecksum}`,
       sourceChecksum: contentChecksum,
-      documents: [
-        {
-          documentKey: 'content',
-          sourceEntityId: sourceId,
-          title: source.name,
-          content
-        }
-      ]
+      documents
     }
   }
 
@@ -221,6 +257,8 @@ export class MainKnowledgeIndexSourceReader {
         )
       if (!snapshot) throw new Error('Knowledge source has no current content')
       return {
+        scopeKind: 'workspace',
+        scopeId: source.workspaceId,
         sourceKind: source.type,
         sourceId,
         sourceRevision: source.revision,
@@ -233,6 +271,8 @@ export class MainKnowledgeIndexSourceReader {
         await this.dependencies.repositories.getCurrentRepositorySnapshot(sourceId)
       if (!snapshot) throw new Error('Knowledge source has no current content')
       return {
+        scopeKind: 'workspace',
+        scopeId: source.workspaceId,
         sourceKind: source.type,
         sourceId,
         sourceRevision: source.revision,
@@ -243,12 +283,30 @@ export class MainKnowledgeIndexSourceReader {
     const local = await this.dependencies.localFiles.getLocalFileSource(sourceId)
     if (!local) throw new Error('Knowledge source has no current content')
     return {
+      scopeKind: 'workspace',
+      scopeId: source.workspaceId,
       sourceKind: source.type,
       sourceId,
       sourceRevision: source.revision,
       sourceVersion: `file:${local.contentChecksum}`,
       sourceChecksum: local.contentChecksum
     }
+  }
+
+  async hasCurrentDocument(
+    sourceId: string,
+    documentKey: string
+  ): Promise<boolean> {
+    const source = await this.dependencies.sources.get(sourceId)
+    if (!source || source.type !== 'repository') return false
+    const snapshot =
+      await this.dependencies.repositories.getCurrentRepositorySnapshot(sourceId)
+    return (
+      snapshot?.documents.some(
+        (document) =>
+          repositorySnapshotDocumentKey(document) === documentKey
+      ) === true
+    )
   }
 
   async readFrozen(input: {
@@ -313,10 +371,29 @@ export class MainKnowledgeIndexSourceReader {
     if (!current?.artifact.formal) {
       throw new Error('Knowledge artifact is not current')
     }
-    const content = await lookup.readContent(current.artifact)
-    if (checksum(new TextEncoder().encode(content)) !== current.artifact.checksum) {
+    const source = await lookup.readSource(current.artifact)
+    if (checksum(source.bytes) !== current.artifact.checksum) {
       throw new Error('Knowledge artifact changed during indexing')
     }
+    const contentExtractor = this.dependencies.contentExtractor
+    if (!contentExtractor) {
+      throw new Error('Artifact content extraction is unavailable')
+    }
+    const bundle = await contentExtractor.extract({
+      bytes: source.bytes,
+      fileName: source.fileName,
+      ...(source.mimeType ? { mimeType: source.mimeType } : {}),
+      sourceChecksum: current.artifact.checksum,
+      policy: {
+        consumer: 'artifact_sync',
+        allowLocalOcr: true,
+        allowLocalConversion: true,
+        maxCharacters: CONTENT_EXTRACTION_LIMITS.maxExtractedCharacters,
+        maxUnits: CONTENT_EXTRACTION_LIMITS.maxArchiveEntries
+      },
+      signal: new AbortController().signal,
+      depth: 0
+    })
     return {
       scopeKind: 'workspace',
       scopeId: current.workspaceId,
@@ -325,14 +402,10 @@ export class MainKnowledgeIndexSourceReader {
       sourceRevision: current.artifact.version,
       sourceVersion: `artifact:${current.artifact.version}`,
       sourceChecksum: current.artifact.checksum,
-      documents: [
-        {
-          documentKey: current.artifact.relativePath,
-          sourceEntityId: current.artifact.id,
-          title: current.artifact.relativePath,
-          content
-        }
-      ]
+      documents: mapExtractedBundleToKnowledgeDocuments(
+        bundle,
+        current.artifact.id
+      )
     }
   }
 
@@ -402,4 +475,15 @@ export class MainKnowledgeIndexSourceReader {
 
 function checksum(content: Uint8Array): string {
   return `sha256:${createHash('sha256').update(content).digest('hex')}`
+}
+
+function decodeLocalFileContent(bytes: Uint8Array): string {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch {
+    throw Object.assign(
+      new Error('Knowledge source format is unsupported'),
+      { code: 'unsupported_format' as const }
+    )
+  }
 }

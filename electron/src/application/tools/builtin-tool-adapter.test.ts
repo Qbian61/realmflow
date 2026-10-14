@@ -383,6 +383,86 @@ describe('BuiltinToolAdapter', () => {
       error: { code }
     })
   })
+
+  it('preserves stable Git scope error codes for model-visible recovery', async () => {
+    const adapter = new BuiltinToolAdapter([
+      handler('git.status', '1.0.0', async () => {
+        throw Object.assign(
+          new Error(
+            'Selected folder is not a Git repository. Choose a Git repository folder or a folder inside one.'
+          ),
+          { code: 'git_not_repository' }
+        )
+      })
+    ])
+    const binding = await adapter.resolve(
+      definitionFor('git.status', '1.0.0'),
+      context
+    )
+
+    await expect(
+      adapter.execute(
+        binding,
+        invocation,
+        { emit: vi.fn() },
+        new AbortController().signal
+      )
+    ).resolves.toMatchObject({
+      outcome: 'failed',
+      error: {
+        code: 'git_not_repository',
+        message:
+          'Selected folder is not a Git repository. Choose a Git repository folder or a folder inside one.',
+        publicMessage:
+          'Selected folder is not a Git repository. Choose a Git repository folder or a folder inside one.',
+        category: 'unavailable',
+        recoveryHint:
+          'Choose a Git repository folder or a folder inside one.',
+        diagnosticId: expect.stringMatching(/^toolerr_[a-f0-9]{16}$/)
+      }
+    })
+  })
+
+  it('preserves retryable runtime-resource errors while redacting sensitive details', async () => {
+    const adapter = new BuiltinToolAdapter([
+      handler('browser.snapshot', '1.0.0', async () => {
+        throw Object.assign(
+          new Error(
+            'Current run has no active runtime resource at /Users/me/project?token=secret https://internal.example.test/session?api_key=abc'
+          ),
+          { code: 'runtime_resource_stale', retryable: true }
+        )
+      })
+    ])
+    const binding = await adapter.resolve(
+      definitionFor('browser.snapshot', '1.0.0'),
+      context
+    )
+
+    const result = await adapter.execute(
+      binding,
+      invocation,
+      { emit: vi.fn() },
+      new AbortController().signal
+    )
+
+    expect(result).toMatchObject({
+      outcome: 'failed',
+      error: {
+        code: 'runtime_resource_stale',
+        retryable: true,
+        category: 'transient',
+        publicMessage:
+          'Runtime resource is stale for the current run',
+        recoveryHint: 'Retry the tool after refreshing the runtime resource.',
+        diagnosticId: expect.stringMatching(/^toolerr_[a-f0-9]{16}$/)
+      }
+    })
+    expect(JSON.stringify(result)).not.toContain('/Users/me')
+    expect(JSON.stringify(result)).not.toContain('token=secret')
+    expect(JSON.stringify(result)).not.toContain('api_key=abc')
+    expect(JSON.stringify(result)).not.toContain('internal.example.test')
+  })
 })
 
 function handler(

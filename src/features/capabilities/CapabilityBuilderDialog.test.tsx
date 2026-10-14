@@ -65,6 +65,8 @@ describe('CapabilityBuilderDialog', () => {
     expect(await screen.findByText('权限与验证')).toBeVisible()
     expect(screen.getByText('issue-api-key')).toBeVisible()
     expect(screen.getByText('2 个文件')).toBeVisible()
+    expect(screen.getByText('能力契约')).toBeVisible()
+    expect(screen.getByText('已通过')).toBeVisible()
     expect(screen.getByText('1 项测试通过')).toBeVisible()
     expect(
       screen.getByRole('button', { name: '安装并启用' })
@@ -77,7 +79,9 @@ describe('CapabilityBuilderDialog', () => {
         ...sessionFixture(),
         status: 'draft',
         proposal: undefined,
-        diagnostics: ['Capability package test failed: contract']
+        diagnostics: [
+          'Connector HTTP credentials must not be model input properties'
+        ]
       })
     })
     renderDialog(api)
@@ -86,10 +90,88 @@ describe('CapabilityBuilderDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: '生成并验证' }))
 
     expect(
-      await screen.findByText('Capability package test failed: contract')
+      await screen.findByText(
+        'Connector HTTP credentials must not be model input properties'
+      )
     ).toBeVisible()
     expect(
       screen.queryByRole('button', { name: '仅安装' })
+    ).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '返回修改' }))
+    expect(screen.getByLabelText('需求描述')).toBeVisible()
+  })
+
+  it('shows Database Connector contract diagnostics and keeps the draft editable', async () => {
+    const api = createApi({
+      createDraft: vi.fn().mockResolvedValue({
+        ...sessionFixture(),
+        status: 'draft',
+        proposal: undefined,
+        diagnostics: ['Connector Database parameters must match statement']
+      })
+    })
+    renderDialog(api)
+
+    fillRequiredFields()
+    fireEvent.click(screen.getByRole('button', { name: '生成并验证' }))
+
+    expect(
+      await screen.findByText(
+        'Connector Database parameters must match statement'
+      )
+    ).toBeVisible()
+    expect(
+      screen.queryByRole('button', { name: '安装并启用' })
+    ).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '返回修改' }))
+    expect(screen.getByLabelText('需求描述')).toBeVisible()
+  })
+
+  it('shows CLI Connector contract diagnostics and keeps the draft editable', async () => {
+    const api = createApi({
+      createDraft: vi.fn().mockResolvedValue({
+        ...sessionFixture(),
+        status: 'draft',
+        proposal: undefined,
+        diagnostics: ['Connector CLI arguments must match input schema']
+      })
+    })
+    renderDialog(api)
+
+    fillRequiredFields()
+    fireEvent.click(screen.getByRole('button', { name: '生成并验证' }))
+
+    expect(
+      await screen.findByText(
+        'Connector CLI arguments must match input schema'
+      )
+    ).toBeVisible()
+    expect(
+      screen.queryByRole('button', { name: '安装并启用' })
+    ).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '返回修改' }))
+    expect(screen.getByLabelText('需求描述')).toBeVisible()
+  })
+
+  it('shows model input metadata diagnostics and keeps the draft editable', async () => {
+    const diagnostic =
+      'com.example.connector.actions.search.inputSchema schema.properties.query.description must explain when the required field is required'
+    const api = createApi({
+      createDraft: vi.fn().mockResolvedValue({
+        ...sessionFixture(),
+        status: 'draft',
+        proposal: undefined,
+        diagnostics: [diagnostic]
+      })
+    })
+    renderDialog(api)
+
+    fillRequiredFields()
+    fireEvent.click(screen.getByRole('button', { name: '生成并验证' }))
+
+    expect(await screen.findByText(diagnostic)).toBeVisible()
+    expect(
+      screen.queryByRole('button', { name: '安装并启用' })
     ).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '返回修改' }))
     expect(screen.getByLabelText('需求描述')).toBeVisible()
@@ -287,6 +369,7 @@ function sessionFixture(options: {
       validationReport: {
         compatible: true,
         dependencyStatus: 'resolved',
+        contract: { status: 'passed', diagnostics: [] },
         tests: [{ id: 'contract', status: 'passed' }]
       },
       fileNames: ['README.md', 'capability.yaml'],

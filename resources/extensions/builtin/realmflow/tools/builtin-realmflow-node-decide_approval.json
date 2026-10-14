@@ -23,16 +23,28 @@
       "requirementId": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 200
+        "maxLength": 200,
+        "description": "Stable requirement ID whose data should be read or changed.",
+        "examples": [
+          "requirement-1"
+        ]
       },
       "nodeRunId": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 200
+        "maxLength": 200,
+        "description": "Stable NodeRun ID that owns the question, todo, or approval.",
+        "examples": [
+          "node-run-1"
+        ]
       },
       "expectedNodeRunRevision": {
         "type": "integer",
-        "minimum": 0
+        "minimum": 0,
+        "description": "Expected NodeRun revision used for optimistic concurrency control. Copy this value from the latest RealmFlow UI/API state; do not invent it.",
+        "examples": [
+          1
+        ]
       },
       "gate": {
         "oneOf": [
@@ -47,29 +59,57 @@
             ],
             "properties": {
               "kind": {
-                "const": "approval"
+                "const": "approval",
+                "description": "Discriminator selecting the schema variant for this object.",
+                "examples": [
+                  "approval"
+                ]
               },
               "decisionId": {
                 "type": "string",
                 "minLength": 1,
-                "maxLength": 200
+                "maxLength": 200,
+                "description": "Stable approval decision ID for the selected workflow gate.",
+                "examples": [
+                  "example"
+                ]
               },
               "expectedApprovalRevision": {
                 "type": "integer",
-                "minimum": 0
+                "minimum": 0,
+                "description": "Expected approval revision used for optimistic concurrency control. Copy this value from the latest RealmFlow UI/API state; do not invent it.",
+                "examples": [
+                  1
+                ]
               },
               "result": {
                 "type": "string",
                 "enum": [
                   "approved",
                   "rejected"
+                ],
+                "description": "Approval decision result for the selected workflow gate. Allowed values: approved, rejected.",
+                "examples": [
+                  "approved"
                 ]
               },
               "note": {
                 "type": "string",
-                "maxLength": 5000
+                "maxLength": 5000,
+                "description": "Optional human-readable note recorded with the approval decision.",
+                "examples": [
+                  ""
+                ]
               }
-            }
+            },
+            "examples": [
+              {
+                "kind": "approval",
+                "decisionId": "decision-1",
+                "expectedApprovalRevision": 1,
+                "result": "approved"
+              }
+            ]
           },
           {
             "type": "object",
@@ -81,21 +121,63 @@
             ],
             "properties": {
               "kind": {
-                "const": "custom"
+                "const": "custom",
+                "description": "Discriminator selecting the schema variant for this object.",
+                "examples": [
+                  "custom"
+                ]
               },
               "gateId": {
                 "type": "string",
                 "minLength": 1,
-                "maxLength": 200
+                "maxLength": 200,
+                "description": "Stable custom gate ID for the selected workflow gate.",
+                "examples": [
+                  "example"
+                ]
               },
               "passed": {
-                "type": "boolean"
+                "type": "boolean",
+                "description": "Whether the custom workflow gate passed.",
+                "examples": [
+                  true
+                ]
               }
-            }
+            },
+            "examples": [
+              {
+                "kind": "approval",
+                "decisionId": "decision-1",
+                "expectedApprovalRevision": 1,
+                "result": "approved"
+              }
+            ]
+          }
+        ],
+        "description": "Approval gate decision payload for the selected NodeRun.",
+        "examples": [
+          {
+            "kind": "approval",
+            "decisionId": "decision-1",
+            "expectedApprovalRevision": 1,
+            "result": "approved"
           }
         ]
       }
-    }
+    },
+    "examples": [
+      {
+        "requirementId": "requirement-1",
+        "nodeRunId": "node-run-1",
+        "expectedNodeRunRevision": 1,
+        "gate": {
+          "kind": "approval",
+          "decisionId": "decision-1",
+          "expectedApprovalRevision": 1,
+          "result": "approved"
+        }
+      }
+    ]
   },
   "outputSchema": {
     "type": "object",

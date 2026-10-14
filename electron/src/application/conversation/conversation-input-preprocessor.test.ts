@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ConversationAttachmentDescriptor } from '../../../../domain/conversation-input'
 import { ConversationInputPreprocessor } from './conversation-input-preprocessor'
-import type { DocumentTextExtractor } from '../documents/local-document-text-extractor'
+import type { LocalContentExtractionService } from '../content-extraction/local-content-extraction-service'
 
 describe('ConversationInputPreprocessor', () => {
   let directory: string
@@ -32,11 +32,16 @@ describe('ConversationInputPreprocessor', () => {
       [attachment],
       new Map([['attachment-text', 'blobs/text']])
     )
+    const contentExtractor = fakeContentExtractor(text, 'text')
 
     const result = await new ConversationInputPreprocessor(
       repository,
       rootPath,
-      { longTextCharacters: 120, chunkCharacters: 80 }
+      {
+        contentExtractor,
+        longTextCharacters: 120,
+        chunkCharacters: 80
+      }
     ).prepare({
       attachmentIds: ['attachment-text'],
       ownerId: 'message-1',
@@ -75,9 +80,27 @@ describe('ConversationInputPreprocessor', () => {
           id: 'attachment-text:chunk:1',
           start: 0,
           end: 80,
-          content: text.slice(0, 80)
+          content: expect.stringContaining(
+            '[内容单元 content: content.text]'
+          )
         })
       ])
+    )
+    expect(contentExtractor.extract).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bytes: Uint8Array.from(Buffer.from(text)),
+        fileName: 'requirements.md',
+        mimeType: 'text/plain',
+        sourceChecksum: `sha256:${'a'.repeat(64)}`,
+        depth: 0,
+        policy: {
+          consumer: 'conversation',
+          allowLocalOcr: true,
+          allowLocalConversion: true,
+          maxCharacters: 200_000,
+          maxUnits: 1_000
+        }
+      })
     )
   })
 
@@ -97,12 +120,15 @@ describe('ConversationInputPreprocessor', () => {
       [attachment],
       new Map([['attachment-image', 'blobs/image']])
     )
-    const ocr = vi.fn().mockResolvedValue('Architecture diagram: Main owns state.')
+    const contentExtractor = fakeContentExtractor(
+      'Architecture diagram: Main owns state.',
+      'png'
+    )
 
     const result = await new ConversationInputPreprocessor(
       repository,
       rootPath,
-      { ocr }
+      { contentExtractor }
     ).prepare({
       attachmentIds: ['attachment-image'],
       ownerId: 'message-1',
@@ -110,7 +136,7 @@ describe('ConversationInputPreprocessor', () => {
       allowImageEgress: false
     })
 
-    expect(ocr).toHaveBeenCalledOnce()
+    expect(contentExtractor.extract).toHaveBeenCalledOnce()
     expect(result.imageParts).toEqual([])
     expect(result.contextText).toContain('Architecture diagram: Main owns state.')
     expect(result.attachments[0]).toMatchObject({
@@ -169,19 +195,15 @@ describe('ConversationInputPreprocessor', () => {
       [attachment],
       new Map([['attachment-docx', 'blobs/docx']])
     )
-    const documentTextExtractor: DocumentTextExtractor = {
-      extract: vi.fn().mockResolvedValue({
-        text: 'Nine years of backend experience',
-        extraction: 'docx',
-        characterCount: 32,
-        truncated: false
-      })
-    }
+    const contentExtractor = fakeContentExtractor(
+      'Nine years of backend experience',
+      'docx'
+    )
 
     const result = await new ConversationInputPreprocessor(
       repository,
       rootPath,
-      { documentTextExtractor }
+      { contentExtractor }
     ).prepare({
       attachmentIds: ['attachment-docx'],
       ownerId: 'message-1',
@@ -189,17 +211,20 @@ describe('ConversationInputPreprocessor', () => {
       allowImageEgress: false
     })
 
-    expect(documentTextExtractor.extract).toHaveBeenCalledWith({
-      bytes: Uint8Array.from(bytes),
-      fileName: 'resume.docx',
-      mimeType:
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      maxCharacters: 200_000
-    })
+    expect(contentExtractor.extract).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bytes: Uint8Array.from(bytes),
+        fileName: 'resume.docx',
+        mimeType:
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        sourceChecksum: `sha256:${'f'.repeat(64)}`,
+        policy: expect.objectContaining({ consumer: 'conversation' })
+      })
+    )
     expect(result.contextText).toContain('Nine years of backend experience')
     expect(result.attachments[0]).toMatchObject({
       extraction: 'parser',
-      content: 'Nine years of backend experience'
+      content: expect.stringContaining('Nine years of backend experience')
     })
   })
 
@@ -225,7 +250,8 @@ describe('ConversationInputPreprocessor', () => {
 
     const result = await new ConversationInputPreprocessor(
       repository,
-      rootPath
+      rootPath,
+      { contentExtractor: fakeContentExtractor('valid content', 'text') }
     ).prepare({
       attachmentIds: ['attachment-missing', 'attachment-valid'],
       ownerId: 'message-1',
@@ -268,6 +294,29 @@ function descriptor(
     status: 'registered',
     createdAt: 1,
     ...changes
+  }
+}
+
+function fakeContentExtractor(
+  text: string,
+  format: string
+): Pick<LocalContentExtractionService, 'extract'> {
+  return {
+    extract: vi.fn().mockResolvedValue({
+      sourceChecksum: `sha256:${'a'.repeat(64)}`,
+      format,
+      extractorVersion: `${format}-v1`,
+      units: [
+        {
+          key: 'content',
+          title: `content.${format}`,
+          text,
+          checksum: `sha256:${'b'.repeat(64)}`,
+          byteSize: text.length,
+          metadata: { format, extraction: format }
+        }
+      ]
+    })
   }
 }
 

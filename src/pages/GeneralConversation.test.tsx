@@ -361,6 +361,12 @@ describe("general conversation pages", () => {
     expect(
       view.container.querySelector(".chat-session-composer .composer-toolbar"),
     ).toHaveAttribute("role", "toolbar");
+    expect(
+      screen.queryByRole("button", { name: "上下文详情" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("radiogroup", { name: "上下文范围" }),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps the new-chat workspace control inside the composer before approval", () => {

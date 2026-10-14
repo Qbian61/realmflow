@@ -17,6 +17,7 @@ import type { ConnectorRecord } from '../connectors/connector-store'
 import type { InvokeConnectorCommand } from '../connectors/connector-service'
 import type { WorkspaceRepository } from '../ports/business-repositories'
 import type { ConnectorResponse } from '../../network/network-gateway'
+import type { LocalContentExtractionService } from '../content-extraction/local-content-extraction-service'
 import type {
   RepositoryBeginResult,
   RepositoryCompletionResult,
@@ -66,6 +67,7 @@ type RepositoryIngestionServiceDependencies = {
   scanner?: RepositoryScanner
   materializer?: RepositoryMaterializer
   securePaths?: SecurePathService
+  contentExtractor?: Pick<LocalContentExtractionService, 'extract'>
   now?: () => number
   createId?: (kind: 'event' | 'snapshot') => string
 }
@@ -126,7 +128,11 @@ export class RepositoryIngestionService {
   constructor(
     private readonly dependencies: RepositoryIngestionServiceDependencies
   ) {
-    this.scanner = dependencies.scanner ?? new RepositoryScanner()
+    this.scanner =
+      dependencies.scanner ??
+      new RepositoryScanner({
+        contentExtractor: dependencies.contentExtractor
+      })
     this.materializer =
       dependencies.materializer ?? new RepositoryMaterializer()
     this.securePaths = dependencies.securePaths ?? new SecurePathService()

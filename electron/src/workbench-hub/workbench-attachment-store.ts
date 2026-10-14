@@ -238,6 +238,29 @@ export class WorkbenchAttachmentStore {
     return `data:${row.mime_type};base64,${content.toString('base64')}`
   }
 
+  async readForExtraction(attachmentId: string): Promise<{
+    bytes: Uint8Array
+    fileName: string
+    mimeType: string
+    sourceChecksum: string
+    version: number
+  }> {
+    const row = this.getRow(attachmentId)
+    const path = await this.resolveStoredPath(row.relative_path)
+    const bytes = new Uint8Array(await readFile(path))
+    const checksum = createHash('sha256').update(bytes).digest('hex')
+    if (checksum !== row.checksum_sha256) {
+      throw new Error('Workbench attachment content changed unexpectedly')
+    }
+    return {
+      bytes,
+      fileName: row.file_name,
+      mimeType: row.mime_type,
+      sourceChecksum: `sha256:${checksum}`,
+      version: row.created_at
+    }
+  }
+
   async softDelete(attachmentId: string): Promise<void> {
     const result = this.database
       .prepare(

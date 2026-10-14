@@ -90,6 +90,68 @@ export class LocalPdfSessionService {
     }
   ) {}
 
+  async inspectBytes(
+    bytes: Uint8Array,
+    signal: AbortSignal
+  ): Promise<PdfInspection> {
+    assertNotAborted(signal)
+    const inspection = await this.dependencies.adapter.inspect(
+      Uint8Array.from(bytes)
+    )
+    assertNotAborted(signal)
+    return {
+      ...inspection,
+      pages: inspection.pages.map((page) => ({
+        ...page,
+        textItems: page.textItems.map((item) => ({ ...item }))
+      })),
+      forms: inspection.forms.map((form) => ({ ...form })),
+      annotations: inspection.annotations.map((annotation) => ({
+        ...annotation
+      }))
+    }
+  }
+
+  async ocrPageBytes(
+    bytes: Uint8Array,
+    pageNumber: number,
+    signal: AbortSignal,
+    options: {
+      language?: string
+      maxDimension?: number
+    } = {}
+  ): Promise<ImageOcrResult> {
+    if (!this.dependencies.localOcr) {
+      throw new PdfSessionError(
+        'pdf_ocr_unavailable',
+        'Local PDF OCR is unavailable'
+      )
+    }
+    assertNotAborted(signal)
+    const rendered = await this.dependencies.adapter.renderPage(
+      Uint8Array.from(bytes),
+      pageNumber,
+      options.maxDimension
+    )
+    assertNotAborted(signal)
+    const result = await this.dependencies.localOcr.recognize(
+      {
+        content: rendered.content,
+        sourcePath: `bytes#page=${pageNumber}`,
+        language: options.language
+      },
+      signal
+    )
+    validateOcr(result, rendered)
+    return {
+      language: result.language,
+      blocks: result.blocks.map((block) => ({
+        ...block,
+        bounds: { ...block.bounds }
+      }))
+    }
+  }
+
   async open(input: {
     canonicalPath: string
     relativePath: string
@@ -314,6 +376,48 @@ export class LocalPdfSessionService {
       }
       if (session.status === 'saving') session.status = 'dirty'
       throw error
+    } finally {
+      session.busy = false
+    }
+  }
+
+  async exportRevision(input: {
+    sessionId: string
+    expectedRevision: number
+    signal: AbortSignal
+  }): Promise<{
+    content: Buffer
+    checksum: string
+    pageCount: number
+    sourcePath: string
+    revision: number
+  }> {
+    const session = this.requireSession(input.sessionId)
+    this.requireEditable(session)
+    this.requireRevision(session, input.expectedRevision)
+    this.acquire(session)
+    try {
+      assertNotAborted(input.signal)
+      if (
+        (await this.dependencies.storage.checksum(session.canonicalPath)) !==
+        session.sourceChecksum
+      ) {
+        session.status = 'conflicted'
+        throw new PdfSessionError(
+          'pdf_file_conflict',
+          'PDF changed outside this session'
+        )
+      }
+      const inspection = await this.dependencies.adapter.inspect(session.document)
+      assertEditableInspection(inspection)
+      session.inspection = inspection
+      return {
+        content: Buffer.from(session.document),
+        checksum: digest(session.document),
+        pageCount: inspection.pageCount,
+        sourcePath: session.path,
+        revision: session.revision
+      }
     } finally {
       session.busy = false
     }

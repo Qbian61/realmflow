@@ -72,8 +72,83 @@ describe('builtin Tool runtime', () => {
 
     expect(
       definitions.filter(({ executor }) => executor.kind === 'builtin')
-    ).toHaveLength(124)
+    ).toHaveLength(127)
     expect(() => adapter.assertDefinitions(definitions)).not.toThrow()
+  })
+
+  it('registers unified PDF generation Tool schemas from the builtin catalog', async () => {
+    const catalog = await new BuiltinCatalogLoader(
+      join(process.cwd(), 'resources', 'extensions', 'builtin')
+    ).load()
+    const definitions = catalog.flatMap(({ tools }) => tools)
+    const deliverPdf = definitions.find(
+      ({ id }) => id === 'builtin.document.deliver_pdf'
+    )
+    const saveAs = definitions.find(({ id }) => id === 'builtin.pdf.save_as')
+
+    expect(deliverPdf?.inputSchema).toMatchObject({
+      type: 'object',
+      additionalProperties: false,
+      required: ['source', 'outputPath', 'expectedAbsent'],
+      properties: {
+        qualityPolicy: {
+          type: 'string',
+          enum: [
+            'require_print_layout',
+            'prefer_print_layout',
+            'allow_degraded_text'
+          ]
+        },
+        requireRenderSmokeTest: { type: 'boolean' }
+      }
+    })
+    expect(saveAs?.inputSchema).toMatchObject({
+      type: 'object',
+      additionalProperties: false,
+      required: [
+        'sessionId',
+        'expectedRevision',
+        'outputPath',
+        'expectedAbsent'
+      ]
+    })
+    expect(() =>
+      createBuiltinToolAdapter(dependencies()).assertDefinitions(
+        [deliverPdf, saveAs].filter(Boolean) as NonNullable<typeof deliverPdf>[]
+      )
+    ).not.toThrow()
+  })
+
+  it('fails startup contract verification when builtin definitions and registered handlers drift', async () => {
+    const catalog = await new BuiltinCatalogLoader(
+      join(process.cwd(), 'resources', 'extensions', 'builtin')
+    ).load()
+    const definitions = catalog.flatMap(({ tools }) => tools)
+    const adapter = createBuiltinToolAdapter(dependencies())
+
+    expect(() => adapter.assertExactDefinitions(definitions)).not.toThrow()
+    expect(() =>
+      adapter.assertExactDefinitions(
+        definitions.filter(({ id }) => id !== 'builtin.web.fetch')
+      )
+    ).toThrow(
+      'Builtin Tool handler has no catalog definition: web.fetch@1.0.0'
+    )
+    expect(() =>
+      adapter.assertExactDefinitions(
+        definitions.map((definition) =>
+          definition.id === 'builtin.web.fetch'
+            ? {
+                ...definition,
+                executor: {
+                  ...definition.executor,
+                  handlerVersion: '2.0.0'
+                }
+              }
+            : definition
+        )
+      )
+    ).toThrow('Builtin Tool handler is unavailable: web.fetch@2.0.0')
   })
 
   it('registers the public web fetch Tool schema from the builtin catalog', async () => {
@@ -149,6 +224,33 @@ describe('builtin Tool runtime', () => {
       required: ['path']
     })
     expect(definition?.capabilities).toEqual(['filesystem.read'])
+    expect(() =>
+      createBuiltinToolAdapter(dependencies()).assertDefinitions(
+        definition ? [definition] : []
+      )
+    ).not.toThrow()
+  })
+
+  it('registers structured file search modes from the builtin catalog', async () => {
+    const catalog = await new BuiltinCatalogLoader(
+      join(process.cwd(), 'resources', 'extensions', 'builtin')
+    ).load()
+    const definition = catalog
+      .flatMap(({ tools }) => tools)
+      .find(({ id }) => id === 'builtin.files.search')
+
+    expect(definition?.inputSchema).toMatchObject({
+      type: 'object',
+      additionalProperties: false,
+      required: ['query'],
+      properties: {
+        contentMode: {
+          type: 'string',
+          enum: ['text_only', 'structured_cached', 'structured_extract'],
+          description: expect.stringContaining('structured_cached')
+        }
+      }
+    })
     expect(() =>
       createBuiltinToolAdapter(dependencies()).assertDefinitions(
         definition ? [definition] : []
@@ -289,7 +391,7 @@ describe('builtin Tool runtime', () => {
     expect(resolveSessionPath).toHaveBeenCalledWith('word', 'session-1')
   })
 
-  it('delegates RealmFlow and Knowledge handlers to application ports', async () => {
+  it('delegates knowledge searches with only domain query fields and trusted scope', async () => {
     const dependencies_ = dependencies()
     const adapter = createBuiltinToolAdapter(dependencies_)
     const catalog = await new BuiltinCatalogLoader(
@@ -333,8 +435,58 @@ describe('builtin Tool runtime', () => {
       expect.objectContaining({
         arguments: {
           query: 'event sourcing',
-          workspaceId: 'workspace-1',
           scope: { kind: 'workspace', workspaceId: 'workspace-1' }
+        },
+        context
+      })
+    )
+  })
+
+  it('binds knowledge searches to the trusted requirement context without exposing context IDs as arguments', async () => {
+    const dependencies_ = dependencies()
+    const adapter = createBuiltinToolAdapter(dependencies_)
+    const catalog = await new BuiltinCatalogLoader(
+      join(process.cwd(), 'resources', 'extensions', 'builtin')
+    ).load()
+    const definition = catalog
+      .flatMap(({ tools }) => tools)
+      .find(({ id }) => id === 'builtin.knowledge.search')
+    if (!definition) throw new Error('Missing fixture definition')
+    const context = {
+      owner: { type: 'conversation' as const, id: 'conversation-1' },
+      workspaceId: 'workspace-1',
+      requirementId: 'requirement-1',
+      conversationId: 'conversation-1',
+      correlationId: 'correlation-1',
+      causationId: 'command-1'
+    }
+    const binding = await adapter.resolve(definition, context)
+
+    await adapter.execute(
+      binding,
+      {
+        executionId: 'execution-1',
+        idempotencyKey: 'request-1',
+        attemptId: 'attempt-1',
+        attempt: 1,
+        requestedBy: { type: 'model', id: 'conversation-1' },
+        arguments: { query: 'release risk', topK: 3 },
+        scopeRoots: [],
+        connectorGrants: []
+      },
+      { emit: vi.fn() },
+      new AbortController().signal
+    )
+
+    expect(
+      dependencies_.application['knowledge.search']
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        arguments: {
+          query: 'release risk',
+          topK: 3,
+          scope: { kind: 'workspace', workspaceId: 'workspace-1' },
+          requirementId: 'requirement-1'
         },
         context
       })
@@ -388,6 +540,169 @@ describe('builtin Tool runtime', () => {
         context
       })
     )
+  })
+
+  it('binds knowledge note creation to trusted conversation context and generated IDs', async () => {
+    const dependencies_ = dependencies()
+    const adapter = createBuiltinToolAdapter(dependencies_)
+    const catalog = await new BuiltinCatalogLoader(
+      join(process.cwd(), 'resources', 'extensions', 'builtin')
+    ).load()
+    const definition = catalog
+      .flatMap(({ tools }) => tools)
+      .find(({ id }) => id === 'builtin.knowledge.note.create')
+    if (!definition) throw new Error('Missing fixture definition')
+    const context = {
+      owner: { type: 'conversation' as const, id: 'conversation-1' },
+      workspaceId: 'workspace-1',
+      conversationId: 'conversation-1',
+      correlationId: 'correlation-1',
+      causationId: 'command-1'
+    }
+    const binding = await adapter.resolve(definition, context)
+
+    await adapter.execute(
+      binding,
+      {
+        executionId: 'execution-create-note',
+        idempotencyKey: 'request-create-note',
+        attemptId: 'attempt-1',
+        attempt: 1,
+        requestedBy: { type: 'model', id: 'conversation-1' },
+        arguments: {
+          kind: 'decision',
+          sourceMessageIds: ['message-1', 'message-2'],
+          title: 'Decision',
+          content: 'Use SQLite.'
+        },
+        scopeRoots: [],
+        connectorGrants: []
+      },
+      { emit: vi.fn() },
+      new AbortController().signal
+    )
+
+    expect(
+      dependencies_.application['knowledge.note.create']
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        arguments: {
+          id: 'knowledge-note-52eb0684a7a0066f9a4f66c4',
+          versionId: 'knowledge-note-version-d7ffbf2f49fdf2474ddce2b5',
+          workspaceId: 'workspace-1',
+          sessionId: 'conversation-1',
+          kind: 'decision',
+          sourceMessageIds: ['message-1', 'message-2'],
+          title: 'Decision',
+          content: 'Use SQLite.'
+        },
+        context
+      })
+    )
+  })
+
+  it('binds knowledge note edits to generated version IDs and preserves concurrency fields', async () => {
+    const dependencies_ = dependencies()
+    const adapter = createBuiltinToolAdapter(dependencies_)
+    const catalog = await new BuiltinCatalogLoader(
+      join(process.cwd(), 'resources', 'extensions', 'builtin')
+    ).load()
+    const definition = catalog
+      .flatMap(({ tools }) => tools)
+      .find(({ id }) => id === 'builtin.knowledge.note.edit')
+    if (!definition) throw new Error('Missing fixture definition')
+    const context = {
+      owner: { type: 'conversation' as const, id: 'conversation-1' },
+      workspaceId: 'workspace-1',
+      conversationId: 'conversation-1',
+      correlationId: 'correlation-1',
+      causationId: 'command-1'
+    }
+    const binding = await adapter.resolve(definition, context)
+
+    await adapter.execute(
+      binding,
+      {
+        executionId: 'execution-edit-note',
+        idempotencyKey: 'request-edit-note',
+        attemptId: 'attempt-1',
+        attempt: 1,
+        requestedBy: { type: 'model', id: 'conversation-1' },
+        arguments: {
+          noteId: 'note-1',
+          expectedRevision: 3,
+          title: 'Updated decision',
+          content: 'Use SQLite and Qdrant.'
+        },
+        scopeRoots: [],
+        connectorGrants: []
+      },
+      { emit: vi.fn() },
+      new AbortController().signal
+    )
+
+    expect(
+      dependencies_.application['knowledge.note.edit']
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        arguments: {
+          noteId: 'note-1',
+          expectedRevision: 3,
+          versionId: 'knowledge-note-version-f6a4c445a7eafdc0df4d654c',
+          title: 'Updated decision',
+          content: 'Use SQLite and Qdrant.'
+        },
+        context
+      })
+    )
+  })
+
+  it('rejects knowledge note creation without a trusted conversation context', async () => {
+    const dependencies_ = dependencies()
+    const adapter = createBuiltinToolAdapter(dependencies_)
+    const catalog = await new BuiltinCatalogLoader(
+      join(process.cwd(), 'resources', 'extensions', 'builtin')
+    ).load()
+    const definition = catalog
+      .flatMap(({ tools }) => tools)
+      .find(({ id }) => id === 'builtin.knowledge.note.create')
+    if (!definition) throw new Error('Missing fixture definition')
+    const binding = await adapter.resolve(definition, {
+      owner: { type: 'application' as const, id: 'realmflow' },
+      workspaceId: 'workspace-1',
+      correlationId: 'correlation-1',
+      causationId: 'command-1'
+    })
+
+    await expect(
+      adapter.execute(
+        binding,
+        {
+          executionId: 'execution-create-note',
+          idempotencyKey: 'request-create-note',
+          attemptId: 'attempt-1',
+          attempt: 1,
+          requestedBy: { type: 'model', id: 'conversation-1' },
+          arguments: {
+            kind: 'decision',
+            sourceMessageIds: ['message-1'],
+            title: 'Decision',
+            content: 'Use SQLite.'
+          },
+          scopeRoots: [],
+          connectorGrants: []
+        },
+        { emit: vi.fn() },
+        new AbortController().signal
+      )
+    ).resolves.toMatchObject({
+      outcome: 'failed',
+      error: {
+        code: 'builtin_execution_failed',
+        message: 'Knowledge Note conversation is unavailable',
+        retryable: false
+      }
+    })
   })
 
   it('binds RealmFlow Tool IDs to the trusted execution context', async () => {
@@ -505,7 +820,18 @@ function dependencies() {
     (input: unknown) => Promise<JsonObject>
   >
   return {
-    files: { trashItem: vi.fn().mockResolvedValue(undefined) },
+    files: {
+      trashItem: vi.fn().mockResolvedValue(undefined),
+      contentExtractor: {
+        getCached: vi.fn().mockResolvedValue(undefined),
+        extract: vi.fn().mockResolvedValue({
+          sourceChecksum: `sha256:${'a'.repeat(64)}`,
+          format: 'text',
+          extractorVersion: 'text-v1',
+          units: []
+        })
+      }
+    },
     documents: {
       extractor: {
         extract: vi.fn().mockResolvedValue({
@@ -519,6 +845,12 @@ function dependencies() {
         create: vi.fn().mockResolvedValue({}),
         exportPdf: vi.fn().mockResolvedValue({}),
         verify: vi.fn().mockResolvedValue({})
+      },
+      pdfGeneration: {
+        generate: vi.fn().mockResolvedValue({
+          artifact: {},
+          route: {}
+        })
       }
     },
     wordDocuments: {
@@ -542,7 +874,14 @@ function dependencies() {
         thumbnail: vi.fn().mockResolvedValue({}),
         ocr: vi.fn().mockResolvedValue({}),
         mutate: vi.fn().mockResolvedValue({}),
-        save: vi.fn().mockResolvedValue({})
+        save: vi.fn().mockResolvedValue({}),
+        exportRevision: vi.fn().mockResolvedValue({})
+      },
+      pdfGeneration: {
+        generate: vi.fn().mockResolvedValue({
+          artifact: {},
+          route: {}
+        })
       }
     },
     spreadsheets: {

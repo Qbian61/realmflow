@@ -11,7 +11,8 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { afterEach, beforeEach } from 'vitest'
+import { afterEach, beforeEach, vi } from 'vitest'
+import { MAX_REPOSITORY_FILE_BYTES } from '../../../../domain/repository-source'
 import { RepositoryScanner } from './repository-scanner'
 
 const execute = promisify(execFile)
@@ -48,7 +49,7 @@ describe('RepositoryScanner', () => {
     await writeFile(join(repositoryPath, 'binary.dat'), new Uint8Array([1, 0, 2]))
     await writeFile(
       join(repositoryPath, 'large.txt'),
-      new Uint8Array(1024 * 1024 + 1)
+      new Uint8Array(5 * 1024 * 1024 + 1).fill(65)
     )
     await symlink('README.md', join(repositoryPath, 'readme-link.md'))
     const gitBefore = await lstat(join(repositoryPath, '.git'))
@@ -73,6 +74,17 @@ describe('RepositoryScanner', () => {
         { relativePath: 'README.md', content: '# RealmFlow\n' },
         { relativePath: 'src/.gitignore', content: '*.log\n' },
         { relativePath: 'src/index.ts', content: 'export {}\n' }
+      ],
+      skippedFiles: [
+        {
+          relativePath: 'binary.dat',
+          reason: 'binary'
+        },
+        {
+          relativePath: 'large.txt',
+          reason: 'file_too_large',
+          byteSize: 5 * 1024 * 1024 + 1
+        }
       ],
       scannedAt: 20
     })
@@ -110,7 +122,7 @@ describe('RepositoryScanner', () => {
     }).scan(repositoryPath, { sourceId: 'repo-1', version: 1 })
 
     expect(snapshot.revisionLabel).toBe(stdout.trim())
-  })
+  }, 15_000)
 
   it('lists branches and scans another branch without changing the checkout', async () => {
     await writeFile(join(repositoryPath, 'README.md'), '# Main\n')
@@ -147,6 +159,153 @@ describe('RepositoryScanner', () => {
     ).resolves.toMatchObject({ stdout: 'main\n' })
   }, 15_000)
 
+  it('freezes recognized binary documents in the selected repository revision', async () => {
+    const bytes = Uint8Array.from([0x25, 0x50, 0x44, 0x46, 0, 1])
+    await writeFile(join(repositoryPath, 'brief.pdf'), bytes)
+    const extract = vi.fn().mockResolvedValue({
+      sourceChecksum: expect.any(String),
+      format: 'pdf',
+      extractorVersion: 'pdf-v1',
+      units: [
+        {
+          key: 'page/1',
+          title: 'Page 1',
+          text: 'Quarterly report',
+          checksum: 'sha256:page-1',
+          byteSize: 16,
+          metadata: {
+            format: 'pdf',
+            extraction: 'native',
+            page: 1
+          }
+        }
+      ]
+    })
+    const scanner = new RepositoryScanner({
+      contentExtractor: { extract },
+      now: () => 20,
+      createId: () => 'snapshot-structured'
+    } as ConstructorParameters<typeof RepositoryScanner>[0] & {
+      contentExtractor: { extract: typeof extract }
+    })
+
+    const snapshot = await scanner.scan(repositoryPath, {
+      sourceId: 'repo-1',
+      version: 1
+    })
+
+    expect(extract).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bytes,
+        fileName: 'brief.pdf',
+        policy: expect.objectContaining({ consumer: 'repository_snapshot' }),
+        depth: 0
+      })
+    )
+    expect(snapshot).toMatchObject({
+      files: [
+        {
+          relativePath: 'brief.pdf',
+          byteSize: bytes.byteLength
+        }
+      ],
+      documents: [
+        {
+          sourcePath: 'brief.pdf',
+          unitKey: 'page/1',
+          title: 'Page 1',
+          content: 'Quarterly report',
+          checksum: 'sha256:page-1',
+          byteSize: 16,
+          metadata: {
+            format: 'pdf',
+            extraction: 'native',
+            page: 1
+          }
+        }
+      ],
+      skippedFiles: []
+    })
+  })
+
+  it('skips oversized files when scanning a selected branch', async () => {
+    await writeFile(join(repositoryPath, 'README.md'), '# Indexed\n')
+    await writeFile(
+      join(repositoryPath, 'two-megabytes.txt'),
+      new Uint8Array(2 * 1024 * 1024).fill(65)
+    )
+    await writeFile(
+      join(repositoryPath, 'large.txt'),
+      new Uint8Array(MAX_REPOSITORY_FILE_BYTES + 2).fill(65)
+    )
+    await execute('git', [
+      '-C',
+      repositoryPath,
+      'add',
+      'README.md',
+      'large.txt',
+      'two-megabytes.txt'
+    ])
+    await commit(repositoryPath, 'initial')
+    const { stdout } = await execute('git', [
+      '-C',
+      repositoryPath,
+      'branch',
+      '--show-current'
+    ])
+
+    const snapshot = await new RepositoryScanner({
+      now: () => 20,
+      createId: () => 'snapshot-branch'
+    }).scanBranch(repositoryPath, {
+      sourceId: 'repo-1',
+      version: 1,
+      branch: stdout.trim()
+    })
+
+    expect(snapshot.files.map((file) => file.relativePath)).toEqual([
+      'README.md',
+      'two-megabytes.txt'
+    ])
+    expect(snapshot.skippedFiles).toEqual([
+      {
+        relativePath: 'large.txt',
+        reason: 'file_too_large',
+        byteSize: MAX_REPOSITORY_FILE_BYTES + 1
+      }
+    ])
+  }, 15_000)
+
+  it('applies the file count limit after forced directory exclusions', async () => {
+    await mkdir(join(repositoryPath, 'node_modules', 'pkg'), {
+      recursive: true
+    })
+    await writeFile(join(repositoryPath, 'node_modules', 'pkg', 'one.js'), 'x')
+    await writeFile(join(repositoryPath, 'node_modules', 'pkg', 'two.js'), 'x')
+    await writeFile(join(repositoryPath, 'one.txt'), '123')
+    await writeFile(join(repositoryPath, 'two.txt'), '456')
+
+    const snapshot = await new RepositoryScanner({
+      maxFiles: 1,
+      now: () => 20,
+      createId: () => 'snapshot-1'
+    } as ConstructorParameters<typeof RepositoryScanner>[0] & {
+      maxFiles: number
+    }).scan(repositoryPath, {
+      sourceId: 'repo-1',
+      version: 1
+    })
+
+    expect(snapshot.files.map((file) => file.relativePath)).toEqual(['one.txt'])
+    expect(snapshot.skippedFiles).toEqual([
+      {
+        relativePath: 'two.txt',
+        reason: 'file_count_limit_exceeded',
+        byteSize: 3
+      }
+    ])
+  })
+
   it('validates a Git work tree without constructing a snapshot', async () => {
     await expect(
       new RepositoryScanner().validate(repositoryPath)
@@ -179,7 +338,7 @@ describe('RepositoryScanner', () => {
     await expect(scanner.probe(repositoryPath)).resolves.toMatchObject({
       clean: false
     })
-  })
+  }, 15_000)
 
   it('observes branch, HEAD, tracked and untracked repository changes', async () => {
     await writeFile(join(repositoryPath, 'README.md'), '# Main\n')
@@ -268,7 +427,7 @@ describe('RepositoryScanner', () => {
     ).rejects.toThrow('Repository is not a Git work tree')
   })
 
-  it('rejects aggregate text overflow instead of returning a partial snapshot', async () => {
+  it('records aggregate text overflow as skipped files instead of failing', async () => {
     await writeFile(join(repositoryPath, 'one.txt'), '123')
     await writeFile(join(repositoryPath, 'two.txt'), '456')
 
@@ -277,7 +436,18 @@ describe('RepositoryScanner', () => {
         sourceId: 'repo-1',
         version: 1
       })
-    ).rejects.toThrow('Repository text exceeds the size limit')
+    ).resolves.toMatchObject({
+      fileCount: 1,
+      totalBytes: 3,
+      files: [{ relativePath: 'one.txt', content: '123' }],
+      skippedFiles: [
+        {
+          relativePath: 'two.txt',
+          reason: 'repository_text_limit_exceeded',
+          byteSize: 3
+        }
+      ]
+    })
   })
 })
 

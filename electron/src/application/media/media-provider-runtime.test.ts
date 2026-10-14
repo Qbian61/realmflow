@@ -75,6 +75,47 @@ describe('MediaProviderRuntime definitions', () => {
     })
     expect(first[0].definitionDigest).toMatch(/^[a-f0-9]{64}$/)
   })
+
+  it('publishes media tools with described strict input and output contracts', async () => {
+    const [definition] = await runtime().definitions(catalog())
+
+    expect(definition.inputSchema).toMatchObject({
+      type: 'object',
+      description: expect.any(String),
+      additionalProperties: false,
+      required: ['prompt'],
+      properties: {
+        prompt: {
+          type: 'string',
+          description: expect.any(String),
+        },
+      },
+    })
+    expect(definition.outputSchema).toMatchObject({
+      type: 'object',
+      description: expect.any(String),
+      additionalProperties: false,
+      required: ['path', 'mediaType', 'sizeBytes', 'provenance'],
+      properties: {
+        path: {
+          type: 'string',
+          description: expect.any(String),
+        },
+        mediaType: {
+          type: 'string',
+          description: expect.any(String),
+        },
+        sizeBytes: {
+          type: 'integer',
+          description: expect.any(String),
+        },
+        provenance: {
+          type: 'object',
+          description: expect.any(String),
+        },
+      },
+    })
+  })
 })
 
 describe('MediaProviderRuntime execution', () => {

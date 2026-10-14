@@ -21,6 +21,22 @@ describe('MainKnowledgeIndexSourceReader', () => {
     })
     await writeFile(path, 'alpha')
     const checksum = digest('alpha')
+    const contentExtractor = {
+      extract: vi.fn().mockResolvedValue({
+        sourceChecksum: checksum,
+        format: 'md',
+        extractorVersion: 'text-v1',
+        units: [
+          {
+            key: 'content',
+            title: 'Notes',
+            text: 'alpha',
+            checksum,
+            byteSize: 5
+          }
+        ]
+      })
+    }
     const reader = new MainKnowledgeIndexSourceReader({
       sources: {
         get: vi.fn().mockResolvedValue({
@@ -51,7 +67,8 @@ describe('MainKnowledgeIndexSourceReader', () => {
           id: 'space-1',
           path: directory
         })
-      } as never
+      } as never,
+      contentExtractor
     })
 
     const snapshot = await reader.readCurrent('source-1')
@@ -72,15 +89,81 @@ describe('MainKnowledgeIndexSourceReader', () => {
       ]
     })
     expect(await reader.isCurrent(snapshot)).toBe(true)
+    expect(contentExtractor.extract).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fileName: 'notes.md',
+        sourceChecksum: checksum,
+        policy: expect.objectContaining({
+          consumer: 'knowledge_index'
+        })
+      })
+    )
 
     await writeFile(path, 'beta')
     expect(await reader.isCurrent(snapshot)).toBe(false)
     await expect(reader.readCurrentIdentity('source-1')).resolves.toEqual({
+      scopeKind: 'workspace',
+      scopeId: 'space-1',
       sourceKind: 'file',
       sourceId: 'source-1',
       sourceRevision: 3,
       sourceVersion: `file:${checksum}`,
       sourceChecksum: checksum
+    })
+  })
+
+  it('classifies invalid UTF-8 local files as unsupported format', async () => {
+    directory = await mkdtemp(join(tmpdir(), 'realmflow-index-reader-'))
+    const relativePath = '.realmflow/knowledge/files/source-1/invalid.txt'
+    const path = join(directory, relativePath)
+    const bytes = Uint8Array.from([0xc3, 0x28])
+    await mkdir(join(directory, '.realmflow/knowledge/files/source-1'), {
+      recursive: true
+    })
+    await writeFile(path, bytes)
+    const checksum = `sha256:${createHash('sha256').update(bytes).digest('hex')}`
+    const reader = new MainKnowledgeIndexSourceReader({
+      sources: {
+        get: vi.fn().mockResolvedValue({
+          id: 'source-1',
+          workspaceId: 'space-1',
+          name: 'Invalid text',
+          type: 'file',
+          revision: 1
+        })
+      },
+      localFiles: {
+        getLocalFileSource: vi.fn().mockResolvedValue({
+          sourceId: 'source-1',
+          workspaceId: 'space-1',
+          storageMode: 'managed_copy',
+          originalPath: '/unused/invalid.txt',
+          managedRelativePath: relativePath,
+          contentChecksum: checksum,
+          byteSize: bytes.byteLength,
+          modifiedAt: 1,
+          checkedAt: 1
+        })
+      } as never,
+      onlineDocuments: {} as never,
+      repositories: {} as never,
+      workspaces: {
+        get: vi.fn().mockResolvedValue({
+          id: 'space-1',
+          path: directory
+        })
+      } as never,
+      contentExtractor: {
+        extract: vi.fn().mockRejectedValue(
+          Object.assign(new Error('Knowledge source format is unsupported'), {
+            code: 'unsupported_format'
+          })
+        )
+      }
+    })
+
+    await expect(reader.readCurrent('source-1')).rejects.toMatchObject({
+      code: 'unsupported_format'
     })
   })
 
@@ -109,8 +192,23 @@ describe('MainKnowledgeIndexSourceReader', () => {
       onlineDocuments: {
         getCurrentOnlineDocumentSnapshot: vi.fn().mockResolvedValue({
           version: 2,
-          content: 'document body',
-          contentChecksum: digest('document body')
+          contentChecksum: digest('document body'),
+          documents: [
+            {
+              unitKey: 'page/000001',
+              title: 'Page 1',
+              content: 'document body',
+              checksum: digest('document body'),
+              byteSize: 13
+            },
+            {
+              unitKey: 'page/000002',
+              title: 'Page 2',
+              content: 'second page',
+              checksum: digest('second page'),
+              byteSize: 11
+            }
+          ]
         })
       } as never,
       repositories: {
@@ -129,6 +227,37 @@ describe('MainKnowledgeIndexSourceReader', () => {
               content: 'export {}',
               contentChecksum: digest('export {}'),
               byteSize: 9
+            },
+            {
+              relativePath: 'docs/brief.pdf',
+              contentChecksum: digest('pdf bytes'),
+              byteSize: 9
+            }
+          ],
+          documents: [
+            {
+              sourcePath: 'README.md',
+              unitKey: 'content',
+              title: 'README.md',
+              content: 'readme',
+              checksum: digest('readme'),
+              byteSize: 6
+            },
+            {
+              sourcePath: 'src/index.ts',
+              unitKey: 'content',
+              title: 'src/index.ts',
+              content: 'export {}',
+              checksum: digest('export {}'),
+              byteSize: 9
+            },
+            {
+              sourcePath: 'docs/brief.pdf',
+              unitKey: 'page/1',
+              title: 'Page 1',
+              content: 'Quarterly report',
+              checksum: digest('Quarterly report'),
+              byteSize: 16
             }
           ]
         })
@@ -142,10 +271,20 @@ describe('MainKnowledgeIndexSourceReader', () => {
       sourceVersion: 'document:2',
       documents: [
         {
-          documentKey: 'content',
+          documentKey: 'page/000001',
           sourceEntityId: 'doc-1',
-          title: 'Design',
-          content: 'document body'
+          title: 'Page 1',
+          content: 'document body',
+          checksum: digest('document body'),
+          byteSize: 13
+        },
+        {
+          documentKey: 'page/000002',
+          sourceEntityId: 'doc-1',
+          title: 'Page 2',
+          content: 'second page',
+          checksum: digest('second page'),
+          byteSize: 11
         }
       ]
     })
@@ -169,6 +308,14 @@ describe('MainKnowledgeIndexSourceReader', () => {
           content: 'export {}',
           checksum: digest('export {}'),
           byteSize: 9
+        },
+        {
+          documentKey: 'docs/brief.pdf#page/1',
+          sourceEntityId: 'repo-1',
+          title: 'Page 1',
+          content: 'Quarterly report',
+          checksum: digest('Quarterly report'),
+          byteSize: 16
         }
       ]
     })
@@ -204,6 +351,24 @@ describe('MainKnowledgeIndexSourceReader', () => {
               contentChecksum: digest('export {}'),
               byteSize: 9
             }
+          ],
+          documents: [
+            {
+              sourcePath: '.env.production',
+              unitKey: 'content',
+              title: '.env.production',
+              content: 'API_KEY=body-canary',
+              checksum: digest('API_KEY=body-canary'),
+              byteSize: 19
+            },
+            {
+              sourcePath: 'src/index.ts',
+              unitKey: 'content',
+              title: 'src/index.ts',
+              content: 'export {}',
+              checksum: digest('export {}'),
+              byteSize: 9
+            }
           ]
         })
       } as never,
@@ -235,7 +400,11 @@ describe('MainKnowledgeIndexSourceReader', () => {
         },
         workspaceId: 'space-1'
       }),
-      readContent: vi.fn().mockResolvedValue('accepted design')
+      readSource: vi.fn().mockResolvedValue({
+        bytes: new TextEncoder().encode('accepted design'),
+        fileName: 'artifacts/design.md',
+        mimeType: 'text/markdown'
+      })
     }
     const reader = new MainKnowledgeIndexSourceReader({
       sources: {} as never,
@@ -243,7 +412,23 @@ describe('MainKnowledgeIndexSourceReader', () => {
       onlineDocuments: {} as never,
       repositories: {} as never,
       workspaces: {} as never,
-      artifacts
+      artifacts,
+      contentExtractor: {
+        extract: vi.fn().mockResolvedValue({
+          sourceChecksum: digest('accepted design'),
+          format: 'md',
+          extractorVersion: 'text-v1',
+          units: [
+            {
+              key: 'content',
+              title: 'design.md',
+              text: 'accepted design',
+              checksum: digest('accepted design'),
+              byteSize: 15
+            }
+          ]
+        })
+      }
     })
 
     const snapshot = await reader.readFrozen({
@@ -261,10 +446,12 @@ describe('MainKnowledgeIndexSourceReader', () => {
       sourceChecksum: digest('accepted design'),
       documents: [
         {
-          documentKey: 'artifacts/design.md',
+          documentKey: 'content',
           sourceEntityId: 'artifact-1',
-          title: 'artifacts/design.md',
-          content: 'accepted design'
+          title: 'design.md',
+          content: 'accepted design',
+          checksum: digest('accepted design'),
+          byteSize: 15
         }
       ]
     })

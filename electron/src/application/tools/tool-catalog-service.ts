@@ -8,7 +8,7 @@ import type {
 } from '../../../../domain/tool-catalog'
 import type { ToolDefinition } from '../../../../domain/tool-definition'
 import type { RegisteredSkill } from '../../../../domain/skill-registry'
-import { isToolVersionInRange } from '../../../../domain/skill-definition'
+import { requiredToolDependencyIssues } from '../../../../domain/skill-definition'
 import {
   requireBoolean,
   requireEnum,
@@ -18,6 +18,11 @@ import type { ToolEventStore } from './tool-event-store'
 import type { ToolProjectionRunner } from './tool-projection-runner'
 import type { ToolProjectionStore } from './tool-projection-store'
 import { projectModelFacingToolCatalog } from './tool-model-facing-projection'
+import {
+  assertToolCatalogPackageVersionContract,
+  assertToolCatalogTargetContract,
+  filterContractValidCatalog,
+} from './tool-catalog-contract-validator'
 
 const ACTIVATION_STREAM_ID = 'extension-catalog-activation'
 const PACKAGE_VERSION_STREAM_ID = 'extension-catalog-package-version'
@@ -86,9 +91,19 @@ export class ToolCatalogService {
     const mediaDefinitions = query.modelFacingMode === undefined
       ? []
       : await this.dependencies.mediaRuntime?.definitions(withRegistry) ?? []
+    const withMedia = mergeMediaDefinitions(
+      withRegistry,
+      mediaDefinitions,
+      this.now(),
+    )
+    if (query.modelFacingMode === undefined) {
+      return withMedia
+    }
+    const contractValid =
+      filterContractValidCatalog(withMedia)
     return projectModelFacingToolCatalog(
-      mergeMediaDefinitions(withRegistry, mediaDefinitions, this.now()),
-      query.modelFacingMode ?? 'direct'
+      contractValid,
+      query.modelFacingMode
     )
   }
 
@@ -112,7 +127,13 @@ export class ToolCatalogService {
       'Tool Catalog activation'
     )
     validateIdempotencyKey(command.idempotencyKey)
-    await this.assertTargetExists(targetType, targetId)
+    const catalog = await this.list()
+    if (!findTarget(catalog, targetType, targetId)) {
+      throw new Error('Tool Catalog target not found')
+    }
+    if (enabled) {
+      assertToolCatalogTargetContract(catalog, targetType, targetId)
+    }
 
     const fingerprint = createHash('sha256')
       .update(JSON.stringify({ targetType, targetId, enabled }))
@@ -193,7 +214,8 @@ export class ToolCatalogService {
       'Tool Catalog package version operation'
     )
     validateIdempotencyKey(command.idempotencyKey)
-    const target = (await this.list()).packages.find(
+    const catalog = await this.list()
+    const target = catalog.packages.find(
       (item) =>
         item.packageId === packageId &&
         item.version === targetVersion
@@ -201,6 +223,12 @@ export class ToolCatalogService {
     if (!target) {
       throw new Error('Tool Catalog package version is unavailable')
     }
+    assertToolCatalogPackageVersionContract(
+      catalog,
+      packageId,
+      targetVersion,
+      target.packageDigest,
+    )
     const fingerprint = createHash('sha256')
       .update(
         JSON.stringify({
@@ -278,16 +306,6 @@ export class ToolCatalogService {
     return selected
   }
 
-  private async assertTargetExists(
-    targetType: ToolCatalogTargetType,
-    targetId: string
-  ): Promise<void> {
-    const catalog = await this.list()
-    if (!findTarget(catalog, targetType, targetId)) {
-      throw new Error('Tool Catalog target not found')
-    }
-  }
-
   private async catchUpProjection(): Promise<void> {
     while (
       (await this.dependencies.projectionRunner.runCatalogBatch(
@@ -357,25 +375,18 @@ function mergeRegistrySkills(
       item,
     ]),
   )
-  const enabledTools = catalog.tools.filter(({ status }) => status === 'enabled')
+  const enabledTools = catalog.tools
+    .filter(({ status }) => status === 'enabled')
+    .map(({ definition }) => definition)
   const skills: SkillCatalogItem[] = registered.map((item) => {
     const definition = item.version.definition
     const packageItem = packageByVersion.get(
       `${definition.package.packageId}@${definition.package.packageVersion}`,
     )
-    const dependencyIssues = definition.requiredTools
-      .filter(
-        (dependency) =>
-          dependency.required &&
-          !enabledTools.some(
-            ({ id, version, status }) =>
-              status === 'enabled' &&
-              id === dependency.toolId &&
-              isToolVersionInRange(version, dependency.versionRange),
-          ),
-      )
-      .map(({ toolId }) => toolId)
-      .sort()
+    const dependencyIssues = requiredToolDependencyIssues(
+      definition.requiredTools,
+      enabledTools,
+    )
     const status: SkillCatalogItem['status'] =
       !item.present
         ? 'unavailable'

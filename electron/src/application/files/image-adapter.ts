@@ -193,6 +193,49 @@ export class SharpImageAdapter {
       }
     }
   }
+
+  async renderForOcr(
+    content: Uint8Array,
+    declaredFormat: ImageFormat,
+    maxDimension = 2_000
+  ): Promise<{ content: Buffer; width: number; height: number }> {
+    if (
+      !Number.isSafeInteger(maxDimension) ||
+      maxDimension < 64 ||
+      maxDimension > 2_400
+    ) {
+      throw new ImageAdapterError(
+        'image_render_limit_invalid',
+        'Image OCR render dimension is invalid'
+      )
+    }
+    await this.inspect(content, declaredFormat)
+    const rendered = await sharp(Buffer.from(content), {
+      animated: false,
+      page: 0
+    })
+      .autoOrient()
+      .resize({
+        width: maxDimension,
+        height: maxDimension,
+        fit: 'inside',
+        withoutEnlargement: true
+      })
+      .png()
+      .toBuffer()
+    const metadata = await sharp(rendered).metadata()
+    if (!metadata.width || !metadata.height) {
+      throw new ImageAdapterError(
+        'image_metadata_invalid',
+        'Image OCR dimensions are unavailable'
+      )
+    }
+    return {
+      content: rendered,
+      width: metadata.width,
+      height: metadata.height
+    }
+  }
 }
 
 export function sanitizeSvg(content: Uint8Array): Buffer {
@@ -222,7 +265,11 @@ function inspectSvgNode(value: unknown): void {
   for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
     const normalized = key.toLowerCase()
     const localName = normalized.split(':').at(-1) ?? normalized
-    if (localName === 'script' || normalized.startsWith('@_on')) {
+    if (
+      localName === 'script' ||
+      localName === 'foreignobject' ||
+      normalized.startsWith('@_on')
+    ) {
       throw unsafeSvg()
     }
     if (

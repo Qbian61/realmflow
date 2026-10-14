@@ -46,6 +46,9 @@
     },
     {
       "path": "tools/builtin-pdf-save.json"
+    },
+    {
+      "path": "tools/builtin-pdf-save_as.json"
     }
   ],
   "skills": [],

@@ -1,5 +1,10 @@
 import { createHash } from 'node:crypto'
 import {
+  CONTENT_EXTRACTION_LIMITS
+} from '../../../../domain/content-extraction'
+import type { LocalContentExtractionService } from '../content-extraction/local-content-extraction-service'
+import { mapExtractedAttachmentToContextSources } from './context-attachment-extraction-adapter'
+import {
   CONTEXT_SNAPSHOT_POLICY_VERSION,
   type ContextSnapshot,
   type ContextSource
@@ -83,7 +88,14 @@ export type ContextAssemblerDependencies = {
     read: (
       requirementId: string,
       path: string
-    ) => Promise<{ version: number; content: string }>
+    ) => Promise<{
+      version: number
+      bytes: Uint8Array
+      fileName: string
+      mimeType?: string
+      sourceChecksum: string
+    }>
+    extract: Pick<LocalContentExtractionService, 'extract'>['extract']
   }
 }
 
@@ -156,21 +168,18 @@ export class ContextAssembler {
         Promise.all(
           input.attachmentPaths.map(async (path) =>
             isSensitiveAttachmentPath(path)
-              ? {
-                  path,
-                  version: 0,
-                  content: '',
-                  exclusionReason: 'sensitive_file' as const
-                }
-              : {
-                  path,
-                  ...(await this.dependencies.attachments.read(
-                    input.requirement.id,
-                    path
-                  ))
-                }
+              ? [
+                  {
+                    kind: 'attachment' as const,
+                    id: path,
+                    version: 0,
+                    content: '',
+                    exclusionReason: 'sensitive_file' as const
+                  }
+                ]
+              : await this.extractAttachment(input.requirement.id, path)
           )
-        )
+        ).then((sources) => sources.flat())
       ])
 
     const pending: PendingSource[] = [
@@ -283,22 +292,37 @@ export class ContextAssembler {
           : { fusionRank: chunk.fusionRank }),
         content: formatSection('Knowledge snippet', [chunk.content])
       })),
-      ...attachments.map((attachment) => ({
-        kind: 'attachment' as const,
-        id: attachment.path,
-        version: attachment.version,
-        content: attachment.exclusionReason
-          ? ''
-          : formatSection(`Attachment: ${attachment.path}`, [
-              attachment.content
-            ]),
-        ...(attachment.exclusionReason
-          ? { exclusionReason: attachment.exclusionReason }
-          : {})
-      }))
+      ...attachments
     ]
 
     return createSnapshot(pending, input.maxCharacters)
+  }
+
+  private async extractAttachment(
+    requirementId: string,
+    path: string
+  ): Promise<PendingSource[]> {
+    const source = await this.dependencies.attachments.read(requirementId, path)
+    const bundle = await this.dependencies.attachments.extract({
+      bytes: source.bytes,
+      fileName: source.fileName,
+      ...(source.mimeType ? { mimeType: source.mimeType } : {}),
+      sourceChecksum: source.sourceChecksum,
+      signal: new AbortController().signal,
+      depth: 0,
+      policy: {
+        consumer: 'context_attachment',
+        allowLocalOcr: true,
+        allowLocalConversion: true,
+        maxCharacters: CONTENT_EXTRACTION_LIMITS.maxExtractedCharacters,
+        maxUnits: CONTENT_EXTRACTION_LIMITS.maxArchiveEntries
+      }
+    })
+    return mapExtractedAttachmentToContextSources({
+      path,
+      version: source.version,
+      bundle
+    })
   }
 }
 

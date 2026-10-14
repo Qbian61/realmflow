@@ -9,17 +9,19 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DocumentExtractionError } from '../../../../domain/document-text-extraction'
+import { ContentExtractionError } from '../../../../domain/content-extraction'
 import type { JsonObject } from '../../../../domain/tool-protocol-validation'
-import type { DocumentTextExtractor } from '../documents/local-document-text-extractor'
+import type { LocalContentExtractionService } from '../content-extraction/local-content-extraction-service'
 import type { DocumentDeliveryService } from '../files/document-delivery-service'
+import type { PdfGenerationService } from '../files/pdf-generation-service'
 import { createDocumentToolHandlers } from './builtin-document-tool-handlers'
 
 describe('builtin document Tool handlers', () => {
   let temporaryDirectory: string
   let rootPath: string
-  let extractor: DocumentTextExtractor
+  let extractor: Pick<LocalContentExtractionService, 'extract'>
   let delivery: Pick<DocumentDeliveryService, 'create' | 'exportPdf' | 'verify'>
+  let pdfGeneration: Pick<PdfGenerationService, 'generate'>
 
   beforeEach(async () => {
     temporaryDirectory = await mkdtemp(join(tmpdir(), 'realmflow-documents-'))
@@ -27,10 +29,19 @@ describe('builtin document Tool handlers', () => {
     await mkdir(rootPath)
     extractor = {
       extract: vi.fn().mockResolvedValue({
-        text: 'Senior backend engineer',
-        extraction: 'docx',
-        characterCount: 23,
-        truncated: false
+        sourceChecksum: `sha256:${'a'.repeat(64)}`,
+        format: 'docx',
+        extractorVersion: 'docx-v1',
+        units: [
+          {
+            key: 'content',
+            title: 'resume.docx',
+            text: 'Senior backend engineer',
+            checksum: `sha256:${'b'.repeat(64)}`,
+            byteSize: 23,
+            metadata: { format: 'docx', extraction: 'docx' }
+          }
+        ]
       })
     }
     delivery = {
@@ -56,6 +67,31 @@ describe('builtin document Tool handlers', () => {
         verified: true
       })
     }
+    pdfGeneration = {
+      generate: vi.fn().mockResolvedValue({
+        requestId: 'correlation-1',
+        idempotencyFingerprint: `sha256:${'c'.repeat(64)}`,
+        status: 'succeeded',
+        artifact: {
+          path: 'resume.pdf',
+          format: 'pdf',
+          byteSize: 4096,
+          checksum: `sha256:${'d'.repeat(64)}`,
+          pageCount: 2,
+          backend: 'chromium_html_pdf',
+          quality: 'visual_print',
+          warnings: []
+        },
+        route: {
+          selectedBackend: 'chromium_html_pdf',
+          quality: 'visual_print',
+          degraded: false,
+          reasons: ['source_html_requires_chromium'],
+          warnings: []
+        },
+        completedAt: 300
+      })
+    }
   })
 
   afterEach(async () => {
@@ -70,16 +106,37 @@ describe('builtin document Tool handlers', () => {
       run({ path: 'resume.docx', maxCharacters: 20_000 })
     ).resolves.toEqual({
       path: 'resume.docx',
-      text: 'Senior backend engineer',
-      extraction: 'docx',
+      format: 'docx',
+      extractorVersion: 'docx-v1',
       characterCount: 23,
-      truncated: false
+      unitCount: 1,
+      units: [
+        {
+          key: 'content',
+          title: 'resume.docx',
+          text: 'Senior backend engineer',
+          checksum: `sha256:${'b'.repeat(64)}`,
+          byteSize: 23,
+          metadata: { format: 'docx', extraction: 'docx' }
+        }
+      ],
+      nextUnitOffset: null
     })
-    expect(extractor.extract).toHaveBeenCalledWith({
-      bytes: Uint8Array.from(bytes),
-      fileName: 'resume.docx',
-      maxCharacters: 20_000
-    })
+    expect(extractor.extract).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bytes: Uint8Array.from(bytes),
+        fileName: 'resume.docx',
+        sourceChecksum: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+        depth: 0,
+        policy: {
+          consumer: 'tool',
+          allowLocalOcr: true,
+          allowLocalConversion: true,
+          maxCharacters: 200_000,
+          maxUnits: 1_000
+        }
+      })
+    )
   })
 
   it('rejects path traversal and symbolic-link escapes', async () => {
@@ -104,39 +161,58 @@ describe('builtin document Tool handlers', () => {
 
     await run({ path: 'resume.docx' })
     expect(extractor.extract).toHaveBeenCalledWith(
-      expect.objectContaining({ maxCharacters: 100_000 })
+      expect.objectContaining({
+        policy: expect.objectContaining({ maxCharacters: 200_000 })
+      })
     )
     await expect(
       run({ path: 'resume.docx', maxCharacters: 999 })
     ).rejects.toThrow('Document Tool maxCharacters is invalid')
   })
 
-  it('forwards a stable continuation chunk identifier', async () => {
+  it('pages stable extracted units without reparsing', async () => {
     const bytes = Buffer.from('%PDF-1.7')
-    const chunkId = `${'a'.repeat(64)}:chunk:2`
     await writeFile(join(rootPath, 'long.pdf'), bytes)
-
-    await run({ path: 'long.pdf', chunkId })
-
-    expect(extractor.extract).toHaveBeenCalledWith({
-      bytes: Uint8Array.from(bytes),
-      fileName: 'long.pdf',
-      maxCharacters: 100_000,
-      chunkId
+    vi.mocked(extractor.extract).mockResolvedValue({
+      sourceChecksum: `sha256:${'a'.repeat(64)}`,
+      format: 'pdf',
+      extractorVersion: 'pdf-v1',
+      units: Array.from({ length: 3 }, (_, index) => ({
+        key: `page/${String(index + 1).padStart(6, '0')}`,
+        title: `Page ${index + 1}`,
+        text: `page-${index + 1}`,
+        checksum: `sha256:${String(index + 1).padStart(64, '0')}`,
+        byteSize: 6,
+        metadata: {
+          format: 'pdf',
+          extraction: 'pdf',
+          page: index + 1
+        }
+      }))
     })
+
+    await expect(
+      run({ path: 'long.pdf', unitOffset: 1, maxUnits: 1 })
+    ).resolves.toMatchObject({
+      unitCount: 3,
+      units: [{ key: 'page/000002', text: 'page-2' }],
+      nextUnitOffset: 2
+    })
+
+    expect(extractor.extract).toHaveBeenCalledOnce()
   })
 
   it('preserves stable extraction errors for the Tool adapter', async () => {
     await writeFile(join(rootPath, 'resume.pdf'), '%PDF-1.7')
     vi.mocked(extractor.extract).mockRejectedValue(
-      new DocumentExtractionError(
-        'tool_document_encrypted',
+      new ContentExtractionError(
+        'extraction_encrypted',
         'Document is encrypted'
       )
     )
 
     await expect(run({ path: 'resume.pdf' })).rejects.toMatchObject({
-      code: 'tool_document_encrypted',
+      code: 'extraction_encrypted',
       message: 'Document is encrypted'
     })
   })
@@ -220,14 +296,61 @@ describe('builtin document Tool handlers', () => {
     })
   })
 
+  it('delivers HTML PDF through PdfGenerationService with visual verification options', async () => {
+    const signal = new AbortController().signal
+
+    await expect(
+      run(
+        {
+          outputPath: 'resume.pdf',
+          expectedAbsent: true,
+          source: {
+            kind: 'html',
+            html: '<h1>简历</h1>',
+            title: '简历'
+          },
+          qualityPolicy: 'require_print_layout',
+          requireRenderSmokeTest: true
+        },
+        'document.deliver_pdf',
+        signal
+      )
+    ).resolves.toMatchObject({
+      path: 'resume.pdf',
+      format: 'pdf',
+      backend: 'chromium_html_pdf',
+      quality: 'visual_print'
+    })
+    expect(pdfGeneration.generate).toHaveBeenCalledWith(
+      {
+        requestId: 'correlation-1',
+        scopeRoot: await realpath(rootPath),
+        outputPath: 'resume.pdf',
+        expectedAbsent: true,
+        source: {
+          kind: 'html',
+          html: '<h1>简历</h1>',
+          title: '简历'
+        },
+        qualityPolicy: 'require_print_layout',
+        verification: {
+          requireRenderSmokeTest: true
+        }
+      },
+      signal
+    )
+  })
+
   async function run(
     arguments_: JsonObject,
     name = 'documents.read',
     signal = new AbortController().signal
   ) {
-    const handler = createDocumentToolHandlers({ extractor, delivery }).find(
-      (candidate) => candidate.name === name
-    )
+    const handler = createDocumentToolHandlers({
+      extractor,
+      delivery,
+      pdfGeneration
+    }).find((candidate) => candidate.name === name)
     if (!handler) throw new Error(`Missing ${name} handler`)
     return handler.execute({
       arguments: arguments_,

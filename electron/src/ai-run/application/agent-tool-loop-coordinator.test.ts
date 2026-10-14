@@ -1,3 +1,7 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import Ajv2020 from 'ajv/dist/2020.js'
 import { vi } from 'vitest'
 import type { AiRunEvent } from '../../../../domain/ai-run'
 import { createRunCheckpoint } from '../../../../domain/agent-run-recovery'
@@ -15,7 +19,9 @@ import type { SkillDefinition } from '../../../../domain/skill-definition'
 import type { ToolDefinition } from '../../../../domain/tool-definition'
 import {
   createCapabilityDefinition,
-  createCapabilityInstallation
+  createCapabilityInstallation,
+  type CapabilityDefinition,
+  type CapabilityInstallation
 } from '../../../../domain/capability'
 import { SkillRuntimeApplicationService } from '../../application/tools/skill-runtime-application-service'
 import { projectModelFacingToolCatalog } from '../../application/tools/tool-model-facing-projection'
@@ -126,6 +132,27 @@ const createDocumentDefinition: ToolDefinition = {
   },
 }
 
+const gitStatusDefinition: ToolDefinition = {
+  ...definition,
+  id: 'builtin.git.status',
+  version: '1.0.1',
+  definitionDigest: 'f'.repeat(64),
+  name: 'Git status',
+  description: 'Read repository working tree status.',
+  tags: ['git'],
+  executor: {
+    kind: 'builtin',
+    handler: 'git.status',
+    handlerVersion: '1.0.0',
+  },
+  capabilities: ['repository.read'],
+  effects: ['local_data.read'],
+  discovery: {
+    intents: ['git status'],
+    contexts: ['general', 'space', 'requirement', 'workflow', 'schedule'],
+  },
+}
+
 const skillDefinition: SkillDefinition = {
   schemaVersion: 1,
   id: 'builtin.skill.code_review',
@@ -143,6 +170,7 @@ const skillDefinition: SkillDefinition = {
   runtime: { kind: 'instruction' },
   inputSchema: { type: 'object' },
   outputSchema: { type: 'object' },
+  examples: [{}],
   requiredTools: [
     {
       toolId: definition.id,
@@ -210,20 +238,29 @@ describe('AgentToolLoopCoordinator', () => {
       )
       .map(({ function: tool }) => tool.parameters)
     expect(runtimeSchemas).toHaveLength(3)
-    expect(JSON.stringify(runtimeSchemas)).not.toMatch(
-      /"allOf"|"anyOf"|"oneOf"|"if"|"then"|"else"|"not"/
+    const ajv = new Ajv2020({ strict: true })
+    const goalSchema = runtimeSchemas.find((schema) =>
+      JSON.stringify(schema).includes('"get"')
     )
-    expect(
-      runtimeSchemas.find((schema) =>
-        JSON.stringify(schema).includes('"get"')
-      )
-    ).toMatchObject({
+    expect(goalSchema).toMatchObject({
       type: 'object',
-      required: ['action'],
-      properties: {
-        action: { enum: ['get', 'update'] }
-      }
+      oneOf: expect.any(Array)
     })
+    const validateGoal = ajv.compile(goalSchema!)
+    expect(validateGoal({ action: 'get' })).toBe(true)
+    expect(validateGoal({ action: 'update' })).toBe(false)
+    expect(validateGoal({
+      action: 'update',
+      objective: 'Ship F03',
+      status: 'active',
+      expectedRevision: 0
+    })).toBe(true)
+
+    const automationSchema = runtimeSchemas.find((schema) =>
+      JSON.stringify(schema).includes('"create_proposal"')
+    )
+    const validateAutomation = ajv.compile(automationSchema!)
+    expect(validateAutomation({ action: 'create_proposal' })).toBe(false)
   })
 
   it('loads a selected Skill when only its optional tool is denied', async () => {
@@ -1189,6 +1226,70 @@ describe('AgentToolLoopCoordinator', () => {
     )
   })
 
+  it('does not advertise Git tools inside a folder that is not a repository', async () => {
+    const folder = await mkdtemp(join(tmpdir(), 'realmflow-agent-non-git-'))
+    try {
+      const createRun = vi.fn().mockResolvedValue({ runId: 'run-folder-git' })
+      const coordinator = new AgentToolLoopCoordinator({
+        gateway: {
+          createRun,
+          cancelRun: vi.fn(),
+          submitToolResult: vi.fn(),
+          streamEvents: vi.fn(),
+        },
+        catalog: {
+          list: vi.fn().mockResolvedValue({
+            packages: [],
+            tools: [
+              {
+                kind: 'tool',
+                id: definition.id,
+                version: definition.version,
+                definitionDigest: definition.definitionDigest,
+                definition,
+                enabledPreference: true,
+                status: 'enabled',
+                dependencyIssues: [],
+                revision: 1,
+                updatedAt: 1,
+              },
+              {
+                kind: 'tool',
+                id: gitStatusDefinition.id,
+                version: gitStatusDefinition.version,
+                definitionDigest: gitStatusDefinition.definitionDigest,
+                definition: gitStatusDefinition,
+                enabledPreference: true,
+                status: 'enabled',
+                dependencyIssues: [],
+                revision: 1,
+                updatedAt: 1,
+              },
+            ],
+            skills: [],
+          }),
+        },
+        tools: { execute: vi.fn() },
+      })
+
+      await coordinator.createRun({
+        conversationId: 'conversation-folder-git',
+        folderPath: folder,
+        messages: [{ role: 'user', content: 'Check git status' }],
+      })
+
+      const names = createRun.mock.calls[0]?.[2]?.tools.map(
+        (tool: { function: { name: string } }) => tool.function.name,
+      )
+      expect(names).toContain(`rf_files_read_${digest.slice(0, 8)}`)
+      expect(names).not.toContain(
+        `rf_builtin_git_status_${gitStatusDefinition.definitionDigest.slice(0, 8)}`,
+      )
+    } finally {
+      await rm(folder, { recursive: true, force: true })
+    }
+  })
+
   it('defers enabled Connector actions in the active scope behind directory controls', async () => {
     const createRun = vi.fn().mockResolvedValue({ runId: 'run-connector' })
     const connector = createCapabilityDefinition({
@@ -1290,6 +1391,80 @@ describe('AgentToolLoopCoordinator', () => {
       'rf_delegate_research',
     ])
     expect(createRun.mock.calls[0]?.[0]?.systemPrompt).toContain('com.example.docs.search')
+  })
+
+  it('does not expose Connector actions when required credential handles are missing', async () => {
+    const createRun = vi.fn().mockResolvedValue({ runId: 'run-connector-missing-credential' })
+    const connector = connectorCapability(['docs-token'])
+    const installation = connectorInstallation(connector)
+    const resolveHandle = vi.fn().mockResolvedValue(undefined)
+    const coordinator = new AgentToolLoopCoordinator({
+      gateway: {
+        createRun,
+        cancelRun: vi.fn(),
+        submitToolResult: vi.fn(),
+        streamEvents: vi.fn()
+      },
+      catalog: {
+        list: vi.fn().mockResolvedValue({
+          packages: [],
+          tools: [],
+          skills: []
+        })
+      },
+      capabilities: {
+        resolve: vi.fn().mockResolvedValue([{ definition: connector, installation }])
+      },
+      connectorCredentials: { resolveHandle },
+      tools: { execute: vi.fn() }
+    })
+
+    await coordinator.createRun({
+      conversationId: 'conversation-secure-docs',
+      workspaceId: 'workspace-1',
+      messages: [{ role: 'user', content: 'Search docs' }]
+    })
+
+    expect(resolveHandle).toHaveBeenCalledWith('docs-token', installation)
+    expect(createRun.mock.calls[0]?.[0]?.systemPrompt)
+      .not.toContain('com.example.secure_docs.search')
+  })
+
+  it('exposes Connector actions again after required credential handles resolve', async () => {
+    const createRun = vi.fn().mockResolvedValue({ runId: 'run-connector-ready-credential' })
+    const connector = connectorCapability(['docs-token'])
+    const installation = connectorInstallation(connector)
+    const coordinator = new AgentToolLoopCoordinator({
+      gateway: {
+        createRun,
+        cancelRun: vi.fn(),
+        submitToolResult: vi.fn(),
+        streamEvents: vi.fn()
+      },
+      catalog: {
+        list: vi.fn().mockResolvedValue({
+          packages: [],
+          tools: [],
+          skills: []
+        })
+      },
+      capabilities: {
+        resolve: vi.fn().mockResolvedValue([{ definition: connector, installation }])
+      },
+      connectorCredentials: {
+        resolveHandle: vi.fn().mockResolvedValue('credential-handle')
+      },
+      tools: { execute: vi.fn() }
+    })
+
+    await coordinator.createRun({
+      conversationId: 'conversation-secure-docs',
+      workspaceId: 'workspace-1',
+      messages: [{ role: 'user', content: 'Search docs' }]
+    })
+
+    expect(createRun.mock.calls[0]?.[0]?.systemPrompt)
+      .toContain('com.example.secure_docs.search')
   })
 
   it('discovers all enabled Tools and Skills for a workflow node', async () => {
@@ -3127,7 +3302,7 @@ describe('AgentToolLoopCoordinator', () => {
     )
   })
 
-  it('automatically retries transient provider failures before failing the task', async () => {
+  it('does not automatically resume after gateway-exhausted provider failures', async () => {
     const resumeRun = vi
       .fn()
       .mockResolvedValue({ runId: 'provider-retry-2' })
@@ -3138,11 +3313,17 @@ describe('AgentToolLoopCoordinator', () => {
           yield event(1, 'run.failed', {
             errorCode: 'provider_unavailable',
             message: 'Provider request failed',
+            retryable: true,
+            retryCount: 2,
           })
           return
         }
-        yield event(1, 'answer.delta', { delta: 'Recovered' })
-        yield event(2, 'run.completed')
+        yield event(1, 'run.failed', {
+          errorCode: 'provider_unavailable',
+          message: 'Provider request failed',
+          retryable: true,
+          retryCount: 2,
+        })
       },
     )
     const coordinator = new AgentToolLoopCoordinator({
@@ -3192,23 +3373,20 @@ describe('AgentToolLoopCoordinator', () => {
       observed.push(item)
     }
 
-    expect(resumeRun).toHaveBeenCalledOnce()
-    expect(bindProviderAttempt).toHaveBeenCalledWith(
-      created.runId,
-      'provider-retry-2',
-      expect.stringMatching(/^[a-f0-9]{64}$/),
-      500,
-    )
-    expect(
-      observed.some(
-        (item) =>
-          item.type === 'run.failed' &&
-          item.data.errorCode === 'provider_unavailable',
-      ),
-    ).toBe(false)
+    expect(resumeRun).not.toHaveBeenCalled()
+    expect(bindProviderAttempt).not.toHaveBeenCalled()
+    expect(observed.map(({ type }) => type)).not.toContain('run.resumed')
     expect(observed.map(({ type }) => type)).toEqual(
-      expect.arrayContaining(['run.retrying', 'run.resumed', 'run.completed']),
+      expect.arrayContaining(['run.failed']),
     )
+    expect(observed.at(-1)).toMatchObject({
+      type: 'run.failed',
+      data: {
+        errorCode: 'provider_unavailable',
+        retryable: true,
+        retryCount: 2,
+      },
+    })
   })
 
   it('completes with a degraded artifact conclusion when the provider fails after generated artifacts are ready', async () => {
@@ -3345,13 +3523,8 @@ describe('AgentToolLoopCoordinator', () => {
       observed.push(item)
     }
 
-    expect(resumeRun).toHaveBeenCalledOnce()
-    expect(bindProviderAttempt).toHaveBeenCalledWith(
-      created.runId,
-      'provider-artifact-2',
-      expect.stringMatching(/^[a-f0-9]{64}$/),
-      550,
-    )
+    expect(resumeRun).not.toHaveBeenCalled()
+    expect(bindProviderAttempt).not.toHaveBeenCalled()
     expect(observed.some((item) => item.type === 'run.failed')).toBe(false)
     expect(observed.slice(-2).map(({ type }) => type)).toEqual([
       'answer.delta',
@@ -3626,6 +3799,15 @@ describe('AgentToolLoopCoordinator', () => {
   it('stops before executing a third equivalent Tool request', async () => {
     const cancelRun = vi.fn().mockResolvedValue(undefined)
     const submitToolResult = vi.fn().mockResolvedValue(undefined)
+    const execute = vi.fn().mockResolvedValue({
+      outcome: 'executed',
+      execution: {
+        id: 'execution-loop-read',
+        status: 'succeeded',
+        output: { content: 'same' },
+      },
+    })
+    const callName = `rf_files_read_${definition.definitionDigest.slice(0, 8)}`
     const coordinator = new AgentToolLoopCoordinator({
       gateway: {
         createRun: vi.fn().mockResolvedValue({ runId: 'provider-loop' }),
@@ -3638,17 +3820,17 @@ describe('AgentToolLoopCoordinator', () => {
               toolCall: {
                 index: 0,
                 id: `call-loop-${index}`,
-                name: 'rf_unknown_deadbeef',
+                name: callName,
                 arguments: '{"path":"same.txt"}',
               },
             })
-            yield event(index * 2, 'tool.call.failed', {
+            yield event(index * 2, 'tool.call.completed', {
               agentTurn: index,
               toolResult: {
                 callId: `call-loop-${index}`,
-                status: 'failed',
-                errorCode: 'tool_not_found',
-                message: 'Tool is unavailable',
+                status: 'completed',
+                output: { content: 'same' },
+                toolExecutionId: `execution-loop-read-${index}`,
               },
             })
           }
@@ -3657,11 +3839,24 @@ describe('AgentToolLoopCoordinator', () => {
       catalog: {
         list: vi.fn().mockResolvedValue({
           packages: [],
-          tools: [],
+          tools: [
+            {
+              kind: 'tool',
+              id: definition.id,
+              version: definition.version,
+              definitionDigest: definition.definitionDigest,
+              definition,
+              enabledPreference: true,
+              status: 'enabled',
+              dependencyIssues: [],
+              revision: 1,
+              updatedAt: 1,
+            },
+          ],
           skills: [],
         }),
       },
-      tools: { execute: vi.fn() },
+      tools: { execute },
       runtimeRuns: {
         create: vi.fn(),
         bindProviderRun: vi.fn(),
@@ -3682,6 +3877,7 @@ describe('AgentToolLoopCoordinator', () => {
 
     const created = await coordinator.createRun({
       conversationId: 'conversation-loop',
+      folderPath: '/workspace',
       messages: [{ role: 'user', content: 'Avoid loops' }],
     })
     const observed: AiRunEvent[] = []
@@ -3692,6 +3888,7 @@ describe('AgentToolLoopCoordinator', () => {
       observed.push(item)
     }
 
+    expect(execute).toHaveBeenCalledTimes(2)
     expect(submitToolResult).toHaveBeenCalledTimes(2)
     expect(cancelRun).toHaveBeenCalledWith('provider-loop')
     expect(observed.at(-2)).toMatchObject({
@@ -3704,6 +3901,133 @@ describe('AgentToolLoopCoordinator', () => {
       type: 'run.waiting_input',
       data: { recoveryReason: 'repeated_tool_call' },
     })
+  })
+
+  it('stops after repeated deterministic failures even when argument values change', async () => {
+    const cancelRun = vi.fn().mockResolvedValue(undefined)
+    const submitToolResult = vi.fn().mockResolvedValue(undefined)
+    const execute = vi.fn().mockResolvedValue({
+      outcome: 'executed',
+      execution: {
+        id: 'execution-invalid-arguments',
+        status: 'failed',
+        error: {
+          code: 'tool_arguments_invalid',
+          message: 'sourceKinds must use repository for code search',
+          retryable: false,
+        },
+      },
+    })
+    const callName = `rf_files_read_${definition.definitionDigest.slice(0, 8)}`
+    const coordinator = new AgentToolLoopCoordinator({
+      gateway: {
+        createRun: vi.fn().mockResolvedValue({ runId: 'provider-deterministic-loop' }),
+        cancelRun,
+        submitToolResult,
+        streamEvents: vi.fn().mockImplementation(async function* () {
+          yield event(1, 'tool.call.requested', {
+            agentTurn: 1,
+            toolCall: {
+              index: 0,
+              id: 'call-invalid-1',
+              name: callName,
+              arguments: '{"query":"first","sourceKinds":["code"]}',
+            },
+          })
+          yield event(2, 'tool.call.failed', {
+            agentTurn: 1,
+            toolResult: {
+              callId: 'call-invalid-1',
+              status: 'failed',
+              errorCode: 'tool_arguments_invalid',
+              message: 'sourceKinds must use repository for code search',
+              toolExecutionId: 'execution-invalid-1',
+            },
+          })
+          yield event(3, 'tool.call.requested', {
+            agentTurn: 2,
+            toolCall: {
+              index: 0,
+              id: 'call-invalid-2',
+              name: callName,
+              arguments: '{"query":"second","sourceKinds":["code"]}',
+            },
+          })
+          yield event(4, 'tool.call.failed', {
+            agentTurn: 2,
+            toolResult: {
+              callId: 'call-invalid-2',
+              status: 'failed',
+              errorCode: 'tool_arguments_invalid',
+              message: 'sourceKinds must use repository for code search',
+              toolExecutionId: 'execution-invalid-2',
+            },
+          })
+          yield event(5, 'run.completed')
+        }),
+      },
+      catalog: {
+        list: vi.fn().mockResolvedValue({
+          packages: [],
+          tools: [
+            {
+              kind: 'tool',
+              id: definition.id,
+              version: definition.version,
+              definitionDigest: definition.definitionDigest,
+              definition,
+              enabledPreference: true,
+              status: 'enabled',
+              dependencyIssues: [],
+              revision: 1,
+              updatedAt: 1,
+            },
+          ],
+          skills: [],
+        }),
+      },
+      tools: { execute },
+      runtimeRuns: {
+        create: vi.fn(),
+        bindProviderRun: vi.fn(),
+        transition: vi.fn(),
+        getByProviderRunId: vi.fn(),
+        listByRootRunId: vi.fn(),
+        listByParentRunId: vi.fn(),
+        listUnfinished: vi.fn(),
+      },
+      checkpoints: {
+        save: vi.fn().mockResolvedValue(true),
+        getLatest: vi.fn(),
+        list: vi.fn(),
+      },
+      createRuntimeRunId: () => 'agent-deterministic-loop',
+      now: () => 750,
+    })
+
+    const created = await coordinator.createRun({
+      conversationId: 'conversation-deterministic-loop',
+      folderPath: '/workspace',
+      messages: [{ role: 'user', content: 'Avoid deterministic loops' }],
+    })
+    const observed: AiRunEvent[] = []
+    for await (const item of coordinator.streamEvents(
+      created.runId,
+      new AbortController().signal,
+    )) {
+      observed.push(item)
+    }
+
+    expect(execute).toHaveBeenCalledTimes(2)
+    expect(cancelRun).toHaveBeenCalledWith('provider-deterministic-loop')
+    expect(observed.at(-1)).toMatchObject({
+      type: 'run.waiting_input',
+      data: {
+        recoveryReason: 'deterministic_tool_failure',
+        recoveryActions: ['resume', 'cancel'],
+      },
+    })
+    expect(observed.some((item) => item.type === 'run.completed')).toBe(false)
   })
 
   it('stops after the first non-retryable capability failure with a specific Tool result', async () => {
@@ -4887,4 +5211,81 @@ function runEvent(
     timestamp: new Date(sequence).toISOString(),
     data,
   }
+}
+
+function connectorCapability(
+  credentialRefs: string[] = [],
+): CapabilityDefinition {
+  return createCapabilityDefinition({
+    id: 'com.example.secure_docs',
+    kind: 'connector',
+    version: '1.0.0',
+    source: 'local_upload',
+    manifestDigest: '9'.repeat(64),
+    name: 'Secure docs',
+    description: 'Search secured documentation.',
+    runtime: {
+      kind: 'connector',
+      connectorKind: 'http',
+      credentialRefs,
+      configurationSchema: { type: 'object' },
+      actions: [
+        {
+          id: 'search',
+          name: 'Search secure docs',
+          description: 'Search secured documentation.',
+          operation: 'read',
+          inputSchema: {
+            type: 'object',
+            properties: { query: { type: 'string' } },
+            required: ['query'],
+          },
+          outputSchema: { type: 'object' },
+          risk: 'low',
+          effects: ['external.read'],
+          timeoutMs: 5_000,
+          maxOutputBytes: 16_384,
+          protocol: {
+            kind: 'http',
+            baseUrl: 'https://secure-docs.example.com',
+            method: 'GET',
+            pathTemplate: '/search',
+            authentication: { type: 'bearer', credentialRef: credentialRefs[0] ?? '' },
+            allowedRedirectOrigins: [],
+          },
+        },
+      ],
+    },
+    permissions: {
+      capabilities: ['network.connect', 'connector.use'],
+      maximumRisk: 'low',
+      pathPrefixes: [],
+      networkTargets: ['https://secure-docs.example.com'],
+    },
+    dependencies: [],
+    compatibility: {
+      realmflowVersionRange: '>=0.1.0',
+      platforms: ['darwin'],
+    },
+    testPlan: [],
+    publishedAt: 100,
+  })
+}
+
+function connectorInstallation(
+  definition: CapabilityDefinition,
+): CapabilityInstallation {
+  return createCapabilityInstallation({
+    id: 'installation.secure-docs',
+    capabilityId: definition.id,
+    capabilityVersion: definition.version,
+    capabilityDigest: definition.definitionDigest,
+    scope: { kind: 'workspace', workspaceId: 'workspace-1' },
+    enabled: true,
+    permissionCeiling: definition.permissions,
+    status: 'enabled',
+    revision: 1,
+    installedAt: 100,
+    updatedAt: 100,
+  })
 }

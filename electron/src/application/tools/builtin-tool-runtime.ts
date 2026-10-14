@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import {
   BuiltinToolAdapter,
   type BuiltinToolHandlerInput
@@ -7,8 +8,9 @@ import {
   type FileToolDependencies
 } from './builtin-file-tool-handlers'
 import { createDocumentToolHandlers } from './builtin-document-tool-handlers'
-import type { DocumentTextExtractor } from '../documents/local-document-text-extractor'
+import type { LocalContentExtractionService } from '../content-extraction/local-content-extraction-service'
 import type { DocumentDeliveryService } from '../files/document-delivery-service'
+import type { PdfGenerationService } from '../files/pdf-generation-service'
 import type { LocalSpreadsheetSessionService } from '../files/local-spreadsheet-session-service'
 import { createSpreadsheetToolHandlers } from './builtin-spreadsheet-tool-handlers'
 import type { LocalWordSessionService } from '../files/local-word-session-service'
@@ -33,6 +35,7 @@ import {
   createGitToolHandlers,
   type GitCommandPort
 } from './builtin-git-tool-handlers'
+import { GitCommandRepositoryResolver } from './git-repository-resolver'
 import {
   createProcessToolHandlers,
   type ManagedProcessPort
@@ -57,7 +60,8 @@ export const APPLICATION_TOOL_HANDLER_NAMES = [
   'realmflow.artifacts.read',
   'knowledge.search',
   'knowledge.source.read',
-  'knowledge.note.save',
+  'knowledge.note.create',
+  'knowledge.note.edit',
   'knowledge.index.refresh',
   'attachment.read_chunk'
 ] as const
@@ -96,8 +100,9 @@ export type BuiltinToolRuntimeDependencies = {
   ) => Promise<string> | string
   files: FileToolDependencies
   documents: {
-    extractor: DocumentTextExtractor
+    extractor: Pick<LocalContentExtractionService, 'extract'>
     delivery: Pick<DocumentDeliveryService, 'create' | 'exportPdf' | 'verify'>
+    pdfGeneration?: Pick<PdfGenerationService, 'generate'>
   }
   spreadsheets: {
     sessions: Pick<
@@ -117,8 +122,9 @@ export type BuiltinToolRuntimeDependencies = {
   pdf: {
     sessions: Pick<
       LocalPdfSessionService,
-      'open' | 'thumbnail' | 'ocr' | 'mutate' | 'save'
+      'open' | 'thumbnail' | 'ocr' | 'mutate' | 'save' | 'exportRevision'
     >
+    pdfGeneration?: Pick<PdfGenerationService, 'generate'>
   }
   presentations: {
     sessions: Pick<
@@ -153,6 +159,9 @@ export type BuiltinToolRuntimeDependencies = {
 export function createBuiltinToolAdapter(
   dependencies: BuiltinToolRuntimeDependencies
 ): BuiltinToolAdapter {
+  const gitRepositoryResolver = new GitCommandRepositoryResolver(
+    dependencies.git
+  )
   const applicationHandlers = APPLICATION_TOOL_HANDLER_NAMES.map((name) => ({
     name,
     version: '1.0.0',
@@ -177,7 +186,7 @@ export function createBuiltinToolAdapter(
       ...createOfficeReadOnlyToolHandlers(dependencies.officeReadOnly),
       ...createArchiveToolHandlers(dependencies.archives),
       ...createFixedLayoutToolHandlers(dependencies.fixedLayout),
-      ...createGitToolHandlers(dependencies.git),
+      ...createGitToolHandlers(dependencies.git, gitRepositoryResolver),
       ...createProcessToolHandlers(dependencies.processes),
       ...createBrowserToolHandlers(dependencies.browser),
       ...createWebToolHandlers(
@@ -186,24 +195,13 @@ export function createBuiltinToolAdapter(
             ? (handle, revision) =>
                 dependencies.web!.resolveCredential(handle, revision)
             : undefined
-        }),
-        dependencies.browser?.ensureCurrentSession &&
-          dependencies.browser.executeCurrent
-          ? {
-              ensureCurrentSession:
-                dependencies.browser.ensureCurrentSession.bind(
-                  dependencies.browser
-                ),
-              executeCurrent: dependencies.browser.executeCurrent.bind(
-                dependencies.browser
-              )
-            }
-          : undefined
+        })
       ),
       ...applicationHandlers
     ],
     {
       protectedRoots: dependencies.protectedRoots,
+      gitRepositoryResolver,
       resolveSessionPath: dependencies.resolveSessionPath,
       ...(dependencies.processes.describeManaged ? {
         managedProcesses: { describeManaged: input => dependencies.processes.describeManaged!(input) }
@@ -228,6 +226,12 @@ function scopedApplicationInput(
 ): BuiltinToolHandlerInput {
   const modelArguments = { ...input.arguments }
   for (const key of CONTEXT_ARGUMENT_KEYS) delete modelArguments[key]
+  if (name === 'knowledge.note.create') {
+    return knowledgeNoteCreateInput(input, modelArguments)
+  }
+  if (name === 'knowledge.note.edit') {
+    return knowledgeNoteEditInput(input, modelArguments)
+  }
   const scopedInput = {
     ...input,
     arguments: {
@@ -260,9 +264,9 @@ function scopedApplicationInput(
   }
   if (name === 'knowledge.source.read') return scopedInput
   return {
-    ...scopedInput,
+    ...input,
     arguments: {
-      ...scopedInput.arguments,
+      ...knowledgeSearchModelArguments(modelArguments),
       scope: {
         kind: 'workspace',
         workspaceId: input.context.workspaceId
@@ -271,6 +275,74 @@ function scopedApplicationInput(
         ? { requirementId: input.context.requirementId }
         : {})
     }
+  }
+}
+
+function knowledgeNoteCreateInput(
+  input: BuiltinToolHandlerInput,
+  args: JsonObject
+): BuiltinToolHandlerInput {
+  if (
+    !input.context.workspaceId ||
+    !input.context.conversationId ||
+    input.context.scheduleRunId
+  ) {
+    throw new Error('Knowledge Note conversation is unavailable')
+  }
+  return {
+    ...input,
+    arguments: {
+      id: stableKnowledgeNoteId('knowledge-note', input),
+      versionId: stableKnowledgeNoteId('knowledge-note-version', input),
+      workspaceId: input.context.workspaceId,
+      sessionId: input.context.conversationId,
+      ...(args.kind === undefined ? {} : { kind: args.kind }),
+      ...(args.sourceMessageIds === undefined
+        ? {}
+        : { sourceMessageIds: args.sourceMessageIds }),
+      ...(args.title === undefined ? {} : { title: args.title }),
+      ...(args.content === undefined ? {} : { content: args.content })
+    }
+  }
+}
+
+function knowledgeNoteEditInput(
+  input: BuiltinToolHandlerInput,
+  args: JsonObject
+): BuiltinToolHandlerInput {
+  return {
+    ...input,
+    arguments: {
+      ...(args.noteId === undefined ? {} : { noteId: args.noteId }),
+      ...(args.expectedRevision === undefined
+        ? {}
+        : { expectedRevision: args.expectedRevision }),
+      versionId: stableKnowledgeNoteId('knowledge-note-version', input),
+      ...(args.title === undefined ? {} : { title: args.title }),
+      ...(args.content === undefined ? {} : { content: args.content })
+    }
+  }
+}
+
+function stableKnowledgeNoteId(
+  prefix: 'knowledge-note' | 'knowledge-note-version',
+  input: BuiltinToolHandlerInput
+): string {
+  const seed = input.idempotencyKey ?? input.executionId
+  if (!seed) throw new Error('Knowledge Note idempotency key is unavailable')
+  return `${prefix}-${createHash('sha256')
+    .update(`${prefix}:${seed}`)
+    .digest('hex')
+    .slice(0, 24)}`
+}
+
+function knowledgeSearchModelArguments(
+  args: JsonObject
+): JsonObject {
+  return {
+    ...(args.query === undefined ? {} : { query: args.query }),
+    ...(args.topK === undefined ? {} : { topK: args.topK }),
+    ...(args.sourceKinds === undefined ? {} : { sourceKinds: args.sourceKinds })
   }
 }
 

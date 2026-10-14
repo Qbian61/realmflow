@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.knowledge.search",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "name": "Search knowledge",
   "description": "Search within the persisted knowledge scope.",
   "tags": [
@@ -19,12 +19,20 @@
       "query": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 2000
+        "maxLength": 2000,
+        "description": "Search or match query supplied by the user or current task.",
+        "examples": [
+          "release notes"
+        ]
       },
       "topK": {
         "type": "integer",
         "minimum": 1,
-        "maximum": 20
+        "maximum": 20,
+        "description": "Maximum number of ranked knowledge results returned.",
+        "examples": [
+          5
+        ]
       },
       "sourceKinds": {
         "type": "array",
@@ -39,13 +47,31 @@
             "conversation_note",
             "decision",
             "retrospective"
+          ],
+          "examples": [
+            "file"
           ]
         },
-        "uniqueItems": true
+        "uniqueItems": true,
+        "description": "Knowledge source kinds to include. repository means indexed code repository content; code is not a valid sourceKind.",
+        "examples": [
+          [
+            "file"
+          ]
+        ]
       }
     },
     "required": [
       "query"
+    ],
+    "examples": [
+      {
+        "query": "release notes",
+        "topK": 5,
+        "sourceKinds": [
+          "file"
+        ]
+      }
     ]
   },
   "outputSchema": {

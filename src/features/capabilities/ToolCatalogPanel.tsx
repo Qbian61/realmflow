@@ -430,7 +430,10 @@ function CatalogRow({
             className={`tool-catalog-status status-${status}`}
             tone={statusTone(status)}
           >
-            {status === "corrupted" || status === "dependency_disabled" ? (
+            {status === "corrupted" ||
+            status === "dependency_disabled" ||
+            status === "degraded" ||
+            status === "unavailable" ? (
               <AlertTriangle size={12} />
             ) : null}
             {statusLabel(status, t)}
@@ -529,11 +532,19 @@ function toolExtraDetails(
   item: ToolCatalogToolDto,
   t: ReturnType<typeof useLocalization>["t"],
 ): string[] {
+  const runtimeDetails =
+    item.runtimeEligibility && item.runtimeEligibility.status !== "ready"
+      ? [
+          item.runtimeEligibility.reasonCode,
+          item.runtimeEligibility.dependencyRevision,
+        ]
+      : [];
   if (item.modelFacing?.kind === "facade") {
     return [
       t("capabilities.catalogView.maxRisk", {
         risk: item.modelFacing.maxRisk,
       }),
+      ...runtimeDetails,
     ];
   }
   if (item.modelFacing?.kind === "primitive" && item.modelFacing.facadeId) {
@@ -541,9 +552,10 @@ function toolExtraDetails(
       t("capabilities.catalogView.facadeBackedBy", {
         facadeId: item.modelFacing.facadeId,
       }),
+      ...runtimeDetails,
     ];
   }
-  return [];
+  return runtimeDetails;
 }
 
 function visibilityLabel(
@@ -564,10 +576,14 @@ function statusTone(
   status: string,
 ): "neutral" | "success" | "warning" | "danger" {
   if (status === "enabled" || status === "active") return "success";
-  if (status === "corrupted" || status === "dependency_disabled") {
+  if (
+    status === "corrupted" ||
+    status === "dependency_disabled" ||
+    status === "unavailable"
+  ) {
     return "danger";
   }
-  if (status === "disabled") return "neutral";
+  if (status === "disabled" || status === "superseded") return "neutral";
   return "warning";
 }
 
@@ -660,6 +676,12 @@ function statusLabel(
   if (status === "dependency_disabled") {
     return t("capabilities.status.dependencyDisabled");
   }
+  if (status === "degraded") return t("capabilities.status.degraded");
+  if (status === "unavailable") return t("capabilities.status.unavailable");
+  if (status === "pending_review") {
+    return t("capabilities.status.pendingReview");
+  }
+  if (status === "rejected") return t("capabilities.status.rejected");
   if (status === "superseded") {
     return t("capabilities.status.superseded");
   }

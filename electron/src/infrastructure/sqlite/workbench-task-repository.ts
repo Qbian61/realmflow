@@ -566,6 +566,19 @@ export class SqliteWorkbenchTaskRepository
     query: TaskTableQuery = {}
   ): WorkbenchTaskTableSnapshot {
     const table = this.getTaskTableSync(tableId)
+    const page = parsePage(query.page)
+    const pageSize = 100 as const
+    const offset = (page - 1) * pageSize
+    if (isDefaultRecordView(table.viewState)) {
+      return {
+        table,
+        records: this.listRecordPageSync(tableId, pageSize, offset),
+        total: table.recordCount,
+        page,
+        pageSize,
+        groupTree: []
+      }
+    }
     const fields = new Map(table.fields.map((field) => [field.id, field]))
     const filtered = this.listRecordsSync(tableId)
       .filter((record) =>
@@ -576,9 +589,6 @@ export class SqliteWorkbenchTaskRepository
       .sort((left, right) =>
         compareTaskRecords(left, right, table.viewState)
       )
-    const page = parsePage(query.page)
-    const pageSize = 100 as const
-    const offset = (page - 1) * pageSize
     return {
       table,
       records: filtered.slice(offset, offset + pageSize),
@@ -592,6 +602,25 @@ export class SqliteWorkbenchTaskRepository
       )
     }
   }
+  private listRecordPageSync(
+    tableId: string,
+    limit: number,
+    offset: number
+  ): WorkbenchTaskRecord[] {
+    return (
+      this.database
+        .prepare(
+          `SELECT id, table_id, values_json, position,
+                  revision, created_at, updated_at
+           FROM workbench_task_records
+           WHERE table_id = ? AND deleted_at IS NULL
+           ORDER BY position, id
+           LIMIT ? OFFSET ?`
+        )
+        .all(tableId, limit, offset) as RecordRow[]
+    ).map(mapRecord)
+  }
+
 
   private getTaskTableSync(tableId: string): WorkbenchTaskTable {
     const row = this.getTableRow(tableId)
@@ -832,6 +861,12 @@ export class SqliteWorkbenchTaskRepository
       throw new Error('Invalid task view state: unknown field')
     }
   }
+}
+
+function isDefaultRecordView(viewState: TaskViewState): boolean {
+  return viewState.filters.length === 0 &&
+    viewState.sorts.length === 0 &&
+    viewState.groups.length === 0
 }
 
 function mapField(row: FieldRow): WorkbenchTaskField {

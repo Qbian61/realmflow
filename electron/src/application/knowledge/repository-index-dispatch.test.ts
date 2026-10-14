@@ -97,6 +97,16 @@ function repositoryResult(
                 byteSize: 8
               }
             ],
+            documents: [
+              {
+                sourcePath: 'README.md',
+                unitKey: 'content',
+                title: 'README.md',
+                content: '# Readme',
+                checksum: `sha256:${'b'.repeat(64)}`,
+                byteSize: 8
+              }
+            ],
             scannedAt: 2
           }
         }

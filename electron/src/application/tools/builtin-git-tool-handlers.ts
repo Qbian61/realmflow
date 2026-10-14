@@ -9,6 +9,11 @@ import {
   securePaths,
   selectRoot
 } from './builtin-file-tool-support'
+import {
+  GitCommandRepositoryResolver,
+  type GitRepositoryResolverPort,
+  gitCommandFailed
+} from './git-repository-resolver'
 
 const VERSION = '1.0.0'
 const MAX_OUTPUT_BYTES = 4 * 1024 * 1024
@@ -31,31 +36,35 @@ export type GitCommandPort = {
 }
 
 export function createGitToolHandlers(
-  command: GitCommandPort
+  command: GitCommandPort,
+  repositoryResolver: GitRepositoryResolverPort = new GitCommandRepositoryResolver(
+    command
+  )
 ): BuiltinToolHandler[] {
   const handlers: Record<
     string,
     (input: BuiltinToolHandlerInput) => Promise<JsonObject>
   > = {
     'git.status': (input) =>
-      runQuery(command, input, [
+      runQuery(command, repositoryResolver, input, [
         'status',
         '--short',
         '--branch',
         '--untracked-files=all'
       ]),
-    'git.diff': (input) => runDiff(command, input),
-    'git.log': (input) => runLog(command, input),
+    'git.diff': (input) => runDiff(command, repositoryResolver, input),
+    'git.log': (input) => runLog(command, repositoryResolver, input),
     'git.list_branches': (input) =>
-      runQuery(command, input, [
+      runQuery(command, repositoryResolver, input, [
         'branch',
         '--all',
         '--no-color',
         '--format=%(refname)%09%(objectname)%09%(HEAD)'
       ]),
-    'git.show': (input) => runShow(command, input),
-    'git.file_history': (input) => runFileHistory(command, input),
-    'git.commit': (input) => commit(command, input)
+    'git.show': (input) => runShow(command, repositoryResolver, input),
+    'git.file_history': (input) =>
+      runFileHistory(command, repositoryResolver, input),
+    'git.commit': (input) => commit(command, repositoryResolver, input)
   }
   return Object.entries(handlers).map(([name, execute]) => ({
     name,
@@ -66,6 +75,7 @@ export function createGitToolHandlers(
 
 async function runDiff(
   command: GitCommandPort,
+  repositoryResolver: GitRepositoryResolverPort,
   input: BuiltinToolHandlerInput
 ): Promise<JsonObject> {
   const staged = input.arguments.staged ?? false
@@ -73,7 +83,7 @@ async function runDiff(
     throw new Error('Git Tool staged is invalid')
   }
   const path = optionalPath(input.arguments, 'path')
-  return runQuery(command, input, [
+  return runQuery(command, repositoryResolver, input, [
     'diff',
     '--no-ext-diff',
     ...(staged ? ['--cached'] : []),
@@ -83,10 +93,11 @@ async function runDiff(
 
 async function runLog(
   command: GitCommandPort,
+  repositoryResolver: GitRepositoryResolverPort,
   input: BuiltinToolHandlerInput
 ): Promise<JsonObject> {
   const maximum = requireInteger(input.arguments, 'maxCount', 50, 500)
-  return runQuery(command, input, [
+  return runQuery(command, repositoryResolver, input, [
     'log',
     '--format=%H%x09%an%x09%aI%x09%s',
     '--no-color',
@@ -96,13 +107,14 @@ async function runLog(
 
 async function runShow(
   command: GitCommandPort,
+  repositoryResolver: GitRepositoryResolverPort,
   input: BuiltinToolHandlerInput
 ): Promise<JsonObject> {
   const reference = requireString(input.arguments, 'ref')!
   if (reference.startsWith('-') || reference.includes('\0')) {
     throw new Error('Git Tool ref is invalid')
   }
-  return runQuery(command, input, [
+  return runQuery(command, repositoryResolver, input, [
     'show',
     '--no-ext-diff',
     '--no-color',
@@ -113,11 +125,12 @@ async function runShow(
 
 async function runFileHistory(
   command: GitCommandPort,
+  repositoryResolver: GitRepositoryResolverPort,
   input: BuiltinToolHandlerInput
 ): Promise<JsonObject> {
   const path = optionalPath(input.arguments, 'path', false)!
   const maximum = requireInteger(input.arguments, 'maxCount', 50, 500)
-  return runQuery(command, input, [
+  return runQuery(command, repositoryResolver, input, [
     'log',
     '--format=%H%x09%an%x09%aI%x09%s',
     '--no-color',
@@ -129,6 +142,7 @@ async function runFileHistory(
 
 async function commit(
   command: GitCommandPort,
+  repositoryResolver: GitRepositoryResolverPort,
   input: BuiltinToolHandlerInput
 ): Promise<JsonObject> {
   const message = requireString(input.arguments, 'message')!.trim()
@@ -136,7 +150,7 @@ async function commit(
     throw new Error('Git Tool message is invalid')
   }
   const files = normalizeFiles(input.arguments.files)
-  const cwd = await repositoryRoot(input)
+  const cwd = await repositoryRoot(input, repositoryResolver)
   await requireSuccess(
     command.run({
       executable: 'git',
@@ -167,6 +181,7 @@ async function commit(
 
 async function runQuery(
   command: GitCommandPort,
+  repositoryResolver: GitRepositoryResolverPort,
   input: BuiltinToolHandlerInput,
   arguments_: string[]
 ): Promise<JsonObject> {
@@ -174,7 +189,7 @@ async function runQuery(
     command.run({
       executable: 'git',
       arguments: arguments_,
-      cwd: await repositoryRoot(input),
+      cwd: await repositoryRoot(input, repositoryResolver),
       signal: input.signal,
       maxOutputBytes: MAX_OUTPUT_BYTES
     })
@@ -182,11 +197,19 @@ async function runQuery(
 }
 
 async function repositoryRoot(
-  input: BuiltinToolHandlerInput
+  input: BuiltinToolHandlerInput,
+  repositoryResolver: GitRepositoryResolverPort
 ): Promise<string> {
-  return securePaths.canonicalizeDirectory(
+  const selectedRoot = await securePaths.canonicalizeDirectory(
     selectRoot(input.scopeRoots, input.arguments)
   )
+  return (
+    await repositoryResolver.resolve({
+      selectedRoot,
+      authorizedRoots: input.scopeRoots,
+      signal: input.signal
+    })
+  ).repositoryRoot
 }
 
 function optionalPath(
@@ -221,9 +244,7 @@ async function requireSuccess(
 ): Promise<GitCommandResult & JsonObject> {
   const result = await promise
   if (result.exitCode !== 0) {
-    throw new Error(
-      result.stderr.trim().slice(0, 500) || 'Git Tool command failed'
-    )
+    throw gitCommandFailed()
   }
   return result
 }

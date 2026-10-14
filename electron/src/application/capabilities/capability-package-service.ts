@@ -16,7 +16,9 @@ import {
   createCapabilityDefinition,
   type CapabilityDefinition
 } from '../../../../domain/capability'
+import type { CapabilityValidationReport } from '../../../../domain/capability-builder'
 import type { PendingManagedDirectory } from '../ports/business-repositories'
+import { CapabilityContractValidator } from './capability-contract-validator'
 
 const DEFAULT_MAX_FILES = 1_000
 const DEFAULT_MAX_FILE_BYTES = 16 * 1024 * 1024
@@ -55,15 +57,7 @@ export type CapabilityPackageManifestSource = Omit<
   schemaVersion: 1
 }
 
-export type CapabilityPackageValidationReport = {
-  compatible: true
-  dependencyStatus: 'resolved'
-  tests: Array<{
-    id: string
-    status: 'passed'
-    detail?: string
-  }>
-}
+export type CapabilityPackageValidationReport = CapabilityValidationReport
 
 export type PreparedCapabilityPackage = {
   definition: CapabilityDefinition
@@ -101,6 +95,7 @@ type CapabilityPackageServiceOptions = {
   maxFileBytes?: number
   maxTotalBytes?: number
   maxCompressionRatio?: number
+  contractValidator?: Pick<CapabilityContractValidator, 'assert'>
 }
 
 type PackageFile = {
@@ -120,6 +115,10 @@ export class CapabilityPackageService {
   private readonly maxFileBytes: number
   private readonly maxTotalBytes: number
   private readonly maxCompressionRatio: number
+  private readonly contractValidator: Pick<
+    CapabilityContractValidator,
+    'assert'
+  >
 
   constructor(private readonly options: CapabilityPackageServiceOptions) {
     this.packagesRoot = join(options.userDataPath, 'capabilities')
@@ -130,6 +129,8 @@ export class CapabilityPackageService {
     this.maxTotalBytes = options.maxTotalBytes ?? DEFAULT_MAX_TOTAL_BYTES
     this.maxCompressionRatio =
       options.maxCompressionRatio ?? DEFAULT_MAX_COMPRESSION_RATIO
+    this.contractValidator =
+      options.contractValidator ?? new CapabilityContractValidator()
     this.extractArchive =
       options.extractArchive ??
       ((sourcePath, targetPath) =>
@@ -194,6 +195,7 @@ export class CapabilityPackageService {
       }
       this.assertCompatible(definition)
       await this.assertRuntimeResources(stagingPath, definition)
+      const contract = this.assertContract(definition)
       await this.options.resolveDependencies?.(
         definition.dependencies,
         definition
@@ -210,6 +212,7 @@ export class CapabilityPackageService {
         validationReport: {
           compatible: true,
           dependencyStatus: 'resolved',
+          contract,
           tests
         },
         source: {
@@ -473,6 +476,22 @@ export class CapabilityPackageService {
     }
     return results
   }
+
+  private assertContract(
+    definition: CapabilityDefinition
+  ): CapabilityValidationReport['contract'] {
+    try {
+      return this.contractValidator.assert(definition)
+    } catch (error) {
+      throw new Error(`Capability contract failed: ${stableError(error)}`)
+    }
+  }
+}
+
+function stableError(error: unknown): string {
+  return error instanceof Error
+    ? error.message.slice(0, 500)
+    : 'Capability contract is invalid'
 }
 
 function assertManifestPackagePaths(

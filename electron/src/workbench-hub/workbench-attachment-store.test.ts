@@ -190,6 +190,29 @@ describe('workbench attachment store', () => {
     )
   })
 
+  it('returns immutable bytes and metadata for shared local extraction', async () => {
+    const sourcePath = join(directory, 'brief.pdf')
+    const bytes = Buffer.from('%PDF-1.7')
+    await writeFile(sourcePath, bytes)
+    const store = new WorkbenchAttachmentStore(database, rootPath, {
+      createId: () => 'extractable-1',
+      now: () => 123
+    })
+    const attachment = await store.importFromPath({
+      sourcePath,
+      ownerType: 'memo',
+      ownerId: 'memo-1'
+    })
+
+    await expect(store.readForExtraction(attachment.id)).resolves.toEqual({
+      bytes: Uint8Array.from(bytes),
+      fileName: 'brief.pdf',
+      mimeType: 'application/pdf',
+      sourceChecksum: `sha256:${attachment.checksumSha256}`,
+      version: 123
+    })
+  })
+
   it('removes the temporary file when the database insert fails', async () => {
     const sourcePath = join(directory, 'duplicate.txt')
     await writeFile(sourcePath, 'duplicate')

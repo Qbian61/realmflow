@@ -10,12 +10,44 @@
   },
   "inputSchema": {
     "type": "object",
-    "additionalProperties": true
+    "description": "Inputs for invoking the Knowledge curation Skill.",
+    "required": [
+      "task"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "task": {
+        "type": "string",
+        "description": "The user-visible task or workflow objective for the Skill.",
+        "minLength": 1
+      },
+      "context": {
+        "type": "string",
+        "description": "Optional local context that narrows the requested work.",
+        "minLength": 1
+      }
+    }
   },
   "outputSchema": {
     "type": "object",
-    "additionalProperties": true
+    "description": "Structured result produced by the Knowledge curation Skill.",
+    "required": [
+      "summary"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "summary": {
+        "type": "string",
+        "description": "Concise outcome summary for the completed Skill run.",
+        "minLength": 1
+      }
+    }
   },
+  "examples": [
+    {
+      "task": "Run knowledge curation for the current request."
+    }
+  ],
   "requiredTools": [
     {
       "toolId": "builtin.knowledge.search",
@@ -23,7 +55,12 @@
       "required": true
     },
     {
-      "toolId": "builtin.knowledge.note.save",
+      "toolId": "builtin.knowledge.note.create",
+      "versionRange": "^1.0.0",
+      "required": true
+    },
+    {
+      "toolId": "builtin.knowledge.note.edit",
       "versionRange": "^1.0.0",
       "required": true
     },

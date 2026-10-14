@@ -33,6 +33,52 @@ describe('HttpConnectorAdapter', () => {
     expect(result.output).toEqual({ items: [{ id: 'doc-1' }] })
   })
 
+  it('encodes path parameters in the URL and remaining POST arguments in the request body', async () => {
+    const requestConnector = vi.fn(async () => ({
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: new TextEncoder().encode('{"id":"doc-1"}'),
+      retryCount: 0
+    }))
+    const value = snapshot()
+    value.action.protocol = {
+      kind: 'http',
+      baseUrl: 'https://docs.example.com',
+      method: 'POST',
+      pathTemplate: '/v1/{collection}/documents',
+      authentication: { type: 'bearer', credentialRef: 'token' },
+      allowedRedirectOrigins: []
+    }
+    const adapter = new HttpConnectorAdapter({
+      network: { requestConnector },
+      resolveCredential: async () => 'secret-token'
+    })
+
+    await adapter.invoke({
+      snapshot: value,
+      arguments: {
+        collection: 'guides',
+        title: 'Runtime safety',
+        labels: ['contracts', 'connectors']
+      },
+      correlationId: 'run-1',
+      causationId: 'call-1'
+    })
+
+    expect(requestConnector).toHaveBeenCalledWith(
+      expect.objectContaining({
+        connectorId: 'installation-http',
+        url: 'https://docs.example.com/v1/guides/documents',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: 'Runtime safety',
+          labels: ['contracts', 'connectors']
+        })
+      })
+    )
+  })
+
   it('rejects a target outside the effective network allowlist', async () => {
     const requestConnector = vi.fn()
     const value = snapshot()

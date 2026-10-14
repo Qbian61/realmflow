@@ -63,6 +63,16 @@ export type ToolExecutionError = {
   code: string
   message: string
   retryable: boolean
+  publicMessage?: string
+  category?:
+    | 'transient'
+    | 'invalid_input'
+    | 'unavailable'
+    | 'scope'
+    | 'conflict'
+    | 'internal'
+  recoveryHint?: string
+  diagnosticId?: string
   details?: JsonObject
 }
 

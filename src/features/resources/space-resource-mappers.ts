@@ -45,6 +45,7 @@ export function mapBusinessResource(
     createdAt: resource.createdAt,
     updatedAt: resource.updatedAt,
     refresh: resource.refresh,
-    index: resource.index
+    index: resource.index,
+    repository: resource.repository
   }
 }

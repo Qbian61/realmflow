@@ -180,6 +180,60 @@ describe('LocalImageSessionService', () => {
     })
   })
 
+  it('OCRs immutable image bytes without opening a session', async () => {
+    const recognize = vi.fn().mockResolvedValue({
+      language: 'eng',
+      blocks: [
+        {
+          text: 'RealmFlow',
+          confidence: 0.98,
+          bounds: { x: 4, y: 6, width: 20, height: 8 }
+        }
+      ]
+    })
+    const renderForOcr = vi.fn().mockResolvedValue({
+      content: Buffer.from('first-frame-png'),
+      width: 40,
+      height: 30
+    })
+    const storage = memoryStorage(Buffer.from('stored'))
+    const service = serviceWith({
+      storage,
+      adapter: {
+        inspect: vi.fn().mockResolvedValue(inspection()),
+        transform: vi.fn(),
+        renderForOcr
+      },
+      localOcr: { recognize }
+    })
+
+    await expect(
+      service.ocrBytes(
+        Uint8Array.from(Buffer.from('gif-bytes')),
+        'animated.gif',
+        'gif',
+        signal(),
+        { language: 'eng' }
+      )
+    ).resolves.toMatchObject({
+      language: 'eng',
+      blocks: [{ text: 'RealmFlow' }]
+    })
+    expect(renderForOcr).toHaveBeenCalledWith(
+      expect.any(Uint8Array),
+      'gif',
+      undefined
+    )
+    expect(recognize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: Buffer.from('first-frame-png'),
+        sourcePath: 'animated.gif'
+      }),
+      expect.any(AbortSignal)
+    )
+    expect(storage.read).not.toHaveBeenCalled()
+  })
+
   it('does not send image bytes to model vision without an explicit grant', async () => {
     const modelVision = {
       recognize: vi.fn().mockResolvedValue({

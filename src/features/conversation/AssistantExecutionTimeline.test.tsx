@@ -169,7 +169,7 @@ describe('AssistantExecutionTimeline', () => {
     ).toBeInTheDocument()
   })
 
-  it('hides recovered failed attempts from completed run details', () => {
+  it('keeps unrelated failed tool calls visible after later successful tool calls', () => {
     render(
       <AssistantExecutionTimeline
         execution={projection({
@@ -210,13 +210,99 @@ describe('AssistantExecutionTimeline', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: '任务耗时 2.9 秒' }))
-    expect(screen.getByText('执行 1 条命令')).toBeInTheDocument()
+    expect(screen.getByText('执行 2 条命令')).toBeInTheDocument()
+    expect(screen.getByText('操作 2 次文件')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /^执行详情/ }))
+    expect(screen.getByText('Tool execution failed')).toBeInTheDocument()
+    expect(
+      screen.getByText('Path is outside the bound workspace')
+    ).toBeInTheDocument()
+  })
+
+  it('shows terminal run errors even when execution details are present', () => {
+    render(
+      <AssistantExecutionTimeline
+        execution={projection({
+          status: 'completed',
+          completedAt: 3_000,
+          error: '仍有 1 个工具失败未恢复',
+          toolCalls: [
+            {
+              ...toolCall('failed-stat', 'filesystem'),
+              status: 'failed',
+              errorCode: 'tool_execution_failed',
+              error: 'Tool execution failed',
+              completedAt: 200
+            }
+          ]
+        })}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '任务耗时 2.9 秒' }))
+    expect(screen.getByText('仍有 1 个工具失败未恢复')).toBeInTheDocument()
+  })
+
+  it('collapses an explicit successful retry while exposing the failed attempt', () => {
+    render(
+      <AssistantExecutionTimeline
+        execution={projection({
+          status: 'completed',
+          completedAt: 3_000,
+          toolCalls: [
+            {
+              ...toolCall('retried-stat', 'filesystem'),
+              toolName: 'rf_builtin_files_stat_ffd70cef',
+              status: 'completed',
+              attempt: 2,
+              attempts: [
+                {
+                  attempt: 1,
+                  status: 'failed',
+                  toolExecutionId: 'execution-retried-stat-1',
+                  errorCode: 'tool_timeout',
+                  error: 'Tool timed out before retry',
+                  diagnosticId: 'toolerr_retry_1',
+                  startedAt: 200,
+                  completedAt: 300
+                }
+              ]
+            } as AssistantTurnProjection['toolCalls'][number]
+          ]
+        })}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '任务耗时 2.9 秒' }))
     expect(screen.getByText('操作 1 次文件')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /^执行详情/ }))
-    expect(screen.queryByText('Tool execution failed')).not.toBeInTheDocument()
-    expect(
-      screen.queryByText('Path is outside the bound workspace')
-    ).not.toBeInTheDocument()
+    expect(screen.getByText('重试后成功')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '失败尝试 1' }))
+    expect(screen.getByText('工具执行超时')).toBeInTheDocument()
+    expect(screen.getByText('诊断 ID：toolerr_retry_1')).toBeInTheDocument()
+  })
+
+  it('shows unrecovered failure count for a completed run without a terminal error message', () => {
+    render(
+      <AssistantExecutionTimeline
+        execution={projection({
+          status: 'completed',
+          completedAt: 3_000,
+          toolCalls: [
+            {
+              ...toolCall('failed-stat', 'filesystem'),
+              status: 'failed',
+              errorCode: 'tool_execution_failed',
+              error: 'Tool execution failed',
+              completedAt: 200
+            }
+          ]
+        })}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '任务耗时 2.9 秒' }))
+    expect(screen.getByText('仍有 1 个工具失败未恢复')).toBeInTheDocument()
   })
 
   it('keeps a manual disclosure choice when a running task completes', () => {
@@ -281,13 +367,16 @@ describe('AssistantExecutionTimeline', () => {
         execution={projection({
           status: 'waiting_input',
           elapsedAt: 2_600,
-          recovery: { reason: 'consecutive_tool_failures' }
+          recovery: { reason: 'deterministic_tool_failure' }
         })}
       />
     )
 
     expect(
       screen.getByRole('button', { name: '任务耗时 2.5 秒' })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('检测到确定性工具失败循环，需要确认后继续')
     ).toBeInTheDocument()
 
     vi.advanceTimersByTime(5_000)
@@ -350,6 +439,67 @@ describe('AssistantExecutionTimeline', () => {
 
     rerender(<AssistantExecutionTimeline execution={undefined} />)
     expect(screen.queryByText('执行详情')).not.toBeInTheDocument()
+  })
+
+  it('shows the public Tool error and diagnostic ID without exposing sensitive details', () => {
+    render(
+      <AssistantExecutionTimeline
+        execution={projection({
+          status: 'failed',
+          toolCalls: [
+            {
+              ...toolCall('browser-snapshot', 'command'),
+              status: 'failed',
+              errorCode: 'runtime_resource_stale',
+              error: 'Runtime resource is stale for the current run',
+              diagnosticId: 'toolerr_0123456789abcdef',
+              completedAt: 400
+            } as AssistantTurnProjection['toolCalls'][number]
+          ]
+        })}
+      />
+    )
+
+    expect(
+      screen.getByText('Runtime resource is stale for the current run')
+    ).toBeInTheDocument()
+    expect(screen.getByText('诊断 ID：toolerr_0123456789abcdef')).toBeInTheDocument()
+    expect(screen.queryByText('/Users/me/project')).not.toBeInTheDocument()
+    expect(screen.queryByText('token=secret')).not.toBeInTheDocument()
+  })
+
+  it('shows a Git recovery hint without exposing local paths', () => {
+    render(
+      <AssistantExecutionTimeline
+        execution={projection({
+          status: 'failed',
+          toolCalls: [
+            {
+              ...toolCall('git-status', 'command'),
+              status: 'failed',
+              errorCode: 'git_repository_outside_scope',
+              error:
+                'Git repository is outside the authorized scope. Choose the repository folder as the scope root.',
+              recoveryHint: 'Choose the repository folder as the scope root.',
+              diagnosticId: 'toolerr_1111111111111111',
+              completedAt: 400
+            } as AssistantTurnProjection['toolCalls'][number] & {
+              recoveryHint: string
+            }
+          ]
+        })}
+      />
+    )
+
+    expect(
+      screen.getByText(
+        'Git repository is outside the authorized scope. Choose the repository folder as the scope root.'
+      )
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('Choose the repository folder as the scope root.')
+    ).toBeInTheDocument()
+    expect(screen.queryByText('/Users/alice/private')).not.toBeInTheDocument()
   })
 
   it('shows a stable user-facing error when a Skill Connector is unavailable', () => {
@@ -529,6 +679,67 @@ describe('AssistantExecutionTimeline', () => {
         '保留 1 个目标、3 条约束、2 个未完成项，关联 4 个来源'
       )
     ).toBeInTheDocument()
+  })
+
+  it('shows provider retry schedule and remaining attempts to the user', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(60_100)
+
+    render(
+      <AssistantExecutionTimeline
+        execution={projection({
+          status: 'retrying',
+          recovery: {
+            reason: 'provider_rate_limited',
+            attempt: 2,
+            nextRetryAt: 65_100,
+            remainingAttempts: 1
+          } as AssistantTurnProjection['recovery'] & {
+            remainingAttempts: number
+          }
+        })}
+      />
+    )
+
+    expect(screen.getByText('正在重试')).toBeInTheDocument()
+    expect(
+      screen.getByText('模型服务繁忙，将按计划重试')
+    ).toBeInTheDocument()
+    expect(screen.getByText(/第 2 次重试/)).toBeInTheDocument()
+    expect(screen.getByText(/剩余 1 次/)).toBeInTheDocument()
+    expect(screen.getByText(/下次重试 5.0 秒后/)).toBeInTheDocument()
+  })
+
+  it('keeps retry hints visible on terminal provider failures', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(60_100)
+
+    render(
+      <AssistantExecutionTimeline
+        execution={projection({
+          status: 'failed',
+          completedAt: 60_100,
+          error: 'Provider request failed',
+          recovery: {
+            reason: 'provider_rate_limited',
+            attempt: 1,
+            nextRetryAt: 65_100,
+            remainingAttempts: 0
+          } as AssistantTurnProjection['recovery'] & {
+            remainingAttempts: number
+          }
+        })}
+      />
+    )
+
+    expect(screen.getByText('任务失败')).toBeInTheDocument()
+    expect(
+      screen.getByText('模型服务繁忙，将按计划重试')
+    ).toBeInTheDocument()
+    expect(screen.getByText(/第 1 次重试/)).toBeInTheDocument()
+    expect(screen.getByText(/剩余 0 次/)).toBeInTheDocument()
+    expect(screen.getByText(/下次重试 5.0 秒后/)).toBeInTheDocument()
+    expect(screen.getByText('Provider request failed')).toBeInTheDocument()
   })
 
   it('paginates more than 100 expanded tool calls', () => {

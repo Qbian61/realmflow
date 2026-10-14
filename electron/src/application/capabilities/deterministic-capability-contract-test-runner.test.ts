@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -6,6 +6,7 @@ import {
   createCapabilitySpec,
   type CapabilitySpecSource
 } from '../../../../domain/capability-builder'
+import { parse } from 'yaml'
 import { CapabilityDraftWorkspace } from './capability-draft-workspace'
 import { CapabilitySpecCompiler } from './capability-spec-compiler'
 import { DeterministicCapabilityContractTestRunner } from './deterministic-capability-contract-test-runner'
@@ -69,6 +70,38 @@ describe('DeterministicCapabilityContractTestRunner', () => {
       id: 'contract',
       status: 'failed',
       detail: 'Capability contract resource is empty'
+    })
+  })
+
+  it('rejects an HTTP Connector contract with an under-described model input schema', async () => {
+    const path = await publish(connectorSpec())
+    const manifest = parse(
+      await readFile(join(path, 'capability.yaml'), 'utf8')
+    )
+    manifest.runtime.actions[0].inputSchema = {
+      type: 'object',
+      additionalProperties: true,
+      properties: {
+        issueId: { type: 'string' }
+      },
+      required: ['issueId']
+    }
+    await writeFile(
+      join(path, 'capability.yaml'),
+      JSON.stringify(manifest, null, 2),
+      'utf8'
+    )
+
+    await expect(
+      new DeterministicCapabilityContractTestRunner().run(
+        { id: 'contract', command: 'realmflow:contract:http-connector' },
+        path
+      )
+    ).resolves.toMatchObject({
+      id: 'contract',
+      status: 'failed',
+      detail:
+        'Capability contract failed: com.example.issue-lookup.actions.invoke.inputSchema schema.description is required'
     })
   })
 })

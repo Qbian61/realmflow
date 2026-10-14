@@ -22,9 +22,18 @@
       "chunkId": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 240
+        "maxLength": 240,
+        "description": "Opaque chunk identifier returned by a prior bounded read.",
+        "examples": [
+          "example"
+        ]
       }
-    }
+    },
+    "examples": [
+      {
+        "chunkId": "example"
+      }
+    ]
   },
   "outputSchema": {
     "type": "object",

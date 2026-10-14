@@ -51,7 +51,7 @@ describe('RealmFlow SQLite database', () => {
       53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69,
       70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86,
       87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108
-      , 109, 110, 111
+      , 109, 110, 111, 112, 113, 114, 115
     ])
 
     const tables = database
@@ -138,6 +138,7 @@ describe('RealmFlow SQLite database', () => {
         'node_todos',
         'outbound_calls',
         'online_document_commands',
+        'online_document_snapshot_documents',
         'online_document_snapshots',
         'online_document_sources',
         'repository_commands',
@@ -705,7 +706,7 @@ describe('RealmFlow SQLite database', () => {
       database
         .prepare('SELECT MAX(version) AS version FROM schema_migrations')
         .get()
-    ).toEqual({ version: 111 })
+    ).toEqual({ version: 115 })
   })
 
   it('audits workbench writes without storing private content', async () => {
@@ -1003,6 +1004,22 @@ describe('RealmFlow SQLite database', () => {
         .sort((left, right) => left.pk - right.pk)
         .map(({ name }) => name)
     ).toEqual(['source_id', 'profile_id', 'document_key'])
+    expect(
+      columns('repository_snapshot_skipped_files')
+        .filter(({ pk }) => pk > 0)
+        .sort((left, right) => left.pk - right.pk)
+        .map(({ name }) => name)
+    ).toEqual(['snapshot_id', 'relative_path'])
+    expect(
+      columns('repository_snapshot_skipped_files').map(({ name }) => name)
+    ).toEqual([
+      'snapshot_id',
+      'source_id',
+      'version',
+      'relative_path',
+      'reason',
+      'byte_size'
+    ])
   })
 
   it('creates constrained backup operation storage', async () => {
@@ -2240,7 +2257,7 @@ describe('RealmFlow SQLite database', () => {
       database
         .prepare('SELECT MAX(version) AS version FROM schema_migrations')
         .get()
-    ).toEqual({ version: 111 })
+    ).toEqual({ version: 115 })
   })
 
   it('repairs conversation messages incorrectly failed at a suspended Run boundary', () => {
@@ -2340,7 +2357,7 @@ describe('RealmFlow SQLite database', () => {
       database
         .prepare('SELECT MAX(version) AS version FROM schema_migrations')
         .get()
-    ).toEqual({ version: 111 })
+    ).toEqual({ version: 115 })
   })
 
   it('backfills an empty no-progress suspension with a truthful degraded conclusion', () => {
@@ -2449,7 +2466,7 @@ describe('RealmFlow SQLite database', () => {
       database
         .prepare('SELECT MAX(version) AS version FROM schema_migrations')
         .get()
-    ).toEqual({ version: 111 })
+    ).toEqual({ version: 115 })
   })
 
   it('purges legacy deleted task records and their attachment metadata', () => {

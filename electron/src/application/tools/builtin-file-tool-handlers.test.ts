@@ -28,8 +28,118 @@ describe('builtin file Tool handlers', () => {
     rootPath = join(temporaryDirectory, 'scope')
     await mkdir(rootPath)
     dependencies = {
-      trashItem: vi.fn().mockResolvedValue(undefined)
+      trashItem: vi.fn().mockResolvedValue(undefined),
+      contentExtractor: {
+        getCached: vi.fn().mockResolvedValue(undefined),
+        extract: vi.fn().mockRejectedValue(
+          new Error('unexpected structured extraction')
+        )
+      }
     }
+  })
+
+  it('keeps text-only content search as the default without extracting documents', async () => {
+    await writeFile(join(rootPath, 'report.pdf'), '%PDF-1.7 quarterly revenue')
+
+    await expect(
+      run('files.search', {
+        path: '',
+        query: 'revenue',
+        mode: 'content'
+      })
+    ).resolves.toEqual({ matches: [], truncated: false })
+    expect(dependencies.contentExtractor.getCached).not.toHaveBeenCalled()
+    expect(dependencies.contentExtractor.extract).not.toHaveBeenCalled()
+  })
+
+  it('searches cached structured units without triggering extraction', async () => {
+    await writeFile(join(rootPath, 'report.pdf'), '%PDF-1.7')
+    vi.mocked(dependencies.contentExtractor.getCached).mockResolvedValue({
+      sourceChecksum: prefixedSha256('bundle'),
+      format: 'pdf',
+      extractorVersion: 'pdf-v1',
+      units: [
+        {
+          key: 'page/000002',
+          title: 'Page 2',
+          text: 'Quarterly revenue increased.',
+          checksum: prefixedSha256('Quarterly revenue increased.'),
+          byteSize: 29
+        }
+      ]
+    })
+
+    await expect(
+      run('files.search', {
+        path: '',
+        query: 'revenue',
+        mode: 'content',
+        contentMode: 'structured_cached'
+      })
+    ).resolves.toEqual({
+      matches: [
+        {
+          path: 'report.pdf',
+          unitKey: 'page/000002',
+          title: 'Page 2',
+          line: 1,
+          preview: 'Quarterly revenue increased.'
+        }
+      ],
+      truncated: false
+    })
+    expect(dependencies.contentExtractor.getCached).toHaveBeenCalledOnce()
+    expect(dependencies.contentExtractor.extract).not.toHaveBeenCalled()
+  })
+
+  it('performs bounded structured extraction only when explicitly requested', async () => {
+    const bytes = Buffer.from('%PDF-1.7')
+    await writeFile(join(rootPath, 'report.pdf'), bytes)
+    vi.mocked(dependencies.contentExtractor.extract).mockResolvedValue({
+      sourceChecksum: prefixedSha256(bytes),
+      format: 'pdf',
+      extractorVersion: 'pdf-v1',
+      units: [
+        {
+          key: 'page/000001',
+          title: 'Page 1',
+          text: 'Approved architecture',
+          checksum: prefixedSha256('Approved architecture'),
+          byteSize: 21
+        }
+      ]
+    })
+
+    await expect(
+      run('files.search', {
+        path: '',
+        query: 'architecture',
+        mode: 'content',
+        contentMode: 'structured_extract'
+      })
+    ).resolves.toMatchObject({
+      matches: [
+        {
+          path: 'report.pdf',
+          unitKey: 'page/000001',
+          preview: 'Approved architecture'
+        }
+      ]
+    })
+    expect(dependencies.contentExtractor.extract).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bytes: Uint8Array.from(bytes),
+        fileName: 'report.pdf',
+        sourceChecksum: prefixedSha256(bytes),
+        policy: {
+          consumer: 'file_search',
+          allowLocalOcr: true,
+          allowLocalConversion: true,
+          maxCharacters: 1_000_000,
+          maxUnits: 1_000
+        }
+      })
+    )
   })
 
   afterEach(async () => {
@@ -521,4 +631,8 @@ describe('builtin file Tool handlers', () => {
 
 function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex')
+}
+
+function prefixedSha256(value: string | Uint8Array): string {
+  return `sha256:${createHash('sha256').update(value).digest('hex')}`
 }

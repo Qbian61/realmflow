@@ -1,9 +1,10 @@
-import { randomUUID } from 'node:crypto'
+import { constants } from 'node:fs'
+import { createHash, randomUUID } from 'node:crypto'
 import { createApprovalProfileSnapshot } from '../../domain/approval-profile'
 import { execFile } from 'node:child_process'
-import { readFile, realpath } from 'node:fs/promises'
+import { access, readFile, realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, delimiter, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   app,
@@ -131,7 +132,37 @@ import { ManageConversationAttachments } from './application/conversation/manage
 import { ConversationInputPreprocessor } from './application/conversation/conversation-input-preprocessor'
 import { ConversationAttachmentChunkReader } from './application/conversation/conversation-attachment-chunk-reader'
 import { LocalDocumentTextExtractor } from './application/documents/local-document-text-extractor'
+import { FileContentExtractionCache } from './application/content-extraction/content-extraction-cache'
+import { LocalContentExtractionService } from './application/content-extraction/local-content-extraction-service'
+import {
+  DocumentContentExtractor,
+  TextContentExtractor,
+} from './application/content-extraction/extractors/text-document-extractor'
+import { PdfContentExtractor } from './application/content-extraction/extractors/pdf-content-extractor'
+import { SpreadsheetContentExtractor } from './application/content-extraction/extractors/spreadsheet-content-extractor'
+import { PresentationContentExtractor } from './application/content-extraction/extractors/presentation-content-extractor'
+import {
+  FixedLayoutContentExtractor,
+  ImageOcrContentExtractor,
+} from './application/content-extraction/extractors/fixed-layout-image-extractor'
+import {
+  OfficeConversionContentExtractor,
+  OfficeSanitizedContentExtractor,
+  type ModernOfficeContentPort,
+} from './application/content-extraction/extractors/office-conversion-extractor'
+import { ArchiveContentExtractor } from './application/content-extraction/extractors/archive-content-extractor'
+import { EcosystemContentExtractor } from './application/content-extraction/extractors/ecosystem-content-extractor'
+import { CapabilityProbeContentExtractor } from './application/content-extraction/extractors/capability-probe-content-extractor'
 import { DocumentDeliveryService } from './application/files/document-delivery-service'
+import {
+  HtmlChromiumPdfBackend,
+  type ChromiumPdfPrinter,
+} from './application/files/html-chromium-pdf-backend'
+import {
+  PdfGenerationService,
+  createPdfSessionSaveAsBackend,
+  createSidecarDocxPdfBackend,
+} from './application/files/pdf-generation-service'
 import { LocalSpreadsheetSessionService } from './application/files/local-spreadsheet-session-service'
 import { LocalWordSessionService } from './application/files/local-word-session-service'
 import { LocalPresentationSessionService } from './application/files/local-presentation-session-service'
@@ -196,6 +227,11 @@ import { normalizeToolDefinitionReference } from '../../domain/tool-definition'
 import type { JsonObject } from '../../domain/tool-protocol-validation'
 import { ToolPolicyConfigurationService } from './application/tools/tool-policy-configuration-service'
 import { RuntimeFilteredToolProjectionStore } from './application/tools/runtime-filtered-tool-projection-store'
+import {
+  CompositeRuntimeToolAvailabilityProvider,
+  McpRuntimeToolAvailabilityProvider,
+  WebRuntimeToolAvailabilityProvider,
+} from './application/tools/runtime-tool-availability'
 import { SkillInstructionReader } from './application/tools/skill-instruction-reader'
 import { ExtensionCatalogImportService } from './application/tools/extension-catalog-import-service'
 import { SdkMcpClientFactory } from './application/tools/sdk-mcp-client-factory'
@@ -223,6 +259,7 @@ import { SkillSourceScanner } from './application/skills/skill-source-scanner'
 import { SandboxToolAdapter } from './application/tools/sandbox-tool-adapter'
 import { McpToolAdapter } from './application/tools/mcp-tool-adapter'
 import { ComputerToolAdapter } from './application/tools/computer-tool-adapter'
+import { FilesystemGitRepositoryResolver } from './application/tools/git-repository-resolver'
 import { ConnectorToolAdapter } from './application/tools/connector-tool-adapter'
 import { ToolAdapterRegistry } from './application/tools/tool-adapter-registry'
 import { ToolOutboxDispatcher } from './application/tools/tool-outbox-dispatcher'
@@ -287,6 +324,7 @@ import {
 import { KnowledgeSourceService } from './application/knowledge/knowledge-source-service'
 import { OnlineDocumentSnapshotService } from './application/knowledge/online-document-snapshot-service'
 import { LocalFileIngestionService } from './application/knowledge/local-file-ingestion-service'
+import { runLocalFileIngestionWithIndexDispatch } from './application/knowledge/local-file-index-dispatch'
 import { RepositoryIngestionService } from './application/knowledge/repository-ingestion-service'
 import { runRepositoryIngestionWithIndexDispatch } from './application/knowledge/repository-index-dispatch'
 import { KnowledgeIndexCoordinator } from './application/knowledge/knowledge-index-coordinator'
@@ -614,12 +652,24 @@ app
     const agentProfileResolver = new CatalogAgentProfileResolver(agentProfiles)
     const toolEvents = new SqliteToolEventStore(database)
     const persistedToolProjections = new SqliteToolProjectionStore(database)
-    const toolProjections = new RuntimeFilteredToolProjectionStore({
-      source: persistedToolProjections,
-      availability: new LegacyOfficeRuntimeCapabilityProvider({
+    let webProviderRepository!: SqliteWebProviderRepository
+    let mcpServerRepository!: SqliteMcpServerRepository
+    const legacyOfficeRuntimeCapability =
+      new LegacyOfficeRuntimeCapabilityProvider({
         platform: process.platform,
         environment: process.env,
-      }),
+      })
+    const toolProjections = new RuntimeFilteredToolProjectionStore({
+      source: persistedToolProjections,
+      availability: new CompositeRuntimeToolAvailabilityProvider([
+        legacyOfficeRuntimeCapability,
+        new WebRuntimeToolAvailabilityProvider({
+          configuration: { get: () => webProviderRepository.get() },
+        }),
+        new McpRuntimeToolAvailabilityProvider({
+          servers: { list: () => mcpServerRepository.list() },
+        }),
+      ]),
     })
     const toolProjectionRunner = new ToolProjectionRunner(
       toolEvents,
@@ -921,11 +971,6 @@ app
     await workbenchAttachmentStore.reconcile().catch((error) => {
       console.error('Workbench attachment reconciliation failed', error)
     })
-    const workbenchAttachments = new ManageWorkbenchAttachments({
-      store: workbenchAttachmentStore,
-      picker: dialog,
-      shell,
-    })
     const conversationAttachmentRepository =
       new SqliteConversationAttachmentRepository(database)
     await conversationAttachmentRepository.expireDrafts(
@@ -942,10 +987,236 @@ app
         conversationAttachmentRoot,
       )
     const documentTextExtractor = new LocalDocumentTextExtractor()
+    const localOcr = new LocalTesseractOcrAdapter({
+      packageRoot: app.isPackaged
+        ? join(process.resourcesPath, 'app.asar.unpacked')
+        : app.getAppPath(),
+    })
+    const pdfAdapter = new PdfLibAdapter()
+    const pdfSessions = new LocalPdfSessionService({
+      adapter: pdfAdapter,
+      localOcr,
+      storage: new NodeSpreadsheetSessionStorage({
+        metadataPath: join(userDataPath, 'pdf', 'pdf-revisions.json'),
+        snapshotsRoot: join(userDataPath, 'pdf', 'pdf-snapshots'),
+      }),
+    })
+    const fixedLayout = new FixedLayoutService({
+      adapter: new FixedLayoutAdapter(),
+      storage: new NodeFixedLayoutStorage(),
+      localOcr,
+    })
+    const imageSessions = new LocalImageSessionService({
+      adapter: new SharpImageAdapter(),
+      localOcr,
+      storage: new NodeSpreadsheetSessionStorage({
+        metadataPath: join(userDataPath, 'images', 'image-revisions.json'),
+        snapshotsRoot: join(userDataPath, 'images', 'image-snapshots'),
+      }),
+    })
+    const contentExtractionCache = new FileContentExtractionCache({
+      rootPath: join(userDataPath, 'content-extraction-cache'),
+    })
+    await contentExtractionCache.reconcile()
+    const documentContentExtractor = new DocumentContentExtractor(
+      documentTextExtractor,
+    )
+    const pdfContentExtractor = new PdfContentExtractor(pdfSessions)
+    const spreadsheetContentExtractor = new SpreadsheetContentExtractor({
+      extractText: async ({ bytes, format, signal }) => {
+        const response = await sidecar.getClient().computeSpreadsheet(
+          {
+            format,
+            operation: 'extract_text',
+            documentBase64: Buffer.from(bytes).toString('base64'),
+            parameters: {},
+          },
+          signal,
+        )
+        return response.result as {
+          sheets: Array<{
+            name: string
+            rows: string[][]
+            nonEmptyCellCount: number
+          }>
+        }
+      },
+    })
+    const presentationContentExtractor = new PresentationContentExtractor({
+      extractText: async ({ bytes, signal }) => {
+        const response = await sidecar.getClient().computePresentation(
+          {
+            format: 'pptx',
+            operation: 'extract_text',
+            documentBase64: Buffer.from(bytes).toString('base64'),
+            parameters: {},
+          },
+          signal,
+        )
+        return response.result as {
+          slides: Array<{
+            number: number
+            title: string
+            text: string[]
+            tables: string[][]
+            chartLabels: string[]
+            notes: string
+          }>
+        }
+      },
+    })
+    const modernOfficeContent: ModernOfficeContentPort = {
+      extract: (format, input) => {
+        if (format === 'docx') return documentContentExtractor.extract(input)
+        if (format === 'xlsx') {
+          return spreadsheetContentExtractor.extract(input)
+        }
+        return presentationContentExtractor.extract(input)
+      },
+    }
+    let legacyOfficeImporter: LegacyOfficeImportService
+    let officeSafeCopy: OfficeSafeCopyService
+    const archiveAdapter = new ArchiveAdapter()
+    let localContentExtraction: LocalContentExtractionService
+    localContentExtraction = new LocalContentExtractionService({
+      cache: contentExtractionCache,
+      extractors: [
+        new TextContentExtractor(),
+        documentContentExtractor,
+        pdfContentExtractor,
+        spreadsheetContentExtractor,
+        presentationContentExtractor,
+        new FixedLayoutContentExtractor(fixedLayout),
+        new ImageOcrContentExtractor(imageSessions),
+        new OfficeConversionContentExtractor(
+          {
+            convertBytes: (input) =>
+              legacyOfficeImporter.convertBytes(input),
+          },
+          modernOfficeContent,
+        ),
+        new OfficeSanitizedContentExtractor(
+          {
+            sanitizeBytes: (input) => officeSafeCopy.sanitizeBytes(input),
+          },
+          modernOfficeContent,
+        ),
+        new ArchiveContentExtractor(archiveAdapter, {
+          extract: (input) => localContentExtraction.extract(input),
+        }),
+        new EcosystemContentExtractor({
+          converter: {
+            convertBytes: (input) =>
+              legacyOfficeImporter.convertBytes(input),
+          },
+          modern: modernOfficeContent,
+          children: {
+            extract: (input) => localContentExtraction.extract(input),
+          },
+        }),
+        new CapabilityProbeContentExtractor({
+          capabilities: () =>
+            sidecar
+              .getClient()
+              .getOfficeConversionCapabilities(
+                new AbortController().signal,
+              ),
+          convert: async ({
+            bytes,
+            sourceFormat,
+            outputFormat,
+            signal,
+          }) => {
+            const result = await sidecar
+              .getClient()
+              .convertOptionalOffice(
+                {
+                  sourceFormat,
+                  documentBase64: Buffer.from(bytes).toString('base64'),
+                },
+                signal,
+              )
+            if (result.outputFormat !== outputFormat) {
+              throw new Error('Optional Office output format mismatch')
+            }
+            return {
+              bytes: Uint8Array.from(
+                Buffer.from(result.documentBase64, 'base64'),
+              ),
+              outputFormat: result.outputFormat,
+            }
+          },
+          modern: {
+            extract: (format, input) => {
+              if (format === 'pdf') {
+                return pdfContentExtractor.extract(input)
+              }
+              return modernOfficeContent.extract(format, input)
+            },
+          },
+        }),
+      ],
+    })
+    const workbenchAttachments = new ManageWorkbenchAttachments({
+      store: workbenchAttachmentStore,
+      picker: dialog,
+      shell,
+      contentExtractor: localContentExtraction,
+    })
     const documentDeliveryJournal = coordinateRepository(
       new SqliteDocumentDeliveryRepository(database),
       sqliteCoordinator,
     )
+    const documentDeliveryStorage = new NodeSpreadsheetSessionStorage({
+      metadataPath: join(
+        userDataPath,
+        'office',
+        'document-delivery-revisions.json',
+      ),
+      snapshotsRoot: join(userDataPath, 'office', 'document-delivery'),
+    })
+    const docxPdfBackend = createSidecarDocxPdfBackend({
+      exportDocumentPdf: (input, signal) =>
+        sidecar.getClient().exportDocumentPdf(input, signal),
+    })
+    const pdfGeneration = new PdfGenerationService({
+      storage: documentDeliveryStorage,
+      backends: {
+        libreoffice_docx_pdf: docxPdfBackend,
+        cupsfilter_docx_text_pdf: docxPdfBackend,
+        chromium_html_pdf: new HtmlChromiumPdfBackend({
+          printToPdf: printHtmlToPdfWithElectron,
+          renderFirstPage: async (pdf, pageNumber, signal) => {
+            if (signal.aborted) throwAbortError('PDF generation was cancelled')
+            return pdfAdapter.renderPage(pdf, pageNumber, 512)
+          },
+        }),
+        pdf_lib_session_save_as: createPdfSessionSaveAsBackend(pdfSessions),
+      },
+      getReadiness: async () => {
+        const checkedAt = Date.now()
+        const libreOffice =
+          await legacyOfficeRuntimeCapability.getPdfGenerationLibreOfficeReadiness()
+        return {
+          checkedAt,
+          backends: {
+            ...libreOffice,
+            cupsfilter_docx_text_pdf:
+              await detectCupsfilterPdfReadiness(checkedAt),
+            chromium_html_pdf: {
+              status: 'ready' as const,
+              reasonCode: 'electron_chromium_ready',
+              quality: 'visual_print' as const,
+            },
+            pdf_lib_session_save_as: {
+              status: 'ready' as const,
+              reasonCode: 'pdf_session_service_ready',
+              quality: 'edit_preserve' as const,
+            },
+          },
+        }
+      },
+    })
     const documentDelivery = new DocumentDeliveryService({
       engine: {
         createDocument: (input, signal) =>
@@ -955,16 +1226,10 @@ app
         verifyDocumentArtifact: (input, signal) =>
           sidecar.getClient().verifyDocumentArtifact(input, signal),
       },
-      storage: new NodeSpreadsheetSessionStorage({
-        metadataPath: join(
-          userDataPath,
-          'office',
-          'document-delivery-revisions.json',
-        ),
-        snapshotsRoot: join(userDataPath, 'office', 'document-delivery'),
-      }),
+      storage: documentDeliveryStorage,
       journal: documentDeliveryJournal,
       artifacts: repositories.artifacts,
+      pdfGeneration,
     })
     await documentDelivery.recover()
     const spreadsheetSessions = new LocalSpreadsheetSessionService({
@@ -1005,7 +1270,7 @@ app
         snapshotsRoot: join(userDataPath, 'office', 'presentation-snapshots'),
       }),
     })
-    const legacyOfficeImporter = new LegacyOfficeImportService({
+    legacyOfficeImporter = new LegacyOfficeImportService({
       convert: (input, signal) =>
         sidecar.getClient().convertLegacyOffice(input, signal),
       storage: new NodeSpreadsheetSessionStorage({
@@ -1026,7 +1291,7 @@ app
         presentation: presentationSessions,
       },
     })
-    const officeSafeCopy = new OfficeSafeCopyService({
+    officeSafeCopy = new OfficeSafeCopyService({
       sanitize: (input, signal) =>
         sidecar.getClient().createSafeOfficeCopy(input, signal),
       storage: new NodeSpreadsheetSessionStorage({
@@ -1053,46 +1318,13 @@ app
       presentation: presentationSessions,
     })
     const archives = new ArchiveService({
-      adapter: new ArchiveAdapter(),
+      adapter: archiveAdapter,
       storage: new NodeArchiveStorage(),
-    })
-    const fixedLayout = new FixedLayoutService({
-      adapter: new FixedLayoutAdapter(),
-      storage: new NodeFixedLayoutStorage(),
-      localOcr: new LocalTesseractOcrAdapter({
-        packageRoot: app.isPackaged
-          ? join(process.resourcesPath, 'app.asar.unpacked')
-          : app.getAppPath(),
-      }),
-    })
-    const imageSessions = new LocalImageSessionService({
-      adapter: new SharpImageAdapter(),
-      localOcr: new LocalTesseractOcrAdapter({
-        packageRoot: app.isPackaged
-          ? join(process.resourcesPath, 'app.asar.unpacked')
-          : app.getAppPath(),
-      }),
-      storage: new NodeSpreadsheetSessionStorage({
-        metadataPath: join(userDataPath, 'images', 'image-revisions.json'),
-        snapshotsRoot: join(userDataPath, 'images', 'image-snapshots'),
-      }),
-    })
-    const pdfSessions = new LocalPdfSessionService({
-      adapter: new PdfLibAdapter(),
-      localOcr: new LocalTesseractOcrAdapter({
-        packageRoot: app.isPackaged
-          ? join(process.resourcesPath, 'app.asar.unpacked')
-          : app.getAppPath(),
-      }),
-      storage: new NodeSpreadsheetSessionStorage({
-        metadataPath: join(userDataPath, 'pdf', 'pdf-revisions.json'),
-        snapshotsRoot: join(userDataPath, 'pdf', 'pdf-snapshots'),
-      }),
     })
     const conversationInputPreprocessor = new ConversationInputPreprocessor(
       conversationAttachmentRepository,
       conversationAttachmentRoot,
-      { documentTextExtractor },
+      { contentExtractor: localContentExtraction },
     )
     const conversationAttachmentChunks =
       new ConversationAttachmentChunkReader(
@@ -1121,14 +1353,14 @@ app
         allowCreate: (await repositories.modelCredentials.list()).length === 0,
       },
     )
-    const webProviderRepository = new SqliteWebProviderRepository(database)
+    webProviderRepository = new SqliteWebProviderRepository(database)
     const webProviders = new WebProviderConfigurationService({
       store: webProviderRepository,
       vault: await CredentialVault.open(join(userDataPath, 'web-credentials.key'), {
         allowCreate: !webProviderRepository.get().hasBraveCredential,
       }),
     })
-    const mcpServerRepository = new SqliteMcpServerRepository(database)
+    mcpServerRepository = new SqliteMcpServerRepository(database)
     let mcpServers!: McpServerService
     const mcpClients = new SdkMcpClientFactory({
       credentials: {
@@ -1344,12 +1576,14 @@ app
       connectors,
       store: repositoryIngestionStore,
       knowledgeSources,
+      contentExtractor: localContentExtraction,
     })
     await repositoryIngestion.recover()
     const onlineDocuments = new OnlineDocumentSnapshotService({
       workspaces: repositories.workspaces,
       connectors,
       store: knowledgeSourceRepository,
+      contentExtractor: localContentExtraction,
     })
     const localFileIngestion = new LocalFileIngestionService({
       workspaces: repositories.workspaces,
@@ -1378,6 +1612,7 @@ app
       artifacts: artifactRepository,
       requirementMemories,
       knowledgeNotes,
+      contentExtractor: localContentExtraction,
     })
     const knowledgeIndexCoordinator = new KnowledgeIndexCoordinator({
       repository: vectorIndexes,
@@ -1571,6 +1806,14 @@ app
         console.error('Knowledge index worker failed', error)
       })
     }
+    const runLocalFileIngestion = (
+      ingest: () => ReturnType<LocalFileIngestionService['ingest']>,
+    ) =>
+      runLocalFileIngestionWithIndexDispatch({
+        ingest,
+        enqueue: (input) => knowledgeIndexCoordinator.enqueue(input),
+        scheduleDrain: scheduleKnowledgeIndexDrain,
+      })
     const runRepositoryIngestion = (
       ingest: () => ReturnType<RepositoryIngestionService['ingestLocal']>,
     ) =>
@@ -1606,6 +1849,15 @@ app
       repository: knowledgeRefreshRepository,
       sources: knowledgeSourceRepository,
       reader: knowledgeIndexReader,
+      indexes: {
+        hasCurrentIndex: async (input) => {
+          const current = await vectorIndexes.getCurrentGenerationBySource({
+            sourceId: input.sourceId,
+            profileId: activeProfile.id,
+          })
+          return current?.sourceChecksum === input.sourceChecksum
+        },
+      },
       probes: {
         file: (sourceId) => localFileIngestion.probe(sourceId),
         document: (sourceId, idempotencyKey) =>
@@ -1712,6 +1964,7 @@ app
       sources: knowledgeSources,
       refresh: knowledgeRefreshRepository,
       indexes: knowledgeIndex,
+      repositories: repositoryIngestionStore,
     })
     const knowledgeSearchStore = coordinateRepository(
       new SqliteKnowledgeSearchStore(database),
@@ -1841,6 +2094,7 @@ app
         },
       },
       artifacts: artifactRepository,
+      contentExtractor: localContentExtraction,
       coordinator: {
         enqueueSnapshot: async (snapshot, triggerSource) => {
           const result = await knowledgeIndexCoordinator.enqueueSnapshot(
@@ -2106,6 +2360,22 @@ app
       },
       catalog: toolCatalog,
       capabilities: capabilityCatalog,
+      connectorCredentials: {
+        resolveHandle: async (reference) => {
+          if (reference.startsWith('connector:')) {
+            const connectorId = reference.slice('connector:'.length)
+            return (await connectorRepository.getCredential(connectorId))
+              ? reference
+              : undefined
+          }
+          try {
+            await mcpServers.resolveCredential(reference)
+            return `mcp:${reference}`
+          } catch {
+            return undefined
+          }
+        },
+      },
       capabilityScopes: new CapabilityScopeResolver({
         workspaces: repositories.workspaces,
         workRoots: repositories.workRoots,
@@ -2113,6 +2383,9 @@ app
           securePaths.canonicalizeDirectory(path),
       }),
       tools: deferredToolRuntime,
+      resolveToolScopeRoots: (context) =>
+        resolveExecutionScopeRoots(context, executionScopeDependencies),
+      gitRepositoryResolver: new FilesystemGitRepositoryResolver(),
       skills: skillInstructions,
       skillRuntime,
       profiles: agentProfileResolver,
@@ -2687,12 +2960,16 @@ app
             await repositoryIngestion.get(sourceId),
           )
           if (!view.snapshot) return view
-          const [states, currentManifest] = await Promise.all([
+          const [states, currentManifest, latestJob] = await Promise.all([
             vectorIndexes.listDocumentStates({
               sourceId,
               profileId: activeProfile.id,
             }),
             vectorIndexes.getCurrentGenerationManifest({
+              sourceId,
+              profileId: activeProfile.id,
+            }),
+            vectorIndexes.getLatestJobBySource({
               sourceId,
               profileId: activeProfile.id,
             }),
@@ -2708,6 +2985,7 @@ app
           )
           return {
             ...view,
+            ...(latestJob ? { indexJobStatus: latestJob.status } : {}),
             snapshot: {
               ...view.snapshot,
               files: view.snapshot.files.map((file) => ({
@@ -2853,7 +3131,8 @@ app
         execute: (command) => knowledgeSources.register(command),
       },
       ingestLocalFiles: {
-        execute: (command) => localFileIngestion.ingest(command),
+        execute: (command) =>
+          runLocalFileIngestion(() => localFileIngestion.ingest(command)),
       },
       refreshLocalFileSource: {
         execute: (command) =>
@@ -3232,12 +3511,21 @@ app
       },
       attachments: {
         read: async (requirementId, path) => {
-          const file = await workspace.readFile(requirementId, path)
+          const [file, canonicalPath] = await Promise.all([
+            workspace.readFile(requirementId, path),
+            workspace.resolvePreviewPath(requirementId, path),
+          ])
+          const bytes = new Uint8Array(await readFile(canonicalPath))
           return {
             version: Math.trunc(file.modifiedAt),
-            content: file.content,
+            bytes,
+            fileName: basename(path),
+            sourceChecksum: `sha256:${createHash('sha256')
+              .update(bytes)
+              .digest('hex')}`,
           }
         },
+        extract: (input) => localContentExtraction.extract(input),
       },
     })
     const contexts = new AssembledNodeContextRepository({
@@ -3408,10 +3696,12 @@ app
       },
       files: {
         trashItem: (path) => shell.trashItem(path),
+        contentExtractor: localContentExtraction,
       },
       documents: {
-        extractor: documentTextExtractor,
+        extractor: localContentExtraction,
         delivery: documentDelivery,
+        pdfGeneration,
       },
       wordDocuments: {
         sessions: wordSessions,
@@ -3421,6 +3711,7 @@ app
       },
       pdf: {
         sessions: pdfSessions,
+        pdfGeneration,
       },
       spreadsheets: {
         sessions: spreadsheetSessions,
@@ -3537,13 +3828,10 @@ app
           if (!source) throw new Error('Knowledge source was not found')
           return { source }
         },
-        'knowledge.note.save': ({ arguments: args }) =>
-          executeToolOperation(
-            args.operation === 'edit'
-              ? business.editKnowledgeNote
-              : business.createKnowledgeNote,
-            withoutToolOperation(args),
-          ),
+        'knowledge.note.create': ({ arguments: args }) =>
+          executeToolOperation(business.createKnowledgeNote, args),
+        'knowledge.note.edit': ({ arguments: args }) =>
+          executeToolOperation(business.editKnowledgeNote, args),
         'knowledge.index.refresh': ({ arguments: args }) =>
           executeToolOperation(business.refreshKnowledgeSource, args),
         'attachment.read_chunk': ({ arguments: args }) =>
@@ -4492,6 +4780,86 @@ function skillConnectorAttribution(
       ? { conversationId: context.conversationId }
       : {}),
   }
+}
+
+const CUPS_FILTER_EXECUTABLE = 'cupsfilter'
+
+async function printHtmlToPdfWithElectron(
+  input: Parameters<ChromiumPdfPrinter['printToPdf']>[0],
+  signal: AbortSignal,
+): Promise<Uint8Array> {
+  if (signal.aborted) throwAbortError('PDF generation was cancelled')
+  const window = new BrowserWindow({
+    show: false,
+    webPreferences: {
+      sandbox: true,
+      nodeIntegration: false,
+      contextIsolation: true,
+      webSecurity: true,
+    },
+  })
+  const abort = () => window.destroy()
+  signal.addEventListener('abort', abort, { once: true })
+  try {
+    window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    window.webContents.on('will-navigate', (event, url) => {
+      if (!url.startsWith('data:text/html')) event.preventDefault()
+    })
+    await window.loadURL(
+      `data:text/html;charset=UTF-8,${encodeURIComponent(input.html)}`,
+    )
+    if (signal.aborted) throwAbortError('PDF generation was cancelled')
+    await window.webContents.executeJavaScript(
+      'document.fonts && document.fonts.ready ? document.fonts.ready.then(() => true) : true',
+      true,
+    )
+    if (signal.aborted) throwAbortError('PDF generation was cancelled')
+    const pdf = await window.webContents.printToPDF(input.printOptions)
+    return Uint8Array.from(pdf)
+  } finally {
+    signal.removeEventListener('abort', abort)
+    if (!window.isDestroyed()) window.destroy()
+  }
+}
+
+async function detectCupsfilterPdfReadiness(
+  _checkedAt: number,
+): Promise<{
+  status: 'ready' | 'unavailable'
+  reasonCode: string
+  quality: 'degraded_text'
+}> {
+  for (const candidate of cupsfilterCandidates()) {
+    try {
+      await access(candidate, constants.X_OK)
+      return {
+        status: 'ready',
+        reasonCode: 'runtime_ready',
+        quality: 'degraded_text',
+      }
+    } catch {
+      continue
+    }
+  }
+  return {
+    status: 'unavailable',
+    reasonCode: 'local_dependency_unavailable',
+    quality: 'degraded_text',
+  }
+}
+
+function cupsfilterCandidates(): string[] {
+  const pathCandidates = (process.env.PATH ?? '')
+    .split(delimiter)
+    .filter(Boolean)
+    .map((directory) => join(directory, CUPS_FILTER_EXECUTABLE))
+  return [...new Set([...pathCandidates, '/usr/sbin/cupsfilter'])]
+}
+
+function throwAbortError(message: string): never {
+  const error = new Error(message)
+  error.name = 'AbortError'
+  throw error
 }
 
 async function shutdownMainRuntime(): Promise<void> {

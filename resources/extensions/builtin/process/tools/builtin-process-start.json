@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.process.start",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "name": "Start process",
   "description": "Start a managed background process.",
   "tags": [
@@ -23,11 +23,21 @@
         "type": "string",
         "anyOf": [
           {
-            "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,199}$"
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,199}$",
+            "examples": [
+              "python3"
+            ]
           },
           {
-            "pattern": "^/[A-Za-z0-9._+/-]{1,199}$"
+            "pattern": "^/[A-Za-z0-9._+/-]{1,199}$",
+            "examples": [
+              "/usr/bin/python3"
+            ]
           }
+        ],
+        "description": "Executable name or path to run under the configured local process policy.",
+        "examples": [
+          "python3"
         ]
       },
       "arguments": {
@@ -38,22 +48,56 @@
           "maxLength": 65536,
           "not": {
             "const": "\u0000"
-          }
-        }
+          },
+          "examples": [
+            [
+              "--version"
+            ]
+          ]
+        },
+        "description": "Arguments object validated against the selected action contract.",
+        "examples": [
+          [
+            "--version"
+          ]
+        ]
       },
       "cwd": {
-        "type": "string"
+        "type": "string",
+        "description": "Working directory as a relative path under the authorized root. Do not invent or pass absolute local paths.",
+        "examples": [
+          "."
+        ]
       },
       "maxOutputBytes": {
         "type": "integer",
         "minimum": 1024,
-        "maximum": 16777216
+        "maximum": 16777216,
+        "description": "Maximum captured stdout and stderr bytes for the process.",
+        "examples": [
+          4096
+        ]
       },
       "scopeRoot": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Optional authorized root override. Omit or pass \".\" to use the current authorized root.",
+        "examples": [
+          "."
+        ]
       }
-    }
+    },
+    "examples": [
+      {
+        "executable": "python3",
+        "arguments": [
+          "--version"
+        ],
+        "cwd": ".",
+        "maxOutputBytes": 4096,
+        "scopeRoot": "."
+      }
+    ]
   },
   "outputSchema": {
     "type": "object",

@@ -61,7 +61,15 @@ export function OnlineDocumentSnapshotDialog({
               <span>{view.snapshot.mediaType}</span>
               <span>{view.snapshot.byteSize} bytes</span>
             </div>
-            <pre>{view.snapshot.content}</pre>
+            <pre>
+              {view.snapshot.documents
+                .map((document) =>
+                  view.snapshot!.documents.length === 1
+                    ? document.content
+                    : `## ${document.title}\n${document.content}`,
+                )
+                .join("\n\n")}
+            </pre>
           </>
         ) : (
           <div className="space-empty-block">

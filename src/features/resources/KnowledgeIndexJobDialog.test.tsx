@@ -92,4 +92,32 @@ describe('KnowledgeIndexJobDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: '重试' }))
     expect(onRetry).toHaveBeenCalledOnce()
   })
+
+  it('localizes extraction failures without exposing raw error codes', () => {
+    render(
+      <LocalizationProvider>
+        <KnowledgeIndexJobDialog
+          name="encrypted-report.pdf"
+          view={{
+            source,
+            health: 'failed',
+            job: {
+              id: 'job-2',
+              status: 'failed',
+              triggerSource: 'manual',
+              createdAt: 1,
+              updatedAt: 2,
+              completedAt: 2,
+              errorCode: 'extraction_encrypted'
+            }
+          }}
+          loading={false}
+          onClose={vi.fn()}
+        />
+      </LocalizationProvider>
+    )
+
+    expect(screen.getByText('文件已加密')).toBeVisible()
+    expect(screen.queryByText(/extraction_encrypted/)).not.toBeInTheDocument()
+  })
 })

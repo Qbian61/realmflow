@@ -26,7 +26,12 @@ export function registerWorkbenchLayoutIpc({
   )
   ipcMain.handle(
     IPC_COMMAND_CHANNELS.workbenchLayoutUpdate,
-    async (_event, value) =>
-      service.update(parseUpdateWorkbenchLayoutCommand(value))
+    async (_event, value) => {
+      const command = parseUpdateWorkbenchLayoutCommand(value)
+      // #region debug-point A:ipc-update
+      void fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'workbench-layout-conflict', runId: 'post-fix', hypothesisId: 'A', location: 'workbench-layout-ipc:update', msg: '[DEBUG] Main received layout update', data: { requestId: command.requestId, expectedRevision: command.expectedRevision }, ts: Date.now() }) }).catch(() => {})
+      // #endregion
+      return service.update(command)
+    }
   )
 }

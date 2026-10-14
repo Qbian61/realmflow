@@ -18,6 +18,7 @@ function DialogHarness({
       <Dialog
         open={open}
         aria-label="Rename"
+        placement="workspace"
         closeOnBackdrop={closeOnBackdrop}
         locked={locked}
         onOpenChange={setOpen}
@@ -47,6 +48,7 @@ describe("Dialog", () => {
 
     const dialog = screen.getByRole("dialog", { name: "Rename" });
     expect(dialog.parentElement?.parentElement).toBe(document.body);
+    expect(dialog.parentElement).toHaveClass("ui-dialog-backdrop--workspace");
     expect(screen.getByRole("textbox", { name: "Name" })).toHaveFocus();
 
     fireEvent.keyDown(document, { key: "Escape" });

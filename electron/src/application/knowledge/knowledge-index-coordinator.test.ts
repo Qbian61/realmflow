@@ -3,7 +3,7 @@ import { DEFAULT_VECTOR_INDEX_PROFILE } from '../../../../domain/vector-index-pr
 import { KnowledgeIndexCoordinator } from './knowledge-index-coordinator'
 
 describe('KnowledgeIndexCoordinator', () => {
-  it('freezes the current source target and enqueues a deterministic job', async () => {
+  it('freezes source identity without extracting content before enqueue', async () => {
     const repository = {
       getActiveProfile: vi.fn().mockResolvedValue({
         ...DEFAULT_VECTOR_INDEX_PROFILE,
@@ -16,16 +16,17 @@ describe('KnowledgeIndexCoordinator', () => {
       }))
     }
     const reader = {
-      readCurrent: vi.fn().mockResolvedValue({
+      readCurrentIdentity: vi.fn().mockResolvedValue({
         scopeKind: 'workspace',
         scopeId: 'space-1',
         sourceKind: 'file',
         sourceId: 'source-1',
         sourceRevision: 3,
         sourceVersion: 'file:v2',
-        sourceChecksum: `sha256:${'a'.repeat(64)}`,
-        documents: []
-      })
+        sourceChecksum: `sha256:${'a'.repeat(64)}`
+      }),
+      readCurrent: vi.fn().mockRejectedValue(new Error('must not extract')),
+      hasCurrentDocument: vi.fn()
     }
     const ids = ['job-1', 'generation-1']
     const coordinator = new KnowledgeIndexCoordinator({
@@ -62,6 +63,8 @@ describe('KnowledgeIndexCoordinator', () => {
         `source-1:file:v2:sha256:${'a'.repeat(64)}`,
       createdAt: 10
     })
+    expect(reader.readCurrentIdentity).toHaveBeenCalledWith('source-1')
+    expect(reader.readCurrent).not.toHaveBeenCalled()
   })
 
   it('refuses to enqueue without an active profile', async () => {
@@ -69,7 +72,11 @@ describe('KnowledgeIndexCoordinator', () => {
       getActiveProfile: vi.fn().mockResolvedValue(undefined),
       enqueue: vi.fn()
     }
-    const reader = { readCurrent: vi.fn() }
+    const reader = {
+      readCurrentIdentity: vi.fn(),
+      readCurrent: vi.fn(),
+      hasCurrentDocument: vi.fn()
+    }
     const coordinator = new KnowledgeIndexCoordinator({
       repository,
       reader
@@ -81,7 +88,7 @@ describe('KnowledgeIndexCoordinator', () => {
         triggerSource: 'source_event'
       })
     ).rejects.toThrow('Vector index profile is unavailable')
-    expect(reader.readCurrent).not.toHaveBeenCalled()
+    expect(reader.readCurrentIdentity).not.toHaveBeenCalled()
   })
 
   it('uses a fresh startup recovery key so a failed prior rebuild can retry', async () => {
@@ -105,7 +112,10 @@ describe('KnowledgeIndexCoordinator', () => {
     const ids = ['startup-job-1', 'startup-generation-1']
     const coordinator = new KnowledgeIndexCoordinator({
       repository,
-      reader: { readCurrent: vi.fn() },
+      reader: {
+        readCurrentIdentity: vi.fn(),
+        hasCurrentDocument: vi.fn()
+      },
       createId: () => ids.shift()!,
       now: () => 10
     })
@@ -138,23 +148,17 @@ describe('KnowledgeIndexCoordinator', () => {
       }))
     }
     const reader = {
-      readCurrent: vi.fn().mockResolvedValue({
+      readCurrentIdentity: vi.fn().mockResolvedValue({
         scopeKind: 'workspace',
         scopeId: 'space-1',
         sourceKind: 'repository',
         sourceId: 'source-1',
         sourceRevision: 3,
         sourceVersion: 'repository:v2',
-        sourceChecksum: `sha256:${'a'.repeat(64)}`,
-        documents: [
-          {
-            documentKey: 'src/broken.ts',
-            sourceEntityId: 'source-1',
-            title: 'broken.ts',
-            content: 'fixed'
-          }
-        ]
-      })
+        sourceChecksum: `sha256:${'a'.repeat(64)}`
+      }),
+      readCurrent: vi.fn().mockRejectedValue(new Error('must not extract')),
+      hasCurrentDocument: vi.fn().mockResolvedValue(true)
     }
     const ids = ['job-target', 'generation-target']
     const coordinator = new KnowledgeIndexCoordinator({
@@ -176,5 +180,10 @@ describe('KnowledgeIndexCoordinator', () => {
         idempotencyKey: expect.stringContaining(':src/broken.ts')
       })
     )
+    expect(reader.hasCurrentDocument).toHaveBeenCalledWith(
+      'source-1',
+      'src/broken.ts'
+    )
+    expect(reader.readCurrent).not.toHaveBeenCalled()
   })
 })

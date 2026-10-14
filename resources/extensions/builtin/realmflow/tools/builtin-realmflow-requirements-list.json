@@ -22,9 +22,18 @@
           "pending",
           "active",
           "completed"
+        ],
+        "description": "Target workflow, todo, requirement, or question status. Allowed values: pending, active, completed.",
+        "examples": [
+          "pending"
         ]
       }
-    }
+    },
+    "examples": [
+      {
+        "status": "pending"
+      }
+    ]
   },
   "outputSchema": {
     "type": "object",

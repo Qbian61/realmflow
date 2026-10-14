@@ -62,7 +62,19 @@ export type KnowledgeIndexEnqueueResult = {
 }
 
 type CoordinatorSourceReader = {
-  readCurrent(sourceId: string): Promise<FrozenKnowledgeSourceSnapshot>
+  readCurrentIdentity(sourceId: string): Promise<
+    Pick<
+      FrozenKnowledgeSourceSnapshot,
+      | 'scopeKind'
+      | 'scopeId'
+      | 'sourceKind'
+      | 'sourceId'
+      | 'sourceRevision'
+      | 'sourceVersion'
+      | 'sourceChecksum'
+    >
+  >
+  hasCurrentDocument(sourceId: string, documentKey: string): Promise<boolean>
 }
 
 type KnowledgeIndexCoordinatorDependencies = {
@@ -94,19 +106,21 @@ export class KnowledgeIndexCoordinator {
     }
     const profile = await this.dependencies.repository.getActiveProfile()
     if (!profile) throw new Error('Vector index profile is unavailable')
-    const snapshot = await this.dependencies.reader.readCurrent(input.sourceId)
-    validateSnapshot(snapshot, input.sourceId)
+    const identity =
+      await this.dependencies.reader.readCurrentIdentity(input.sourceId)
+    validateIdentity(identity, input.sourceId)
     if (
       input.targetDocumentKey &&
-      (snapshot.sourceKind !== 'repository' ||
-        !snapshot.documents.some(
-          ({ documentKey }) => documentKey === input.targetDocumentKey
-        ))
+      (identity.sourceKind !== 'repository' ||
+        !(await this.dependencies.reader.hasCurrentDocument(
+          input.sourceId,
+          input.targetDocumentKey
+        )))
     ) {
       throw new Error('Repository index target is invalid')
     }
-    return this.enqueueSnapshot(
-      snapshot,
+    return this.enqueueIdentity(
+      identity,
       input.triggerSource,
       profile,
       input.targetDocumentKey
@@ -123,18 +137,41 @@ export class KnowledgeIndexCoordinator {
       knownProfile ?? (await this.dependencies.repository.getActiveProfile())
     if (!profile) throw new Error('Vector index profile is unavailable')
     validateSnapshot(snapshot, snapshot.sourceId)
+    return this.enqueueIdentity(
+      snapshot,
+      triggerSource,
+      profile,
+      targetDocumentKey
+    )
+  }
+
+  private enqueueIdentity(
+    identity: Pick<
+      FrozenKnowledgeSourceSnapshot,
+      | 'scopeKind'
+      | 'scopeId'
+      | 'sourceKind'
+      | 'sourceId'
+      | 'sourceRevision'
+      | 'sourceVersion'
+      | 'sourceChecksum'
+    >,
+    triggerSource: KnowledgeIndexJobTrigger,
+    profile: VectorIndexProfile,
+    targetDocumentKey?: string
+  ): Promise<KnowledgeIndexEnqueueResult> {
     const jobId = this.createId()
     const generationId = this.createId()
     return this.dependencies.repository.enqueue({
       jobId,
       generationId,
-      scopeKind: snapshot.scopeKind,
-      scopeId: snapshot.scopeId,
-      sourceKind: snapshot.sourceKind,
-      sourceId: snapshot.sourceId,
-      targetRevision: snapshot.sourceRevision,
-      targetVersion: snapshot.sourceVersion,
-      targetChecksum: snapshot.sourceChecksum,
+      scopeKind: identity.scopeKind,
+      scopeId: identity.scopeId,
+      sourceKind: identity.sourceKind,
+      sourceId: identity.sourceId,
+      targetRevision: identity.sourceRevision,
+      targetVersion: identity.sourceVersion,
+      targetChecksum: identity.sourceChecksum,
       ...(targetDocumentKey ? { targetDocumentKey } : {}),
       profileId: profile.id,
       triggerSource,
@@ -142,15 +179,41 @@ export class KnowledgeIndexCoordinator {
       idempotencyKey: [
         'index',
         profile.id,
-        snapshot.sourceKind,
-        snapshot.sourceId,
-        snapshot.sourceVersion,
-        snapshot.sourceChecksum,
+        identity.sourceKind,
+        identity.sourceId,
+        identity.sourceVersion,
+        identity.sourceChecksum,
         ...(targetDocumentKey ? [targetDocumentKey] : []),
         ...(triggerSource === 'startup_recovery' ? [jobId] : [])
       ].join(':'),
       createdAt: this.now()
     })
+  }
+}
+
+function validateIdentity(
+  identity: Pick<
+    FrozenKnowledgeSourceSnapshot,
+    | 'scopeKind'
+    | 'scopeId'
+    | 'sourceKind'
+    | 'sourceId'
+    | 'sourceRevision'
+    | 'sourceVersion'
+    | 'sourceChecksum'
+  >,
+  sourceId: string
+): void {
+  if (
+    identity.sourceId !== sourceId ||
+    !identity.scopeId ||
+    !identity.sourceKind ||
+    !identity.sourceVersion ||
+    !/^sha256:[a-f0-9]{64}$/.test(identity.sourceChecksum) ||
+    !Number.isSafeInteger(identity.sourceRevision) ||
+    identity.sourceRevision < 1
+  ) {
+    throw new Error('Knowledge index source identity is invalid')
   }
 }
 

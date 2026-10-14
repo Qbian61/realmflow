@@ -96,6 +96,41 @@ describe('CapabilitySpecCompiler', () => {
     ).toEqual(['issue-api-key'])
   })
 
+  it('generates a strict described HTTP Connector action contract with examples', () => {
+    const compiled = new CapabilitySpecCompiler().compile(
+      createCapabilitySpec(connectorSpec())
+    )
+    const manifest = parse(compiled.files['capability.yaml'])
+    const action = manifest.runtime.actions[0]
+
+    expect(manifest.runtime.configurationSchema).toMatchObject({
+      type: 'object',
+      description: 'Configuration accepted by this generated Connector.',
+      additionalProperties: false,
+      properties: {},
+      examples: [{}]
+    })
+    expect(action.inputSchema).toMatchObject({
+      type: 'object',
+      description: 'Arguments accepted by the Issue lookup HTTP action.',
+      additionalProperties: false,
+      required: ['issueId'],
+      properties: {
+        issueId: {
+          type: 'string',
+          minLength: 1,
+          description:
+            'Required. HTTP path parameter "issueId" taken from the user request or selected external record.'
+        }
+      },
+      examples: [{ issueId: 'example-issueId' }]
+    })
+    expect(action.outputSchema).toMatchObject({
+      type: 'object',
+      description: 'JSON object returned by the Issue lookup HTTP action.'
+    })
+  })
+
   it('rejects unsupported executable generation', () => {
     expect(() =>
       createCapabilitySpec({

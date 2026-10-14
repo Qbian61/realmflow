@@ -75,10 +75,11 @@ export class RepositoryMaterializer {
           await this.securePaths.resolvePathForCreation(stagingPath, file.path)
         ).targetPath
         await mkdir(dirname(targetPath), { recursive: true })
-        await writeFile(targetPath, file.content, {
-          encoding: 'utf8',
-          mode: 0o600
-        })
+        await writeFile(
+          targetPath,
+          'contentBytes' in file ? file.contentBytes : file.content,
+          { mode: 0o600 }
+        )
       }
       await executeFile('git', ['init', '--quiet', stagingPath], {
         maxBuffer: 64 * 1024

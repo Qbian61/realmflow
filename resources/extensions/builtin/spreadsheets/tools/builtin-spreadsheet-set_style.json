@@ -18,24 +18,46 @@
     "properties": {
       "sessionId": {
         "type": "string",
-        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$",
+        "description": "Stable local editing or browser session ID returned by an inspect/create tool.",
+        "examples": [
+          "12345678-1234-4234-9234-123456789abc"
+        ]
       },
       "expectedRevision": {
         "type": "integer",
-        "minimum": 0
+        "minimum": 0,
+        "description": "Expected revision used for optimistic concurrency control. Copy this value from the latest RealmFlow UI/API state; do not invent it.",
+        "examples": [
+          1
+        ]
       },
       "sheet": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 255
+        "maxLength": 255,
+        "description": "Spreadsheet sheet name.",
+        "examples": [
+          "Sheet1"
+        ]
       },
       "range": {
         "type": "string",
-        "pattern": "^[A-Za-z]{1,3}[1-9][0-9]*:[A-Za-z]{1,3}[1-9][0-9]*$"
+        "pattern": "^[A-Za-z]{1,3}[1-9][0-9]*:[A-Za-z]{1,3}[1-9][0-9]*$",
+        "description": "Spreadsheet A1 range affected by the operation.",
+        "examples": [
+          "A1:B2"
+        ]
       },
       "style": {
         "type": "object",
-        "additionalProperties": true
+        "additionalProperties": true,
+        "description": "Structured style patch for the target document or spreadsheet range.",
+        "examples": [
+          {
+            "bold": true
+          }
+        ]
       }
     },
     "required": [
@@ -44,6 +66,17 @@
       "sheet",
       "range",
       "style"
+    ],
+    "examples": [
+      {
+        "sessionId": "12345678-1234-4234-9234-123456789abc",
+        "expectedRevision": 1,
+        "sheet": "Sheet1",
+        "range": "A1:B2",
+        "style": {
+          "bold": true
+        }
+      }
     ]
   },
   "outputSchema": {

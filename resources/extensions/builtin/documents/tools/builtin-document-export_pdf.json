@@ -24,25 +24,54 @@
     "properties": {
       "sourcePath": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Authorized source path as a relative path under the authorized root. Do not invent or pass absolute local paths.",
+        "examples": [
+          "docs/source.docx"
+        ]
       },
       "sourceChecksum": {
         "type": "string",
-        "pattern": "^sha256:[a-f0-9]{64}$"
+        "pattern": "^sha256:[a-f0-9]{64}$",
+        "description": "SHA-256 checksum of the source file expected before conversion.",
+        "examples": [
+          "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ]
       },
       "outputPath": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Authorized new output path as a relative path under the authorized root; it must not overwrite existing content. Do not invent or pass absolute local paths.",
+        "examples": [
+          "exports/result.pdf"
+        ]
       },
       "expectedAbsent": {
         "type": "boolean",
-        "const": true
+        "const": true,
+        "description": "Must be true to confirm the target path does not already exist.",
+        "examples": [
+          true
+        ]
       },
       "scopeRoot": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Optional authorized root override. Omit or pass \".\" to use the current authorized root.",
+        "examples": [
+          "."
+        ]
       }
-    }
+    },
+    "examples": [
+      {
+        "sourcePath": "docs/source.docx",
+        "sourceChecksum": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "outputPath": "exports/result.pdf",
+        "expectedAbsent": true,
+        "scopeRoot": "."
+      }
+    ]
   },
   "outputSchema": {
     "type": "object",

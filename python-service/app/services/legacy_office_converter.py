@@ -20,6 +20,16 @@ SOURCE_TO_TARGET = {
     "ppt": "pptx",
     "pps": "pptx",
     "pot": "pptx",
+    "odt": "docx",
+    "rtf": "docx",
+    "ods": "xlsx",
+    "odp": "pptx",
+}
+
+OPTIONAL_SOURCE_TO_TARGET = {
+    "vsd": "pdf",
+    "vsdx": "pdf",
+    "pub": "pdf",
 }
 
 MAIN_PARTS = {
@@ -55,6 +65,16 @@ class LegacyOfficeConverter:
     ) -> None:
         self._resolve_executable = resolve_executable or _find_libreoffice
         self._run = run or _run_libreoffice
+        self._capabilities: dict[str, str] | None = None
+
+    def capabilities(self) -> dict[str, str]:
+        if self._capabilities is None:
+            self._capabilities = (
+                dict(OPTIONAL_SOURCE_TO_TARGET)
+                if self._resolve_executable()
+                else {}
+            )
+        return dict(self._capabilities)
 
     async def convert(
         self,
@@ -62,7 +82,9 @@ class LegacyOfficeConverter:
         format_: str,
         document: bytes,
     ) -> LegacyOfficeConversionResult:
-        target_format = SOURCE_TO_TARGET.get(format_)
+        target_format = SOURCE_TO_TARGET.get(format_) or self.capabilities().get(
+            format_
+        )
         if target_format is None:
             raise LegacyOfficeConversionError(
                 "legacy_office_format_unsupported",
@@ -107,7 +129,10 @@ class LegacyOfficeConverter:
                 ) from error
             try:
                 converted = output_path.read_bytes()
-                _validate_ooxml(converted, target_format)
+                if target_format == "pdf":
+                    _validate_pdf(converted)
+                else:
+                    _validate_ooxml(converted, target_format)
             except LegacyOfficeConversionError:
                 raise
             except Exception as error:
@@ -214,3 +239,14 @@ def _validate_ooxml(document: bytes, target_format: str) -> None:
             "legacy_office_output_invalid",
             "Converted Office document is not a valid ZIP package",
         ) from error
+
+
+def _validate_pdf(document: bytes) -> None:
+    if (
+        not document.startswith(b"%PDF-")
+        or b"%%EOF" not in document[-1_024:]
+    ):
+        raise LegacyOfficeConversionError(
+            "legacy_office_output_invalid",
+            "Converted document is not a valid PDF",
+        )

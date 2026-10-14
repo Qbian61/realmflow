@@ -19,14 +19,28 @@
       "requirementId": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 200
+        "maxLength": 200,
+        "description": "Stable requirement ID whose data should be read or changed.",
+        "examples": [
+          "requirement-1"
+        ]
       },
       "nodeId": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 200
+        "maxLength": 200,
+        "description": "Stable workflow node ID used to narrow execution lookup within a requirement.",
+        "examples": [
+          "node-1"
+        ]
       }
-    }
+    },
+    "examples": [
+      {
+        "requirementId": "requirement-1",
+        "nodeId": "node-1"
+      }
+    ]
   },
   "outputSchema": {
     "type": "object",

@@ -1,8 +1,11 @@
 import { createHash } from 'node:crypto'
+import { CONTENT_EXTRACTION_LIMITS } from '../../../../domain/content-extraction'
 import type {
   FrozenKnowledgeSourceSnapshot,
   KnowledgeIndexEnqueueResult
 } from './knowledge-index-coordinator'
+import { mapExtractedBundleToKnowledgeDocuments } from './knowledge-extraction-adapter'
+import type { LocalContentExtractionService } from '../content-extraction/local-content-extraction-service'
 
 export type KnowledgeArtifact = {
   id: string
@@ -10,6 +13,7 @@ export type KnowledgeArtifact = {
   nodeId?: string
   relativePath: string
   checksum: string
+  mediaType?: string
   version: number
   formal: boolean
 }
@@ -28,8 +32,13 @@ export type KnowledgeSyncDependencies = {
   }
   artifacts: {
     listByRequirement: (requirementId: string) => Promise<KnowledgeArtifact[]>
-    readContent: (artifact: KnowledgeArtifact) => Promise<string>
+    readSource: (artifact: KnowledgeArtifact) => Promise<{
+      bytes: Uint8Array
+      fileName: string
+      mimeType?: string
+    }>
   }
+  contentExtractor: Pick<LocalContentExtractionService, 'extract'>
   coordinator: {
     enqueueSnapshot(
       snapshot: FrozenKnowledgeSourceSnapshot,
@@ -80,10 +89,25 @@ export class SyncRequirementArtifactsUseCase {
         continue
       }
       try {
-        const content = await this.dependencies.artifacts.readContent(artifact)
-        if (checksum(content) !== artifact.checksum) {
+        const source = await this.dependencies.artifacts.readSource(artifact)
+        if (checksum(source.bytes) !== artifact.checksum) {
           throw new Error('Artifact content changed before knowledge enqueue')
         }
+        const bundle = await this.dependencies.contentExtractor.extract({
+          bytes: source.bytes,
+          fileName: source.fileName,
+          ...(source.mimeType ? { mimeType: source.mimeType } : {}),
+          sourceChecksum: artifact.checksum,
+          policy: {
+            consumer: 'artifact_sync',
+            allowLocalOcr: true,
+            allowLocalConversion: true,
+            maxCharacters: CONTENT_EXTRACTION_LIMITS.maxExtractedCharacters,
+            maxUnits: CONTENT_EXTRACTION_LIMITS.maxArchiveEntries
+          },
+          signal: new AbortController().signal,
+          depth: 0
+        })
         const enqueued = await this.dependencies.coordinator.enqueueSnapshot(
           {
             scopeKind: 'workspace',
@@ -93,14 +117,10 @@ export class SyncRequirementArtifactsUseCase {
             sourceRevision: artifact.version,
             sourceVersion: `artifact:${artifact.version}`,
             sourceChecksum: artifact.checksum,
-            documents: [
-              {
-                documentKey: artifact.relativePath,
-                sourceEntityId: artifact.id,
-                title: artifact.relativePath,
-                content
-              }
-            ]
+            documents: mapExtractedBundleToKnowledgeDocuments(
+              bundle,
+              artifact.id
+            )
           },
           'source_event'
         )
@@ -114,6 +134,6 @@ export class SyncRequirementArtifactsUseCase {
   }
 }
 
-function checksum(content: string): string {
-  return `sha256:${createHash('sha256').update(content).digest('hex')}`
+function checksum(bytes: Uint8Array): string {
+  return `sha256:${createHash('sha256').update(bytes).digest('hex')}`
 }

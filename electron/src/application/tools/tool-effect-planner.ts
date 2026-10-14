@@ -10,6 +10,11 @@ import type { AdapterEffectPlan } from './tool-adapter'
 import { ScopePathResolver } from './scope-path-resolver'
 import type { BrowserAction, BrowserCallContext, BrowserEffectEvidence } from '../browser/browser-runtime-port'
 import type { ToolExecutionContext } from './tool-adapter'
+import {
+  FilesystemGitRepositoryResolver,
+  type GitRepositoryResolverPort
+} from './git-repository-resolver'
+import { assertPublicUrl } from '../web/web-response'
 
 export type ToolSessionFamily =
   | 'word'
@@ -49,6 +54,7 @@ export type BuiltinToolEffectPlannerDependencies = {
   managedProcesses?: {
     describeManaged(input: { owner: ToolExecutionContext['owner']; processId: string; runId?: string }): Promise<{ currentRun: boolean; fingerprint: string }>
   }
+  gitRepositoryResolver?: GitRepositoryResolverPort
 }
 
 type PlanInput = {
@@ -116,6 +122,7 @@ const USER_ADDRESSABLE_CAPABILITIES = new Set<ToolCapability>([
   'filesystem.read',
   'filesystem.write',
   'filesystem.delete',
+  'process.inspect',
   'process.discover',
   'process.execute',
   'process.manage',
@@ -362,7 +369,11 @@ async function plan(
     ]
   }
   if (PROCESS_HANDLERS.has(name)) {
-    if (name === 'process.list' || name === 'process.discover') {
+    if (name === 'process.list') {
+      if (!input.context) throw new Error('Process owner is unavailable')
+      return [{ kind: 'process.inspect', owner: input.context.owner }]
+    }
+    if (name === 'process.discover') {
       return [{ kind: 'process.inspect', workingDirectory: await selectedRoot(input, dependencies) }]
     }
     if (name === 'process.stop') {
@@ -387,12 +398,9 @@ async function plan(
   if (name === 'web.search') {
     const config = input.webConfiguration
     if (!config || config.searchProvider === 'disabled') {
-      return [{
-        kind: 'network.public_read',
-        localDataEgress: false,
-        providerId: 'browser',
-        origin: 'https://www.google.com'
-      }]
+      throw Object.assign(new Error('Web search provider is not configured'), {
+        code: 'provider_unconfigured'
+      })
     }
     const effects: ToolEffect[] = [{
       kind: 'network.public_read', localDataEgress: false,
@@ -406,7 +414,7 @@ async function plan(
     return effects
   }
   if (name.startsWith('git.')) {
-    const repositoryRoot = await selectedRoot(input, dependencies)
+    const repositoryRoot = await gitRepositoryRoot(input, dependencies)
     return name === 'git.commit'
       ? [{ kind: 'repository.local_write', repositoryRoot }]
       : [{ kind: 'filesystem.read', path: repositoryRoot }]
@@ -663,6 +671,25 @@ async function selectedRoot(
   ).canonicalPath
 }
 
+async function gitRepositoryRoot(
+  input: PlanInput,
+  dependencies: Required<
+    Pick<BuiltinToolEffectPlannerDependencies, 'pathResolver'>
+  > &
+    Pick<BuiltinToolEffectPlannerDependencies, 'gitRepositoryResolver'>
+): Promise<string> {
+  const selected = await selectedRoot(input, dependencies)
+  return (
+    await (
+      dependencies.gitRepositoryResolver ??
+      new FilesystemGitRepositoryResolver()
+    ).resolve({
+      selectedRoot: selected,
+      authorizedRoots: input.scopeRoots
+    })
+  ).repositoryRoot
+}
+
 function selectedRoots(input: PlanInput): readonly string[] {
   const requested = optionalPath(input.arguments, 'scopeRoot')
   if (!requested) return input.scopeRoots
@@ -815,6 +842,7 @@ function publicWebOrigin(value: unknown): string {
   const origin = sanitizedWebOrigin(value)
   const url = new URL(value as string)
   if (url.username || url.password) throw new Error('Public URL must not contain credentials')
+  assertPublicUrl(url)
   return origin
 }
 

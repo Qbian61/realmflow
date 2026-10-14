@@ -69,9 +69,10 @@ describe("CapabilitiesPage", () => {
     expect(container.querySelector(".product-capability-grid")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: "智能体" }));
+    expect(await screen.findByText("通用协作智能体")).toBeVisible();
     expect(
-      screen.getByText("暂无智能体").closest(".ui-empty-state"),
-    ).toBeTruthy();
+      container.querySelector(".agent-profile-directory"),
+    ).toBeInTheDocument();
   });
 
   it("reloads localized capability display text when the locale changes", async () => {
@@ -187,7 +188,7 @@ describe("CapabilitiesPage", () => {
     expect(toolsTab).toHaveAttribute("aria-selected", "false");
     expect(skillsTab).toHaveAttribute("aria-selected", "false");
     expect(agentsTab).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByText("暂无智能体")).toBeVisible();
+    expect(screen.getByText("通用协作智能体")).toBeVisible();
     expect(screen.queryByText("需求分析")).not.toBeInTheDocument();
     expect(screen.queryByText("文件系统")).not.toBeInTheDocument();
 
@@ -327,6 +328,150 @@ describe("CapabilitiesPage", () => {
     expect(screen.queryByRole("heading", { name: "扩展包" })).toBeNull();
     expect(screen.queryByRole("heading", { name: "技能目录" })).toBeNull();
     expect(screen.queryByRole("heading", { name: "全部技能" })).toBeNull();
+  });
+
+  it("shows Skill dependency issues in the product Skill detail", async () => {
+    const catalog = catalogFixture();
+    setRealmflow(
+      createToolCatalog({
+        list: vi.fn().mockResolvedValue({
+          ...catalog,
+          skills: [
+            {
+              ...catalog.skills[0],
+              id: "workspace.skill.review",
+              status: "dependency_disabled",
+              dependencyIssues: ["builtin.files.read@^2.0.0"],
+              definition: {
+                ...catalog.skills[0].definition,
+                name: "Review workflow",
+                description: "Reviews repository changes.",
+              },
+            },
+          ],
+        }),
+      }),
+    );
+
+    renderPage("/capabilities?tab=skills");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Review workflow" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Review workflow" });
+    expect(within(dialog).getByText("依赖不可用")).toBeVisible();
+    expect(within(dialog).getByText("builtin.files.read@^2.0.0")).toBeVisible();
+  });
+
+  it("shows agent portraits with scene filters and expandable search", async () => {
+    setRealmflow(createToolCatalog());
+
+    renderPage("/capabilities?tab=agents");
+
+    expect(await screen.findByText("通用协作智能体")).toBeVisible();
+    expect(
+      screen.queryByRole("searchbox", { name: "搜索能力" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("combobox", { name: "来源" }),
+    ).not.toBeInTheDocument();
+    const scenes = screen.getByRole("group", {
+      name: "按运行场景筛选智能体",
+    });
+    expect(
+      within(scenes).getByRole("button", { name: "全部" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(
+      within(scenes).getByRole("button", { name: "需求节点" }),
+    ).toBeVisible();
+
+    const search = screen.getByRole("searchbox", { name: "搜索智能体" });
+    const searchControl = search.closest(".agent-profile-directory-search");
+    expect(searchControl).toHaveAttribute("data-expanded", "false");
+    expect(search).toHaveAttribute("tabindex", "-1");
+
+    fireEvent.click(screen.getByRole("button", { name: "搜索" }));
+    expect(searchControl).toHaveAttribute("data-expanded", "true");
+    expect(search).toHaveFocus();
+    fireEvent.change(search, { target: { value: "需求" } });
+
+    expect(screen.getByText("需求执行智能体")).toBeVisible();
+    expect(screen.queryByText("空间协作智能体")).not.toBeInTheDocument();
+
+    fireEvent.change(search, { target: { value: "" } });
+    fireEvent.click(within(scenes).getByRole("button", { name: "定时任务" }));
+    expect(screen.getByText("工作流执行智能体")).toBeVisible();
+    expect(screen.queryByText("需求执行智能体")).not.toBeInTheDocument();
+  });
+
+  it("keeps the Agents tab focused on the portrait directory only", async () => {
+    const definition = capabilityDefinitionFixture("1.0.0");
+    window.realmflow = {
+      business: {
+        listConnectors: vi.fn().mockResolvedValue([]),
+      } as unknown as BusinessApi,
+      toolCatalog: createToolCatalog(),
+      capabilityCatalog: {
+        list: vi.fn().mockResolvedValue({
+          definitions: [definition],
+          installations: [
+            capabilityInstallationFixture(definition, {
+              enabled: false,
+              status: "installed_disabled",
+            }),
+          ],
+          displayByDefinitionKey: {},
+        }),
+        chooseAndPrepare: vi.fn(),
+        install: vi.fn(),
+        discard: vi.fn(),
+        setEnabled: vi.fn(),
+        changeVersion: vi.fn(),
+      },
+    } as unknown as typeof window.realmflow;
+
+    renderPage("/capabilities?tab=agents");
+
+    expect(await screen.findByText("通用协作智能体")).toBeVisible();
+    expect(await screen.findAllByText("Review Agent")).not.toHaveLength(0);
+    expect(
+      screen.queryByRole("region", { name: "已安装能力" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("switch", { name: "启用Review Agent" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "工具权限" })).toBeNull();
+  });
+
+  it("opens an agent portrait detail with persona, prompt, tools, and skills", async () => {
+    setRealmflow(createToolCatalog());
+
+    renderPage("/capabilities?tab=agents");
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /通用协作智能体/ }),
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "通用协作智能体" });
+    expect(screen.getByTestId("ui-dialog-backdrop")).not.toHaveClass(
+      "ui-dialog-backdrop--workspace",
+    );
+    expect(within(dialog).getByRole("heading", { name: "人设" })).toBeVisible();
+    expect(within(dialog).getAllByText(/本地优先/).length).toBeGreaterThan(0);
+    expect(
+      within(dialog).getByRole("heading", { name: "系统提示词" }),
+    ).toBeVisible();
+    expect(
+      within(dialog).getByText(/Keep business data local/),
+    ).toBeVisible();
+    expect(
+      within(dialog).getByRole("heading", { name: "使用工具" }),
+    ).toBeVisible();
+    expect(within(dialog).getByText("文件系统")).toBeVisible();
+    expect(within(dialog).getByText("网页访问")).toBeVisible();
+    expect(
+      within(dialog).getByRole("heading", { name: "使用技能" }),
+    ).toBeVisible();
+    expect(within(dialog).getByText("需求分析")).toBeVisible();
   });
 
   it("aggregates builtin web primitives into one Web product Tool", async () => {
@@ -527,6 +672,103 @@ describe("CapabilitiesPage", () => {
     );
   });
 
+  it("keeps a package disabled when Main rejects activation for an invalid contract", async () => {
+    const catalog = catalogFixture();
+    const list = vi.fn().mockResolvedValue({
+      ...catalog,
+      packages: catalog.packages.map((item) => ({
+        ...item,
+        enabledPreference: false,
+        status: "disabled",
+      })),
+      tools: [],
+      skills: [],
+    });
+    const setActivation = vi
+      .fn()
+      .mockRejectedValue(
+        new Error("Tool Catalog contract failed: input schema is invalid"),
+      );
+    setRealmflow(createToolCatalog({ list, setActivation }));
+
+    renderPage();
+    const dialog = await openCatalogManagement();
+    const toggle = await within(dialog).findByRole("switch", {
+      name: "启用文件",
+    });
+    const listCallsBeforeToggle = list.mock.calls.length;
+    fireEvent.click(toggle);
+
+    await waitFor(() =>
+      expect(setActivation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          targetType: "package",
+          targetId: "realmflow.builtin.files",
+          enabled: true,
+        }),
+      ),
+    );
+    expect(await screen.findByText("无法更新启用状态")).toBeVisible();
+    expect(
+      screen.getByText(
+        "本次操作未完成，已确认的数据保持不变。请检查相关配置后重试。",
+      ),
+    ).toBeVisible();
+    await waitFor(() => expect(toggle).not.toBeDisabled());
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(list).toHaveBeenCalledTimes(listCallsBeforeToggle);
+  });
+
+  it("shows runtime unavailable diagnostics only in the management catalog", async () => {
+    const catalog = catalogFixture();
+    const unavailableTool: ToolCatalogDto["tools"][number] = {
+      ...catalog.tools[0],
+      id: "builtin.web.search",
+      definitionDigest: "f".repeat(64),
+      definition: {
+        ...catalog.tools[0].definition,
+        name: "Search web",
+        description: "Search configured web providers.",
+        capabilities: ["network.connect"],
+      },
+      status: "unavailable",
+      runtimeEligibility: {
+        status: "unavailable",
+        reasonCode: "web_search_disabled",
+        checkedAt: 1_000,
+        expiresAt: 31_000,
+        dependencyRevision: "web-provider:7",
+      },
+    };
+    const list = vi.fn(
+      async ({
+        modelFacingMode,
+      }: {
+        locale: "zh-CN" | "en" | "ja";
+        modelFacingMode?: "direct" | "facade" | "directory";
+      }) =>
+        modelFacingMode
+          ? catalog
+          : {
+              ...catalog,
+              tools: [...catalog.tools, unavailableTool],
+            },
+    );
+    setRealmflow(createToolCatalog({ list }));
+
+    renderPage();
+
+    expect(await screen.findByText("文件系统")).toBeVisible();
+    expect(screen.queryByText("Search web")).toBeNull();
+
+    const dialog = await openCatalogManagement();
+
+    expect(await within(dialog).findByText("Search web")).toBeVisible();
+    expect(within(dialog).getByText("不可用")).toBeVisible();
+    expect(within(dialog).getByText("web_search_disabled")).toBeVisible();
+    expect(list).toHaveBeenLastCalledWith({ locale: "zh-CN" });
+  });
+
   it("waits for Main when rolling a Plugin package back to an installed version", async () => {
     const catalog = catalogFixture();
     const changePackageVersion = vi.fn().mockResolvedValue(undefined);
@@ -614,7 +856,7 @@ describe("CapabilitiesPage", () => {
     expect(within(dialog).getByText("覆盖 5 个原子工具")).toBeVisible();
     expect(within(dialog).getAllByText("最高风险：low").length).toBeGreaterThanOrEqual(1);
     expect(within(dialog).getByText("Document")).toBeVisible();
-    expect(within(dialog).getByText("覆盖 14 个原子工具")).toBeVisible();
+    expect(within(dialog).getByText("覆盖 15 个原子工具")).toBeVisible();
     expect(within(dialog).getAllByText("最高风险：medium").length).toBeGreaterThanOrEqual(1);
     expect(list).toHaveBeenLastCalledWith({
       locale: "zh-CN",
@@ -731,6 +973,7 @@ describe("CapabilitiesPage", () => {
       validationReport: {
         compatible: true,
         dependencyStatus: "resolved",
+        contract: { status: "passed", diagnostics: [] },
         tests: [{ id: "contract", status: "passed" }],
       },
     } as const;
@@ -791,6 +1034,8 @@ describe("CapabilitiesPage", () => {
         "用户全局",
       ),
     ).toBeVisible();
+    expect(within(importDialog).getByText("能力契约")).toBeVisible();
+    expect(within(importDialog).getByText("已通过")).toBeVisible();
     expect(
       screen.getByText("安装后默认停用，需要明确启用后才会被新任务发现。"),
     ).toBeVisible();
@@ -805,37 +1050,67 @@ describe("CapabilitiesPage", () => {
         enable: false,
       }),
     );
-    expect(await screen.findByText("Review Agent")).toBeVisible();
+    expect(await screen.findAllByText("Review Agent")).not.toHaveLength(0);
     expect(
-      within(screen.getByRole("region", { name: "已安装能力" })).getByText(
-        "已关闭",
-      ),
+      screen.getByRole("button", { name: /Review Agent Reviews changes/ }),
     ).toBeVisible();
+    expect(
+      screen.queryByRole("region", { name: "已安装能力" }),
+    ).not.toBeInTheDocument();
   });
 
-  it("waits for Main when enabling, upgrading, and rolling back a capability", async () => {
-    const version1 = capabilityDefinitionFixture("1.0.0");
-    const version2 = capabilityDefinitionFixture("2.0.0");
-    const disabled = capabilityInstallationFixture(version1, {
+  it("waits for Main when enabling, upgrading, and rolling back a Connector capability", async () => {
+    const version1 = connectorCapabilityFixture(
+      "database.analytics",
+      "Analytics Connector",
+      "database",
+      1,
+      "enabled",
+    ).definition;
+    const version2 = {
+      ...version1,
+      version: "2.0.0",
+      definitionDigest: "a".repeat(64),
+    };
+    const disabled = {
+      id: "installation-database-analytics",
+      capabilityId: version1.id,
+      capabilityVersion: version1.version,
+      capabilityDigest: version1.definitionDigest,
+      scope: { kind: "global" as const },
       enabled: false,
-      status: "installed_disabled",
-    });
-    let resolveEnabled!: (
-      value: ReturnType<typeof capabilityInstallationFixture>,
-    ) => void;
+      permissionCeiling: version1.permissions,
+      status: "installed_disabled" as const,
+      revision: 1,
+      installedAt: 100,
+      updatedAt: 100,
+    };
+    const enabled = {
+      ...disabled,
+      enabled: true,
+      status: "enabled" as const,
+      revision: 2,
+    };
+    const upgraded = {
+      ...enabled,
+      capabilityVersion: version2.version,
+      capabilityDigest: version2.definitionDigest,
+      revision: 3,
+    };
+    const rolledBack = {
+      ...enabled,
+      revision: 4,
+    };
+    let resolveEnabled!: (value: typeof enabled) => void;
     const setEnabled = vi.fn().mockReturnValue(
-      new Promise((resolve) => {
+      new Promise<typeof enabled>((resolve) => {
         resolveEnabled = resolve;
       }),
     );
     const changeVersion = vi
       .fn()
-      .mockResolvedValueOnce(
-        capabilityInstallationFixture(version2, { revision: 3 }),
-      )
-      .mockResolvedValueOnce(
-        capabilityInstallationFixture(version1, { revision: 4 }),
-      );
+      .mockResolvedValueOnce(upgraded)
+      .mockResolvedValueOnce(rolledBack);
     window.realmflow = {
       business: {
         listConnectors: vi.fn().mockResolvedValue([]),
@@ -853,35 +1128,31 @@ describe("CapabilitiesPage", () => {
         changeVersion,
       },
     } as unknown as typeof window.realmflow;
-    renderPage();
-    fireEvent.click(screen.getByRole("tab", { name: "智能体" }));
+    renderPage("/capabilities?tab=connectors&connectorKind=database");
 
     const activation = await screen.findByRole("switch", {
-      name: "启用Review Agent",
+      name: "启用Analytics Connector",
     });
+
     fireEvent.click(activation);
 
     expect(activation).toHaveAttribute("aria-checked", "false");
-    expect(activation).toBeDisabled();
-    resolveEnabled(
-      capabilityInstallationFixture(version1, {
-        enabled: true,
-        status: "enabled",
-        revision: 2,
-      }),
-    );
+    await waitFor(() => expect(activation).toBeDisabled());
+    resolveEnabled(enabled);
     await waitFor(() =>
       expect(activation).toHaveAttribute("aria-checked", "true"),
     );
 
     const version = screen.getByRole("combobox", {
-      name: "Review Agent 版本",
+      name: "Analytics Connector 版本",
     });
     fireEvent.change(version, { target: { value: "2.0.0" } });
-    fireEvent.click(screen.getByRole("button", { name: "升级 Review Agent" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "升级 Analytics Connector" }),
+    );
     await waitFor(() =>
       expect(changeVersion).toHaveBeenCalledWith({
-        installationId: "installation-agent",
+        installationId: "installation-database-analytics",
         targetVersion: "2.0.0",
         expectedRevision: 2,
         operation: "upgrade",
@@ -890,11 +1161,13 @@ describe("CapabilitiesPage", () => {
 
     fireEvent.change(version, { target: { value: "1.0.0" } });
     fireEvent.click(
-      await screen.findByRole("button", { name: "回滚 Review Agent" }),
+      await screen.findByRole("button", {
+        name: "回滚 Analytics Connector",
+      }),
     );
     await waitFor(() =>
       expect(changeVersion).toHaveBeenLastCalledWith({
-        installationId: "installation-agent",
+        installationId: "installation-database-analytics",
         targetVersion: "1.0.0",
         expectedRevision: 3,
         operation: "rollback",
@@ -902,7 +1175,7 @@ describe("CapabilitiesPage", () => {
     );
   });
 
-  it("shares search, source, scope, status, and risk filters across tabs", async () => {
+  it("keeps capability filters out of Agents while preserving query state for Tools", async () => {
     const definition = capabilityDefinitionFixture("1.0.0");
     const installation = capabilityInstallationFixture(definition);
     window.realmflow = {
@@ -926,31 +1199,34 @@ describe("CapabilitiesPage", () => {
       "/capabilities?tab=agents&query=review&source=local_upload&scope=global&status=enabled&risk=low",
     );
 
-    expect(await screen.findByRole("searchbox", { name: "搜索能力" })).toHaveValue(
+    expect(await screen.findByRole("searchbox", { name: "搜索智能体" })).toHaveValue(
       "review",
     );
-    expect(screen.getByRole("combobox", { name: "来源" })).toHaveValue(
-      "local_upload",
-    );
-    expect(screen.getByRole("combobox", { name: "安装作用域" })).toHaveValue(
-      "global",
-    );
-    expect(screen.getByRole("combobox", { name: "启用状态" })).toHaveValue(
-      "enabled",
-    );
-    expect(screen.getByRole("combobox", { name: "风险等级" })).toHaveValue(
-      "low",
-    );
+    expect(
+      screen.queryByRole("searchbox", { name: "搜索能力" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("combobox", { name: "来源" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("combobox", { name: "安装作用域" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("combobox", { name: "启用状态" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("combobox", { name: "风险等级" }),
+    ).not.toBeInTheDocument();
 
-    expect(await screen.findByText("Review Agent")).toBeVisible();
-    fireEvent.change(screen.getByRole("searchbox", { name: "搜索能力" }), {
+    expect(await screen.findAllByText("Review Agent")).not.toHaveLength(0);
+    fireEvent.change(screen.getByRole("searchbox", { name: "搜索智能体" }), {
       target: { value: "missing" },
     });
     expect(screen.queryByText("Review Agent")).not.toBeInTheDocument();
-    fireEvent.change(screen.getByRole("searchbox", { name: "搜索能力" }), {
+    fireEvent.change(screen.getByRole("searchbox", { name: "搜索智能体" }), {
       target: { value: "review" },
     });
-    expect(screen.getByText("Review Agent")).toBeVisible();
+    expect(screen.getAllByText("Review Agent").length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByRole("tab", { name: "工具" }));
     expect(screen.getByRole("searchbox", { name: "搜索工具" })).toHaveValue(
@@ -1165,14 +1441,43 @@ describe("CapabilitiesPage", () => {
     setRealmflow(toolCatalog);
     renderPage();
 
-    await openCatalogManagement();
-    fireEvent.click(await screen.findByRole("button", { name: "导入压缩包" }));
+    const dialog = await openCatalogManagement();
+    fireEvent.click(
+      await within(dialog).findByRole("button", { name: "导入压缩包" }),
+    );
 
     expect(await screen.findByText("无法导入扩展包")).toBeVisible();
     expect(document.querySelector(".model-page-error")).toBeNull();
     expect(
       screen.queryByText("archive contained SECRET_TOKEN"),
     ).not.toBeInTheDocument();
+  });
+
+  it("shows safe contract diagnostics when Main rejects an imported package", async () => {
+    const diagnostic =
+      "Tool com.example.search input schema.properties.query.description is required";
+    const toolCatalog = createToolCatalog({
+      chooseAndImport: vi
+        .fn()
+        .mockRejectedValue(
+          new Error(`Tool Catalog contract failed: ${diagnostic}`),
+        ),
+    });
+    setRealmflow(toolCatalog);
+    renderPage();
+
+    const dialog = await openCatalogManagement();
+    fireEvent.click(
+      await within(dialog).findByRole("button", { name: "导入压缩包" }),
+    );
+
+    await waitFor(() => {
+      expect(toolCatalog.chooseAndImport).toHaveBeenCalled();
+    });
+    expect(
+      await screen.findByText(`无法导入扩展包：${diagnostic}`),
+    ).toBeVisible();
+    expect(document.querySelector(".model-page-error")).toBeNull();
   });
 
   it("uses the shared dialog, field, and button structure for the MCP editor", async () => {
@@ -1695,6 +2000,7 @@ function facadeCatalogFixture(): ToolCatalogDto {
             "builtin.document.comment_add",
             "builtin.document.comment_delete",
             "builtin.document.create",
+            "builtin.document.deliver_pdf",
             "builtin.document.export_pdf",
             "builtin.document.find",
             "builtin.document.insert_blocks",

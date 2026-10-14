@@ -20,6 +20,13 @@ class WordTokenizer:
         count = len(self.token_offsets(text))
         return count + 2 if count else 0
 
+    def tokenize_with_offsets(
+        self,
+        text: str,
+    ) -> tuple[int, list[tuple[int, int]]]:
+        offsets = self.token_offsets(text)
+        return (len(offsets) + 2 if offsets else 0, offsets)
+
     def token_offsets(self, text: str) -> list[tuple[int, int]]:
         return [match.span() for match in re.finditer(r"\S+", text)]
 
@@ -146,6 +153,38 @@ def test_long_line_respects_token_limit_and_overlap_budget() -> None:
         assert tokenizer.count_tokens(overlap) <= OVERLAP_TOKENS
 
 
+def test_long_text_tokenizes_full_content_once() -> None:
+    class CountingTokenizer(WordTokenizer):
+        def __init__(self) -> None:
+            self.full_tokenizations = 0
+            self.counted_texts: list[str] = []
+
+        def count_tokens(self, text: str) -> int:
+            self.counted_texts.append(text)
+            offsets = self.token_offsets(text)
+            return len(offsets) + 2 if offsets else 0
+
+        def tokenize_with_offsets(
+            self,
+            text: str,
+        ) -> tuple[int, list[tuple[int, int]]]:
+            self.full_tokenizations += 1
+            return super().tokenize_with_offsets(text)
+
+    content = " ".join(f"token-{index}" for index in range(5_000))
+    tokenizer = CountingTokenizer()
+
+    chunks = chunk_documents(
+        [{"documentKey": "long.txt", "content": content}],
+        tokenizer,
+    )["documents"][0]["chunks"]
+
+    assert tokenizer.full_tokenizations == 1
+    assert tokenizer.counted_texts == [
+        str(chunk["content"]) for chunk in chunks
+    ]
+
+
 def test_utf16_offsets_lines_and_checksums_preserve_original_text() -> None:
     content = "A😀B\r\nsecond"
 
@@ -178,6 +217,20 @@ def test_bundled_gte_tokenizer_never_exceeds_model_limit() -> None:
     class GteTokenizer:
         def count_tokens(self, text: str) -> int:
             return len(tokenizer.encode(text).ids)
+
+        def tokenize_with_offsets(
+            self,
+            text: str,
+        ) -> tuple[int, list[tuple[int, int]]]:
+            encoding = tokenizer.encode(text)
+            return (
+                len(encoding.ids),
+                [
+                    (start, end)
+                    for start, end in encoding.offsets
+                    if end > start
+                ],
+            )
 
         def token_offsets(self, text: str) -> list[tuple[int, int]]:
             return [

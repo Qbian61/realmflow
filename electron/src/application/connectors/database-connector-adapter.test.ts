@@ -31,6 +31,40 @@ describe('DatabaseConnectorAdapter', () => {
     })
   })
 
+  it('accepts declared parameters regardless of JSON key or protocol declaration order', async () => {
+    const query = vi.fn(async () => [{ id: 'doc-1', title: 'Roadmap' }])
+    const adapter = new DatabaseConnectorAdapter({
+      hosts: {
+        open: vi.fn(async () => ({ query, close: vi.fn() }))
+      }
+    })
+    const value = snapshot()
+    if (value.action.protocol.kind !== 'database') throw new Error('fixture')
+    value.action.protocol.statement =
+      'SELECT id, title FROM documents WHERE title = :title AND id = :id'
+    value.action.protocol.parameterNames = ['title', 'id']
+
+    const result = await adapter.invoke({
+      snapshot: value,
+      arguments: { id: 'doc-1', title: 'Roadmap' },
+      correlationId: 'run-1',
+      causationId: 'call-1'
+    })
+
+    expect(query).toHaveBeenCalledWith({
+      statement:
+        'SELECT id, title FROM documents WHERE title = :title AND id = :id',
+      parameters: { id: 'doc-1', title: 'Roadmap' },
+      readOnly: true,
+      timeoutMs: 2_000,
+      maxRows: 10
+    })
+    expect(result.output).toEqual({
+      rows: [{ id: 'doc-1', title: 'Roadmap' }],
+      rowCount: 1
+    })
+  })
+
   it('rejects undeclared parameters before opening the database', async () => {
     const open = vi.fn()
     const adapter = new DatabaseConnectorAdapter({ hosts: { open } })

@@ -19,11 +19,20 @@
       "profileId": {
         "type": "string",
         "pattern": "^browser-[A-Za-z0-9-]+$",
-        "maxLength": 120
+        "maxLength": 120,
+        "description": "Owned browser profile identifier approved by the user.",
+        "examples": [
+          "browser-primary"
+        ]
       }
     },
     "required": [
       "profileId"
+    ],
+    "examples": [
+      {
+        "profileId": "browser-primary"
+      }
     ]
   },
   "outputSchema": {

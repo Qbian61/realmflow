@@ -19,6 +19,16 @@ type KnowledgeIndexJobDialogProps = {
   onClose: () => void
 }
 
+export type KnowledgeIndexJobDetailsProps = {
+  name: string
+  view?: KnowledgeIndexViewDto
+  loading: boolean
+  error?: boolean
+  onRetry?: () => void
+  className?: string
+  showHeading?: boolean
+}
+
 const statusLabelKeys = {
   pending: 'resources.indexJob.status.pending',
   running: 'resources.indexJob.status.running',
@@ -50,8 +60,7 @@ export function KnowledgeIndexJobDialog({
   onRetry,
   onClose
 }: KnowledgeIndexJobDialogProps): JSX.Element {
-  const { locale, t } = useLocalization()
-  const job = view?.job
+  const { t } = useLocalization()
   const titleId = 'knowledge-index-job-dialog-title'
 
   return (
@@ -81,58 +90,91 @@ export function KnowledgeIndexJobDialog({
       </DialogHeader>
 
       <DialogBody>
-        {loading ? (
-          <p className="knowledge-index-job-message" role="status">
-            {t('resources.indexJob.loading')}
-          </p>
-        ) : error ? (
-          <InlineAlert
-            className="knowledge-index-job-alert"
-            tone="danger"
-            role="alert"
-            title={t('resources.indexJob.loadFailed')}
-            actionLabel={onRetry ? t('common.retry') : undefined}
-            actionLoading={loading}
-            onAction={onRetry}
-          />
-        ) : job ? (
-          <dl className="knowledge-index-job-details">
-            <div>
-              <dt>{t('resources.indexJob.status')}</dt>
-              <dd data-status={job.status}>{t(statusLabelKeys[job.status])}</dd>
-            </div>
-            <div>
-              <dt>{t('resources.indexJob.trigger')}</dt>
-              <dd>{t(triggerLabelKeys[job.triggerSource])}</dd>
-            </div>
-            <div>
-              <dt>{t('resources.indexJob.createdAt')}</dt>
-              <dd>{formatTimestamp(job.createdAt, locale)}</dd>
-            </div>
-            <div>
-              <dt>{t('resources.indexJob.updatedAt')}</dt>
-              <dd>{formatTimestamp(job.updatedAt, locale)}</dd>
-            </div>
-            {job.completedAt ? (
-              <div>
-                <dt>{t('resources.indexJob.completedAt')}</dt>
-                <dd>{formatTimestamp(job.completedAt, locale)}</dd>
-              </div>
-            ) : null}
-            {job.errorCode ? (
-              <div className="knowledge-index-job-error">
-                <dt>{t('resources.indexJob.failureReason')}</dt>
-                <dd>{formatError(job.errorCode, t)}</dd>
-              </div>
-            ) : null}
-          </dl>
-        ) : (
-          <p className="knowledge-index-job-message">
-            {t('resources.indexJob.empty')}
-          </p>
-        )}
+        <KnowledgeIndexJobDetails
+          name={name}
+          view={view}
+          loading={loading}
+          error={error}
+          onRetry={onRetry}
+        />
       </DialogBody>
     </Dialog>
+  )
+}
+
+export function KnowledgeIndexJobDetails({
+  name,
+  view,
+  loading,
+  error = false,
+  onRetry,
+  className,
+  showHeading = false
+}: KnowledgeIndexJobDetailsProps): JSX.Element {
+  const { locale, t } = useLocalization()
+  const job = view?.job
+
+  return (
+    <section
+      className={['knowledge-index-job-section', className]
+        .filter(Boolean)
+        .join(' ')}
+      aria-label={t('resources.indexJob.title', { name })}
+    >
+      {showHeading ? (
+        <h3>{t('resources.indexJob.title', { name })}</h3>
+      ) : null}
+      {loading ? (
+        <p className="knowledge-index-job-message" role="status">
+          {t('resources.indexJob.loading')}
+        </p>
+      ) : error ? (
+        <InlineAlert
+          className="knowledge-index-job-alert"
+          tone="danger"
+          role="alert"
+          title={t('resources.indexJob.loadFailed')}
+          actionLabel={onRetry ? t('common.retry') : undefined}
+          actionLoading={loading}
+          onAction={onRetry}
+        />
+      ) : job ? (
+        <dl className="knowledge-index-job-details">
+          <div>
+            <dt>{t('resources.indexJob.status')}</dt>
+            <dd data-status={job.status}>{t(statusLabelKeys[job.status])}</dd>
+          </div>
+          <div>
+            <dt>{t('resources.indexJob.trigger')}</dt>
+            <dd>{t(triggerLabelKeys[job.triggerSource])}</dd>
+          </div>
+          <div>
+            <dt>{t('resources.indexJob.createdAt')}</dt>
+            <dd>{formatTimestamp(job.createdAt, locale)}</dd>
+          </div>
+          <div>
+            <dt>{t('resources.indexJob.updatedAt')}</dt>
+            <dd>{formatTimestamp(job.updatedAt, locale)}</dd>
+          </div>
+          {job.completedAt ? (
+            <div>
+              <dt>{t('resources.indexJob.completedAt')}</dt>
+              <dd>{formatTimestamp(job.completedAt, locale)}</dd>
+            </div>
+          ) : null}
+          {job.errorCode ? (
+            <div className="knowledge-index-job-error">
+              <dt>{t('resources.indexJob.failureReason')}</dt>
+              <dd>{formatError(job.errorCode, t)}</dd>
+            </div>
+          ) : null}
+        </dl>
+      ) : (
+        <p className="knowledge-index-job-message">
+          {t('resources.indexJob.empty')}
+        </p>
+      )}
+    </section>
   )
 }
 
@@ -158,7 +200,19 @@ function formatError(
     model_assets_invalid: 'resources.indexJob.error.modelAssetsInvalid',
     qdrant_schema_incompatible:
       'resources.indexJob.error.qdrantSchemaIncompatible',
-    indexing_failed: 'resources.indexJob.error.indexingFailed'
+    indexing_failed: 'resources.indexJob.error.indexingFailed',
+    extraction_encrypted: 'resources.indexError.encrypted',
+    extraction_invalid: 'resources.indexError.invalid',
+    extraction_limit_exceeded: 'resources.indexError.limitExceeded',
+    extraction_ocr_failed: 'resources.indexError.ocrFailed',
+    extraction_ocr_required: 'resources.indexError.ocrRequired',
+    extraction_converter_unavailable:
+      'resources.indexError.converterUnavailable',
+    extraction_archive_unsafe: 'resources.indexError.archiveUnsafe',
+    extraction_empty: 'resources.indexError.empty',
+    extraction_interrupted: 'resources.indexError.interrupted',
+    source_changed_during_extraction: 'resources.indexError.sourceChanged',
+    extraction_unsupported: 'resources.indexError.unsupported'
   }
   const key = keyByCode[errorCode]
   return key

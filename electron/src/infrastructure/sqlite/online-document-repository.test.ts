@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -113,6 +114,23 @@ describe('Sqlite online document store', () => {
     await expect(
       store.getCurrentOnlineDocumentSnapshot('source-1')
     ).resolves.toEqual(snapshot)
+    expect(
+      database
+        .prepare(
+          `SELECT unit_key, title, content, content_checksum, byte_size
+           FROM online_document_snapshot_documents
+           WHERE snapshot_id = ?`
+        )
+        .all(snapshot.id)
+    ).toEqual([
+      {
+        unit_key: 'content',
+        title: 'Product brief',
+        content: '# Brief 1',
+        content_checksum: snapshot.documents[0]?.checksum,
+        byte_size: 9
+      }
+    ])
     await expect(repository.listEvents('source-1')).resolves.toHaveLength(3)
   })
 
@@ -144,17 +162,20 @@ describe('Sqlite online document store', () => {
     expect(
       database
         .prepare(
-          `SELECT version, content FROM online_document_snapshots
+          `SELECT version FROM online_document_snapshots
            WHERE source_id = ? ORDER BY version`
         )
         .all('source-1')
     ).toEqual([
-      { version: 1, content: '# Brief 1' },
-      { version: 2, content: '# Brief 2' }
+      { version: 1 },
+      { version: 2 }
     ])
     await expect(
       store.getCurrentOnlineDocumentSnapshot('source-1')
-    ).resolves.toMatchObject({ version: 2, content: '# Brief 2' })
+    ).resolves.toMatchObject({
+      version: 2,
+      documents: [{ unitKey: 'content', content: '# Brief 2' }]
+    })
   })
 
   it('records a safe failure without replacing the last successful snapshot', async () => {
@@ -189,7 +210,10 @@ describe('Sqlite online document store', () => {
     })
     await expect(
       store.getCurrentOnlineDocumentSnapshot('source-1')
-    ).resolves.toMatchObject({ version: 1, content: '# Brief 1' })
+    ).resolves.toMatchObject({
+      version: 1,
+      documents: [{ unitKey: 'content', content: '# Brief 1' }]
+    })
   })
 
   it('retries a failed source through the retry lifecycle transition', async () => {
@@ -274,6 +298,12 @@ describe('Sqlite online document store', () => {
         .pluck()
         .get()
     ).toBe(0)
+    expect(
+      database
+        .prepare('SELECT COUNT(*) FROM online_document_snapshot_documents')
+        .pluck()
+        .get()
+    ).toBe(0)
   })
 
   it('keeps snapshot versions immutable', async () => {
@@ -281,16 +311,22 @@ describe('Sqlite online document store', () => {
 
     expect(() =>
       database
-        .prepare(
-          'UPDATE online_document_snapshots SET content = ? WHERE id = ?'
-        )
-        .run('changed', 'snapshot-1')
+        .prepare('UPDATE online_document_snapshots SET etag = ? WHERE id = ?')
+        .run('"changed"', 'snapshot-1')
     ).toThrow('Online document snapshots are immutable')
     expect(() =>
       database
         .prepare('DELETE FROM online_document_snapshots WHERE id = ?')
         .run('snapshot-1')
     ).toThrow('Online document snapshots are immutable')
+    expect(() =>
+      database
+        .prepare(
+          `UPDATE online_document_snapshot_documents
+           SET content = ? WHERE snapshot_id = ? AND unit_key = ?`
+        )
+        .run('changed', 'snapshot-1', 'content')
+    ).toThrow('Online document snapshot documents are immutable')
   })
 })
 
@@ -324,12 +360,25 @@ function createInput() {
 }
 
 function snapshotInput(version: number): OnlineDocumentSnapshot {
+  const content = `# Brief ${version}`
+  const body = new TextEncoder().encode(content)
   return createOnlineDocumentSnapshot({
     id: `snapshot-${version}`,
     sourceId: 'source-1',
     version,
-    body: new TextEncoder().encode(`# Brief ${version}`),
+    body,
     mediaType: 'text/markdown',
+    documents: [
+      {
+        unitKey: 'content',
+        title: 'Product brief',
+        content,
+        checksum: `sha256:${createHash('sha256')
+          .update(content)
+          .digest('hex')}`,
+        byteSize: body.byteLength
+      }
+    ],
     etag: `"revision-${version}"`,
     fetchedAt: version * 10 + 10
   })

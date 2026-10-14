@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.files.search",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "name": "Search files",
   "description": "Search authorized files by name or content.",
   "tags": [
@@ -21,30 +21,72 @@
     "properties": {
       "path": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Authorized local path as a relative path under the authorized root. Do not invent or pass absolute local paths.",
+        "examples": [
+          "docs/example.md"
+        ]
       },
       "scopeRoot": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Optional authorized root override. Omit or pass \".\" to use the current authorized root.",
+        "examples": [
+          "."
+        ]
       },
       "query": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 2000
+        "maxLength": 2000,
+        "description": "Search or match query supplied by the user or current task.",
+        "examples": [
+          "release notes"
+        ]
       },
       "mode": {
         "type": "string",
         "enum": [
           "name",
           "content"
+        ],
+        "description": "Operation mode selected for this tool call. Allowed values: name, content.",
+        "examples": [
+          "name"
+        ]
+      },
+      "contentMode": {
+        "type": "string",
+        "enum": [
+          "text_only",
+          "structured_cached",
+          "structured_extract"
+        ],
+        "description": "Content search mode: text_only scans plain UTF-8 text only, structured_cached searches existing local extraction cache, structured_extract may run bounded local extraction before searching.",
+        "examples": [
+          "text_only"
         ]
       },
       "maxResults": {
         "type": "integer",
         "minimum": 1,
-        "maximum": 200
+        "maximum": 200,
+        "description": "Maximum number of search results returned.",
+        "examples": [
+          10
+        ]
       }
-    }
+    },
+    "examples": [
+      {
+        "path": "docs/example.md",
+        "scopeRoot": ".",
+        "query": "release notes",
+        "mode": "name",
+        "contentMode": "text_only",
+        "maxResults": 10
+      }
+    ]
   },
   "outputSchema": {
     "type": "object",

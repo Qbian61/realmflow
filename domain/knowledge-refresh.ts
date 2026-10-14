@@ -1,3 +1,5 @@
+import type { ContentExtractionErrorCode } from './content-extraction'
+
 export type KnowledgeRefreshPreset =
   | 'manual'
   | '5m'
@@ -27,6 +29,7 @@ export type KnowledgeRefreshErrorCode =
   | 'unsupported_format'
   | 'model_assets_invalid'
   | 'qdrant_schema_incompatible'
+  | ContentExtractionErrorCode
 
 export type KnowledgeRefreshRun = {
   id: string
@@ -71,7 +74,10 @@ const RETRY_DELAYS_MS = [60_000, 300_000, 900_000, 3_600_000] as const
 const RETRYABLE_ERRORS = new Set<KnowledgeRefreshErrorCode>([
   'source_temporarily_unavailable',
   'connector_unavailable',
-  'qdrant_unavailable'
+  'qdrant_unavailable',
+  'extraction_interrupted',
+  'extraction_converter_unavailable',
+  'source_changed_during_extraction'
 ])
 
 export function createDefaultKnowledgeRefreshPolicy(input: {

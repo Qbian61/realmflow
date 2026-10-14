@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import {
   mkdir,
   mkdtemp,
@@ -433,12 +434,40 @@ function createRealAssembler(
         }))
     },
     attachments: {
-      read: async (requirementId, path) => ({
-        version: 1,
-        content: (await readWorkspaceFile(requirementId, path)).content
-      })
+      read: async (requirementId, path) => {
+        const content = (await readWorkspaceFile(requirementId, path)).content
+        const bytes = new TextEncoder().encode(content)
+        return {
+          version: 1,
+          bytes,
+          fileName: path.split('/').at(-1) ?? path,
+          mimeType: 'text/markdown',
+          sourceChecksum: digest(bytes)
+        }
+      },
+      extract: async (input) => {
+        const text = new TextDecoder().decode(input.bytes)
+        return {
+          sourceChecksum: input.sourceChecksum,
+          format: 'md',
+          extractorVersion: 'text-v1',
+          units: [
+            {
+              key: 'content',
+              title: input.fileName,
+              text,
+              checksum: digest(input.bytes),
+              byteSize: input.bytes.byteLength
+            }
+          ]
+        }
+      }
     }
   })
+}
+
+function digest(bytes: Uint8Array): string {
+  return `sha256:${createHash('sha256').update(bytes).digest('hex')}`
 }
 
 function seedArtifactGraph(database: RealmFlowDatabase): void {

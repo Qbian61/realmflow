@@ -337,7 +337,8 @@ export class SqliteArtifactRepository
     const rows = this.database
       .prepare(
         `SELECT
-          id, requirement_id, node_id, relative_path, checksum, version
+          id, requirement_id, node_id, relative_path, checksum, media_type,
+          version
          FROM artifacts
          WHERE requirement_id = ? AND is_primary = 1 AND is_valid = 1
          ORDER BY node_id, relative_path, id`
@@ -348,6 +349,7 @@ export class SqliteArtifactRepository
       node_id: string
       relative_path: string
       checksum: string
+      media_type: string | null
       version: number
     }>
     return rows.map((row) => ({
@@ -356,6 +358,7 @@ export class SqliteArtifactRepository
       nodeId: row.node_id,
       relativePath: row.relative_path,
       checksum: row.checksum,
+      ...(row.media_type ? { mediaType: row.media_type } : {}),
       version: row.version,
       formal: true
     }))
@@ -372,8 +375,8 @@ export class SqliteArtifactRepository
       .prepare(
         `SELECT
           artifact.id, artifact.requirement_id, artifact.node_id,
-          artifact.relative_path, artifact.checksum, artifact.version,
-          requirement.workspace_id
+          artifact.relative_path, artifact.checksum, artifact.media_type,
+          artifact.version, requirement.workspace_id
          FROM artifacts artifact
          JOIN requirements requirement
            ON requirement.id = artifact.requirement_id
@@ -388,6 +391,7 @@ export class SqliteArtifactRepository
           node_id: string | null
           relative_path: string
           checksum: string
+          media_type: string | null
           version: number
           workspace_id: string
         }
@@ -400,6 +404,7 @@ export class SqliteArtifactRepository
         ...(row.node_id ? { nodeId: row.node_id } : {}),
         relativePath: row.relative_path,
         checksum: row.checksum,
+        ...(row.media_type ? { mediaType: row.media_type } : {}),
         version: row.version,
         formal: true
       },
@@ -407,7 +412,11 @@ export class SqliteArtifactRepository
     }
   }
 
-  async readContent(artifact: KnowledgeArtifact): Promise<string> {
+  async readSource(artifact: KnowledgeArtifact): Promise<{
+    bytes: Uint8Array
+    fileName: string
+    mimeType?: string
+  }> {
     const requirement = this.database
       .prepare(
         `SELECT workspace_root_path FROM requirements
@@ -425,7 +434,12 @@ export class SqliteArtifactRepository
         artifact.relativePath
       )
     ).targetPath
-    return readFile(targetPath, 'utf8')
+    const bytes = await readFile(targetPath)
+    return {
+      bytes: new Uint8Array(bytes),
+      fileName: artifact.relativePath,
+      ...(artifact.mediaType ? { mimeType: artifact.mediaType } : {})
+    }
   }
 
   private assertCurrentNodeRun(

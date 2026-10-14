@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -17,14 +17,8 @@ describe('builtin Git Tool handlers', () => {
     temporaryDirectory = await mkdtemp(join(tmpdir(), 'realmflow-git-tools-'))
     repositoryRoot = join(temporaryDirectory, 'repository')
     await mkdir(repositoryRoot)
-    command = {
-      run: vi.fn().mockResolvedValue({
-        exitCode: 0,
-        stdout: 'result',
-        stderr: '',
-        truncated: false
-      })
-    }
+    command = { run: vi.fn() }
+    mockRepositoryRoot(repositoryRoot)
   })
 
   afterEach(async () => {
@@ -85,7 +79,7 @@ describe('builtin Git Tool handlers', () => {
     expect(command.run).toHaveBeenCalledWith({
       executable: 'git',
       arguments: expectedArguments,
-      cwd: expect.stringMatching(/\/repository$/),
+      cwd: await realpath(repositoryRoot),
       signal: expect.any(AbortSignal),
       maxOutputBytes: 4 * 1024 * 1024
     })
@@ -103,14 +97,15 @@ describe('builtin Git Tool handlers', () => {
       message: 'fix: keep explicit staging'
     })
 
-    expect(command.run).toHaveBeenNthCalledWith(1, {
+    const calls = vi.mocked(command.run).mock.calls.map(([input]) => input)
+    expect(calls).toContainEqual({
       executable: 'git',
       arguments: ['add', '--', 'src/a.ts', 'src/b.ts'],
-      cwd: expect.any(String),
+      cwd: await realpath(repositoryRoot),
       signal: expect.any(AbortSignal),
       maxOutputBytes: 4 * 1024 * 1024
     })
-    expect(command.run).toHaveBeenNthCalledWith(2, {
+    expect(calls).toContainEqual({
       executable: 'git',
       arguments: [
         'commit',
@@ -120,10 +115,81 @@ describe('builtin Git Tool handlers', () => {
         'src/a.ts',
         'src/b.ts'
       ],
-      cwd: expect.any(String),
+      cwd: await realpath(repositoryRoot),
       signal: expect.any(AbortSignal),
       maxOutputBytes: 4 * 1024 * 1024
     })
+  })
+
+  it('returns a stable not-repository error before running status', async () => {
+    vi.mocked(command.run).mockImplementation(async (input) =>
+      input.arguments[0] === 'rev-parse'
+        ? gitResult({
+            exitCode: 128,
+            stdout: '',
+            stderr: `fatal: not a git repository: ${repositoryRoot}`
+          })
+        : gitResult({ stdout: 'unexpected' })
+    )
+
+    await expect(run('git.status', {})).rejects.toMatchObject({
+      code: 'git_not_repository',
+      message:
+        'Selected folder is not a Git repository. Choose a Git repository folder or a folder inside one.'
+    })
+
+    expect(
+      vi
+        .mocked(command.run)
+        .mock.calls.some(([input]) => input.arguments[0] === 'status')
+    ).toBe(false)
+  })
+
+  it('runs Git commands from the discovered nested repository top-level', async () => {
+    const workspaceRoot = join(temporaryDirectory, 'workspace')
+    const nestedRepository = join(workspaceRoot, 'repository')
+    const selectedDirectory = join(nestedRepository, 'src')
+    await mkdir(selectedDirectory, { recursive: true })
+    mockRepositoryRoot(nestedRepository)
+
+    await expect(
+      run(
+        'git.status',
+        { scopeRoot: 'repository/src' },
+        [workspaceRoot]
+      )
+    ).resolves.toMatchObject({ stdout: 'result' })
+
+    const calls = vi.mocked(command.run).mock.calls.map(([input]) => input)
+    expect(calls[0]).toMatchObject({
+      arguments: ['rev-parse', '--show-toplevel'],
+      cwd: await realpath(selectedDirectory)
+    })
+    expect(calls[1]).toMatchObject({
+      arguments: ['status', '--short', '--branch', '--untracked-files=all'],
+      cwd: await realpath(nestedRepository)
+    })
+  })
+
+  it('rejects a parent Git repository outside the authorized scope', async () => {
+    const parentRepository = join(temporaryDirectory, 'parent-repository')
+    const authorizedChild = join(parentRepository, 'child')
+    await mkdir(authorizedChild, { recursive: true })
+    mockRepositoryRoot(parentRepository)
+
+    await expect(
+      run('git.log', { maxCount: 1 }, [authorizedChild])
+    ).rejects.toMatchObject({
+      code: 'git_repository_outside_scope',
+      message:
+        'Git repository is outside the authorized scope. Choose the repository folder as the scope root.'
+    })
+
+    expect(
+      vi
+        .mocked(command.run)
+        .mock.calls.some(([input]) => input.arguments[0] === 'log')
+    ).toBe(false)
   })
 
   it('rejects option-like refs and empty commit file lists', async () => {
@@ -136,7 +202,11 @@ describe('builtin Git Tool handlers', () => {
     expect(command.run).not.toHaveBeenCalled()
   })
 
-  async function run(name: string, arguments_: JsonObject) {
+  async function run(
+    name: string,
+    arguments_: JsonObject,
+    scopeRoots = [repositoryRoot]
+  ) {
     const handler = createGitToolHandlers(command).find(
       (candidate) => candidate.name === name
     )
@@ -149,9 +219,29 @@ describe('builtin Git Tool handlers', () => {
         correlationId: 'correlation-1',
         causationId: 'command-1'
       },
-      scopeRoots: [repositoryRoot],
+      scopeRoots,
       signal: new AbortController().signal,
       sink: { emit: vi.fn() }
     })
   }
+
+  function mockRepositoryRoot(root: string): void {
+    vi.mocked(command.run).mockImplementation(async (input) =>
+      input.arguments[0] === 'rev-parse'
+        ? gitResult({ stdout: `${await realpath(root)}\n` })
+        : gitResult({ stdout: 'result' })
+    )
+  }
 })
+
+function gitResult(
+  overrides: Partial<Awaited<ReturnType<GitCommandPort['run']>>> = {}
+): Awaited<ReturnType<GitCommandPort['run']>> {
+  return {
+    exitCode: 0,
+    stdout: '',
+    stderr: '',
+    truncated: false,
+    ...overrides
+  }
+}

@@ -35,6 +35,18 @@ describe('TerminalWorkbenchPage', () => {
     window.localStorage.clear()
   })
 
+  it('shows the shared empty navigation hint and a blank detail area', () => {
+    renderPage(workspaceApi(), terminalApi())
+
+    expect(screen.getByText('下方 + 新建'))
+      .toHaveClass('workbench-navigation-empty')
+    expect(screen.getByRole('region', { name: '工具内容' }))
+      .toHaveTextContent(/^$/)
+    expect(
+      screen.getByRole('region', { name: '工具内容' }).firstElementChild
+    ).toHaveAttribute('data-empty', 'true')
+  })
+
   it('opens the user home folder session only after Main confirms it', async () => {
     let resolveCreate:
       | ((session: Awaited<ReturnType<TerminalApi['createHome']>>) => void)
@@ -77,8 +89,9 @@ describe('TerminalWorkbenchPage', () => {
         'true'
       )
     expect(
-      screen.getByLabelText('拖拽排序 project')
-    ).toBeInTheDocument()
+      screen.getByRole('button', { name: /^project,/ })
+    ).toHaveAttribute('draggable', 'true')
+    expect(screen.queryByLabelText('拖拽排序 project')).toBeNull()
     const close = screen.getByRole('button', { name: '关闭 project' })
     expect(close).toHaveClass('danger')
     expect(close).toHaveAttribute('title', '删除')
@@ -206,7 +219,7 @@ describe('TerminalWorkbenchPage', () => {
       .toHaveTextContent(/^$/)
   })
 
-  it('does not open a reorder menu when the drag handle is clicked', async () => {
+  it('reorders terminal sessions by dragging their names', async () => {
     const terminal = terminalApi({
       createHome: vi
         .fn()
@@ -228,16 +241,20 @@ describe('TerminalWorkbenchPage', () => {
     await screen.findByRole('button', { name: /^project,/ })
     fireEvent.click(screen.getByRole('button', { name: '新建终端会话' }))
     await screen.findByRole('button', { name: /^worker,/ })
-    const handle = screen.getByLabelText('拖拽排序 project')
+    const source = screen.getByRole('button', { name: /^worker,/ })
+    const target = screen.getByRole('button', { name: /^project,/ })
+      .closest('.workbench-navigation-item')!
 
-    fireEvent.click(handle)
+    expect(source).toHaveAttribute('draggable', 'true')
+    expect(screen.queryByLabelText('拖拽排序 project')).toBeNull()
+    fireEvent.dragStart(source)
+    fireEvent.dragOver(target)
+    fireEvent.drop(target)
 
-    expect(handle.tagName).toBe('SPAN')
-    expect(screen.queryByRole('menu')).toBeNull()
     expect(
       screen.getAllByRole('button', { name: /^(project|worker),/ })
         .map((button) => button.getAttribute('aria-label')?.split(',')[0])
-    ).toEqual(['project', 'worker'])
+    ).toEqual(['worker', 'project'])
   })
 })
 

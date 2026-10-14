@@ -831,23 +831,12 @@ export class SqliteVectorIndexRepository {
       if (!generation || generation.status !== 'staging') {
         throw new Error('Knowledge index generation revision conflict')
       }
-      const existingCount = this.database
-        .prepare(
-          `SELECT COUNT(*) FROM knowledge_index_documents
-           WHERE generation_id = ?`
-        )
-        .pluck()
-        .get(input.generationId) as number
-      if (existingCount > 0) {
-        throw new Error('Knowledge index generation manifest already exists')
-      }
       const insert = this.database.prepare(
         `INSERT INTO knowledge_index_documents (
           id, generation_id, document_key, source_entity_id, source_version,
           checksum, byte_size, chunk_count
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      let chunkCount = 0
       for (const document of input.documents) {
         insert.run(
           document.id,
@@ -859,7 +848,17 @@ export class SqliteVectorIndexRepository {
           document.byteSize,
           document.chunkCount
         )
-        chunkCount += document.chunkCount
+      }
+      const totals = this.database
+        .prepare(
+          `SELECT COUNT(*) AS document_count,
+                  COALESCE(SUM(chunk_count), 0) AS chunk_count
+           FROM knowledge_index_documents
+           WHERE generation_id = ?`
+        )
+        .get(input.generationId) as {
+        document_count: number
+        chunk_count: number
       }
       this.database
         .prepare(
@@ -867,7 +866,7 @@ export class SqliteVectorIndexRepository {
            SET document_count = ?, chunk_count = ?
            WHERE id = ? AND status = 'staging'`
         )
-        .run(input.documents.length, chunkCount, input.generationId)
+        .run(totals.document_count, totals.chunk_count, input.generationId)
       return this.getGenerationSync(input.generationId)!
     })()
   }
@@ -1173,6 +1172,7 @@ export class SqliteVectorIndexRepository {
     profileId: string
     sourceVersion: string
     documents: Array<{ documentKey: string; checksum: string }>
+    retryFailed: boolean
     at: number
   }): Promise<KnowledgeIndexDocumentState[]> {
     return this.database.transaction(() => {
@@ -1201,15 +1201,18 @@ export class SqliteVectorIndexRepository {
           source_version = excluded.source_version,
           status = CASE
             WHEN knowledge_index_document_states.checksum = excluded.checksum
-              AND knowledge_index_document_states.status IN ('indexed', 'failed')
-            THEN knowledge_index_document_states.status ELSE 'pending' END,
+              AND knowledge_index_document_states.status = 'indexed'
+            THEN 'indexed'
+            WHEN knowledge_index_document_states.checksum = excluded.checksum
+              AND knowledge_index_document_states.status = 'failed' AND ? = 0
+            THEN 'failed' ELSE 'pending' END,
           generation_id = CASE
             WHEN knowledge_index_document_states.checksum = excluded.checksum
               AND knowledge_index_document_states.status = 'indexed'
             THEN knowledge_index_document_states.generation_id ELSE NULL END,
           error_code = CASE
             WHEN knowledge_index_document_states.checksum = excluded.checksum
-              AND knowledge_index_document_states.status = 'failed'
+              AND knowledge_index_document_states.status = 'failed' AND ? = 0
             THEN knowledge_index_document_states.error_code ELSE NULL END,
           checksum = excluded.checksum,
           updated_at = excluded.updated_at`
@@ -1221,7 +1224,9 @@ export class SqliteVectorIndexRepository {
           document.documentKey,
           input.sourceVersion,
           document.checksum,
-          input.at
+          input.at,
+          input.retryFailed ? 1 : 0,
+          input.retryFailed ? 1 : 0
         )
       }
       return this.listDocumentStatesSync(input.sourceId, input.profileId)
@@ -1325,6 +1330,86 @@ export class SqliteVectorIndexRepository {
            WHERE profile_id = ? AND status = 'running'`
         )
         .run(input.at, input.profileId).changes
+      this.database
+        .prepare(
+          `UPDATE knowledge_index_generations
+           SET status = 'failed', error_code = 'superseded'
+           WHERE status = 'staging'
+             AND id IN (
+               SELECT interrupted.generation_id
+               FROM knowledge_index_jobs interrupted
+               WHERE interrupted.profile_id = ?
+                 AND interrupted.status = 'interrupted'
+                 AND (
+                   EXISTS (
+                     SELECT 1
+                     FROM knowledge_index_jobs pending
+                     WHERE pending.scope_kind = interrupted.scope_kind
+                       AND pending.scope_id = interrupted.scope_id
+                       AND pending.source_kind = interrupted.source_kind
+                       AND pending.source_id = interrupted.source_id
+                       AND pending.profile_id = interrupted.profile_id
+                       AND pending.status = 'pending'
+                   )
+                   OR EXISTS (
+                     SELECT 1
+                     FROM knowledge_index_jobs newer
+                     WHERE newer.scope_kind = interrupted.scope_kind
+                       AND newer.scope_id = interrupted.scope_id
+                       AND newer.source_kind = interrupted.source_kind
+                       AND newer.source_id = interrupted.source_id
+                       AND newer.profile_id = interrupted.profile_id
+                       AND newer.status = 'interrupted'
+                       AND (
+                         newer.created_at > interrupted.created_at
+                         OR (
+                           newer.created_at = interrupted.created_at
+                           AND newer.id > interrupted.id
+                         )
+                       )
+                   )
+                 )
+             )`
+        )
+        .run(input.profileId)
+      this.database
+        .prepare(
+          `UPDATE knowledge_index_jobs
+           SET status = 'cancelled', error_code = 'superseded',
+               next_attempt_at = NULL, locked_at = NULL, updated_at = ?,
+               completed_at = ?
+           WHERE profile_id = ? AND status = 'interrupted'
+             AND (
+               EXISTS (
+                 SELECT 1
+                 FROM knowledge_index_jobs pending
+                 WHERE pending.scope_kind = knowledge_index_jobs.scope_kind
+                   AND pending.scope_id = knowledge_index_jobs.scope_id
+                   AND pending.source_kind = knowledge_index_jobs.source_kind
+                   AND pending.source_id = knowledge_index_jobs.source_id
+                   AND pending.profile_id = knowledge_index_jobs.profile_id
+                   AND pending.status = 'pending'
+               )
+               OR EXISTS (
+                 SELECT 1
+                 FROM knowledge_index_jobs newer
+                 WHERE newer.scope_kind = knowledge_index_jobs.scope_kind
+                   AND newer.scope_id = knowledge_index_jobs.scope_id
+                   AND newer.source_kind = knowledge_index_jobs.source_kind
+                   AND newer.source_id = knowledge_index_jobs.source_id
+                   AND newer.profile_id = knowledge_index_jobs.profile_id
+                   AND newer.status = 'interrupted'
+                   AND (
+                     newer.created_at > knowledge_index_jobs.created_at
+                     OR (
+                       newer.created_at = knowledge_index_jobs.created_at
+                       AND newer.id > knowledge_index_jobs.id
+                     )
+                   )
+               )
+             )`
+        )
+        .run(input.at, input.at, input.profileId)
       this.database
         .prepare(
           `UPDATE knowledge_index_jobs

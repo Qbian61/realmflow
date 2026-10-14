@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import Ajv2020 from 'ajv/dist/2020.js'
 import type {
   ToolCatalogState,
   ToolCatalogStatus
@@ -27,8 +28,15 @@ export type PluginContributionAvailability = {
     | 'dependency_unavailable'
     | 'package_corrupted'
     | 'target_tool_unavailable'
+    | 'hook_input_unsatisfied'
   >
 }
+
+const hookInputValidator = new Ajv2020({
+  strict: false,
+  allErrors: true,
+  validateFormats: false
+})
 
 export class PluginContributionRegistry {
   snapshot(catalog: ToolCatalogState): PluginContributionAvailability[] {
@@ -39,13 +47,22 @@ export class PluginContributionRegistry {
           const blockedReasons =
             packageBlockedReasons(packageItem.status)
           if (
-            contribution.kind === 'hook' &&
-            !catalog.tools.some(
+            contribution.kind === 'hook'
+          ) {
+            const targetTool = catalog.tools.find(
               ({ id, status }) =>
                 id === contribution.targetToolId && status === 'enabled'
             )
-          ) {
-            blockedReasons.push('target_tool_unavailable')
+            if (!targetTool) {
+              blockedReasons.push('target_tool_unavailable')
+            } else if (
+              !hookInputSatisfiesTargetTool(
+                contribution,
+                targetTool.definition.inputSchema
+              )
+            ) {
+              blockedReasons.push('hook_input_unsatisfied')
+            }
           }
           return {
             packageId: packageItem.packageId,
@@ -176,6 +193,23 @@ function packageBlockedReasons(
     return ['dependency_unavailable']
   }
   return ['package_disabled']
+}
+
+function hookInputSatisfiesTargetTool(
+  contribution: PluginContributionSummary,
+  inputSchema: JsonObject
+): boolean {
+  try {
+    const validate = hookInputValidator.compile(inputSchema)
+    return validate({
+      event: contribution.event,
+      eventId: 'event',
+      payload: {},
+      hookId: contribution.id
+    })
+  } catch {
+    return false
+  }
 }
 
 function hookIdempotencyKey(

@@ -20,6 +20,7 @@ process.on('SIGTERM', () => worker.once('exit',()=>process.exit(0)))
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     let output = ''
+    let stderr = ''
     const stopped = new Promise<void>(resolve => {
       child.stdout.on('data', chunk => {
         output += String(chunk)
@@ -30,8 +31,19 @@ process.on('SIGTERM', () => worker.once('exit',()=>process.exit(0)))
         if (output.includes('worker-stopped')) resolve()
       })
     })
+    child.stderr.on('data', chunk => {
+      stderr += String(chunk)
+    })
     try {
-      await Promise.race([stopped, new Promise(resolve => setTimeout(resolve, 1500))])
+      await Promise.race([
+        stopped,
+        new Promise((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`Timed out waiting for worker-stopped\nstdout:\n${output}\nstderr:\n${stderr}`)),
+            5000
+          )
+        )
+      ])
       expect(output).toContain('worker-stopped')
     } finally {
       // The fixture is isolated from all application processes.

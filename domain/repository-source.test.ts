@@ -143,6 +143,91 @@ describe('repository source domain', () => {
     })
   })
 
+  it('decodes structured repository files from mutually exclusive base64 content', () => {
+    const pdf = Uint8Array.from([0x25, 0x50, 0x44, 0x46, 0, 1])
+    const body = new TextEncoder().encode(
+      JSON.stringify({
+        revision: 'main@abc123',
+        files: [
+          {
+            path: 'docs/brief.pdf',
+            contentBase64: Buffer.from(pdf).toString('base64'),
+            mediaType: 'application/pdf'
+          }
+        ]
+      })
+    )
+
+    expect(
+      parseRemoteRepositoryManifest({
+        mediaType: 'application/vnd.realmflow.repository+json',
+        body
+      }).files
+    ).toEqual([
+      {
+        path: 'docs/brief.pdf',
+        contentBytes: pdf,
+        mediaType: 'application/pdf'
+      }
+    ])
+  })
+
+  it.each([
+    {
+      label: 'both text and base64 content',
+      file: {
+        path: 'docs/brief.pdf',
+        content: 'text',
+        contentBase64: 'JVBERgAB',
+        mediaType: 'application/pdf'
+      }
+    },
+    {
+      label: 'base64 content without a media type',
+      file: { path: 'docs/brief.pdf', contentBase64: 'JVBERgAB' }
+    },
+    {
+      label: 'invalid base64 content',
+      file: {
+        path: 'docs/brief.pdf',
+        contentBase64: 'not base64!',
+        mediaType: 'application/pdf'
+      }
+    }
+  ])('rejects remote manifest files with $label', ({ file }) => {
+    expect(() =>
+      parseRemoteRepositoryManifest({
+        mediaType: 'application/vnd.realmflow.repository+json',
+        body: new TextEncoder().encode(
+          JSON.stringify({ revision: 'main@abc123', files: [file] })
+        )
+      })
+    ).toThrow('Remote repository manifest is invalid')
+  })
+
+  it('lets repository scanning decide file budget skips for remote manifests', () => {
+    const twoMegabytes = 'a'.repeat(2 * 1024 * 1024)
+    const body = new TextEncoder().encode(
+      JSON.stringify({
+        revision: 'main@abc123',
+        files: [
+          { path: 'large-but-indexable.txt', content: twoMegabytes },
+          ...Array.from({ length: 10_001 }, (_, index) => ({
+            path: `src/file-${index}.ts`,
+            content: 'x'
+          }))
+        ]
+      })
+    )
+
+    expect(
+      parseRemoteRepositoryManifest({
+        mediaType: 'application/vnd.realmflow.repository+json',
+        body
+      }).files
+    ).toHaveLength(10_002)
+  })
+
   it.each([
     {
       label: 'unsupported media type',
@@ -219,7 +304,64 @@ describe('repository source domain', () => {
     })
   })
 
+  it('keeps skipped file reasons in deterministic snapshot metadata', () => {
+    const snapshot = createRepositorySnapshot({
+      id: 'snapshot-1',
+      sourceId: 'repo-1',
+      version: 1,
+      branch: 'main',
+      revisionLabel: 'main@abc123',
+      files: [
+        createRepositorySnapshotFile({
+          relativePath: 'src/index.ts',
+          content: new TextEncoder().encode('export {}\n')
+        })
+      ],
+      skippedFiles: [
+        {
+          relativePath: 'vendor/bundle.js',
+          reason: 'repository_text_limit_exceeded',
+          byteSize: 5
+        },
+        {
+          relativePath: 'large.txt',
+          reason: 'file_too_large',
+          byteSize: 5 * 1024 * 1024 + 1
+        }
+      ],
+      scannedAt: 20
+    } as Parameters<typeof createRepositorySnapshot>[0] & {
+      skippedFiles: Array<{
+        relativePath: string
+        reason: string
+        byteSize: number
+      }>
+    })
+
+    expect((snapshot as { skippedFiles?: unknown }).skippedFiles).toEqual([
+      {
+        relativePath: 'large.txt',
+        reason: 'file_too_large',
+        byteSize: 5 * 1024 * 1024 + 1
+      },
+      {
+        relativePath: 'vendor/bundle.js',
+        reason: 'repository_text_limit_exceeded',
+        byteSize: 5
+      }
+    ])
+  })
+
   it('rejects binary and oversized repository files', () => {
+    expect(MAX_REPOSITORY_FILE_BYTES).toBe(5 * 1024 * 1024)
+
+    expect(() =>
+      createRepositorySnapshotFile({
+        relativePath: 'under-five-megabytes.txt',
+        content: new Uint8Array(2 * 1024 * 1024).fill(65)
+      })
+    ).not.toThrow()
+
     expect(() =>
       createRepositorySnapshotFile({
         relativePath: 'asset.bin',

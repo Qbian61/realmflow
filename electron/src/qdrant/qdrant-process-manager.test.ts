@@ -1,5 +1,11 @@
 import { EventEmitter } from 'node:events'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -16,6 +22,7 @@ import {
 class FakeChildProcess extends EventEmitter implements QdrantChildProcess {
   readonly stdout = new EventEmitter()
   readonly stderr = new EventEmitter()
+  readonly pid = 4242
   exitCode: number | null = null
   readonly kill = vi.fn((signal?: NodeJS.Signals | number) => {
     if (this.exitsOnSignal) {
@@ -96,7 +103,9 @@ describe('QdrantProcessManager', () => {
     expect(port.spawn).toHaveBeenCalledWith({
       executable: '/app/qdrant',
       args: ['--config-path', '/data/config.yaml'],
-      cwd: '/data'
+      cwd: '/data',
+      endpoint: 'http://127.0.0.1:43177',
+      apiKey: 'secret'
     })
     expect(manager.getConnection()).toEqual({
       endpoint: 'http://127.0.0.1:43177',
@@ -330,6 +339,155 @@ describe('Node Qdrant process port', () => {
           headers: { 'api-key': 'local-secret' }
         })
       )
+      await expect(
+        readFile(
+          join(directory, 'qdrant', 'managed-process.json'),
+          'utf8'
+        ).then(JSON.parse)
+      ).resolves.toMatchObject({
+        version: 1,
+        pid: 4242,
+        endpoint: 'http://127.0.0.1:43177',
+        apiKey: 'local-secret',
+        executable: '/bundle/qdrant',
+        configPath: join(directory, 'qdrant', 'config.yaml')
+      })
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('stops a healthy recorded process before rewriting its config', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'realmflow-qdrant-port-'))
+    const runtimeDirectory = join(directory, 'qdrant')
+    const recordPath = join(runtimeDirectory, 'managed-process.json')
+    const configPath = join(runtimeDirectory, 'config.yaml')
+    const events: string[] = []
+    let running = true
+    const processKill = vi.fn(
+      (_pid: number, signal?: NodeJS.Signals | number) => {
+        events.push(`kill:${String(signal)}`)
+        if (signal === 'SIGTERM') running = false
+        return true
+      }
+    )
+
+    try {
+      await mkdir(runtimeDirectory, { recursive: true })
+      await writeFile(
+        recordPath,
+        JSON.stringify({
+          version: 1,
+          pid: 9001,
+          endpoint: 'http://127.0.0.1:43001',
+          apiKey: 'old-secret',
+          executable: '/bundle/qdrant',
+          configPath
+        }),
+        { encoding: 'utf8', mode: 0o600 }
+      )
+      const port = createNodeQdrantProcessPort({
+        binaryPath: '/bundle/qdrant',
+        userDataPath: directory,
+        reservePort: async () => {
+          events.push('reserve')
+          return 43177
+        },
+        createApiKey: () => 'new-secret',
+        fetchImpl: vi.fn(async () => {
+          events.push('health')
+          return new Response(null, { status: 200 })
+        }),
+        processKill,
+        isProcessRunning: () => running,
+        processMatchesRecord: () => true,
+        recoveryDelay: async () => undefined
+      })
+
+      await port.prepare()
+
+      expect(events).toEqual(['health', 'kill:SIGTERM', 'reserve'])
+      expect(processKill).toHaveBeenCalledWith(9001, 'SIGTERM')
+      await expect(readFile(recordPath, 'utf8')).rejects.toMatchObject({
+        code: 'ENOENT'
+      })
+      await expect(readFile(configPath, 'utf8')).resolves.toContain(
+        'api_key: "new-secret"'
+      )
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('does not signal a recorded process when authenticated health fails', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'realmflow-qdrant-port-'))
+    const runtimeDirectory = join(directory, 'qdrant')
+    const recordPath = join(runtimeDirectory, 'managed-process.json')
+    const configPath = join(runtimeDirectory, 'config.yaml')
+    const processKill = vi.fn(() => true)
+
+    try {
+      await mkdir(runtimeDirectory, { recursive: true })
+      await writeFile(
+        recordPath,
+        JSON.stringify({
+          version: 1,
+          pid: 9001,
+          endpoint: 'http://127.0.0.1:43001',
+          apiKey: 'old-secret',
+          executable: '/bundle/qdrant',
+          configPath
+        }),
+        { encoding: 'utf8', mode: 0o600 }
+      )
+      const port = createNodeQdrantProcessPort({
+        binaryPath: '/bundle/qdrant',
+        userDataPath: directory,
+        reservePort: async () => 43177,
+        createApiKey: () => 'new-secret',
+        fetchImpl: vi.fn(async () => {
+          throw new Error('connection refused')
+        }),
+        processKill,
+        isProcessRunning: () => true,
+        processMatchesRecord: () => true,
+        recoveryDelay: async () => undefined
+      })
+
+      await expect(port.prepare()).resolves.toMatchObject({
+        endpoint: 'http://127.0.0.1:43177'
+      })
+
+      expect(processKill).not.toHaveBeenCalled()
+      await expect(readFile(recordPath, 'utf8')).rejects.toMatchObject({
+        code: 'ENOENT'
+      })
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('terminates a spawned child when its process record cannot be written', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'realmflow-qdrant-port-'))
+    const child = new FakeChildProcess()
+    const port = createNodeQdrantProcessPort({
+      binaryPath: '/bundle/qdrant',
+      userDataPath: directory,
+      reservePort: async () => 43177,
+      createApiKey: () => 'local-secret',
+      spawnProcess: () => child
+    })
+
+    try {
+      const descriptor = await port.prepare()
+      await rm(join(directory, 'qdrant'), {
+        recursive: true,
+        force: true
+      })
+      await writeFile(join(directory, 'qdrant'), 'not-a-directory')
+
+      expect(() => port.spawn(descriptor)).toThrow()
+      expect(child.kill).toHaveBeenCalledWith('SIGTERM')
     } finally {
       await rm(directory, { recursive: true, force: true })
     }

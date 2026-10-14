@@ -11,6 +11,8 @@ import {
   recordSuccessfulToolExecution,
   recordToolRequest,
   type AgentProgressStopReason,
+  type ToolFailureProgressEvidence,
+  type ToolSuccessProgressEvidence,
 } from '../../../../domain/agent-progress-detector'
 import {
   createAgentRunSnapshot,
@@ -62,8 +64,13 @@ import type {
 } from '../../../../domain/tool-definition'
 import type { ToolCatalogService } from '../../application/tools/tool-catalog-service'
 import { ModelFacingSurfaceResolver, withDirectoryControls } from '../../application/tools/model-facing-surface-resolver'
+import { ConnectorRuntimeToolEligibilityService } from '../../application/tools/runtime-tool-availability'
 import { ToolPolicyEngine } from '../../application/tools/tool-policy-engine'
 import { projectModelFacingToolCatalog } from '../../application/tools/tool-model-facing-projection'
+import {
+  FilesystemGitRepositoryResolver,
+  type GitRepositoryResolverPort,
+} from '../../application/tools/git-repository-resolver'
 import type { ToolPolicyInput, ToolPolicySnapshot } from '../../../../domain/tool-policy'
 import type { RunModelFacingSnapshot } from '../../../../domain/tool-catalog'
 import type {
@@ -139,22 +146,34 @@ type RunBinding = {
   responseLanguage: ResponseLanguageSnapshot
 }
 
+type InstalledCapability = {
+  definition: CapabilityDefinition
+  installation: CapabilityInstallation
+}
+
 type Dependencies = {
   gateway: ToolLoopGateway
   catalog: Pick<ToolCatalogService, 'list'>
   capabilities?: {
     resolve(scopeChain: readonly CapabilityScope[]): Promise<
-      Array<{
-        definition: CapabilityDefinition
-        installation: CapabilityInstallation
-      }>
+      InstalledCapability[]
     >
+  }
+  connectorCredentials?: {
+    resolveHandle(
+      reference: string,
+      installation: CapabilityInstallation
+    ): Promise<string | undefined>
   }
   capabilityScopes?: {
     resolve(context: RunContext): Promise<CapabilityScope[]>
   }
   tools: Pick<ToolExecutionApplicationService, 'execute'> &
     Partial<Pick<ToolExecutionApplicationService, 'cancelByParent'>>
+  resolveToolScopeRoots?: (
+    context: ToolExecutionCommand['context'],
+  ) => Promise<string[]>
+  gitRepositoryResolver?: GitRepositoryResolverPort
   skills?: {
     readInstructions(definition: SkillDefinition): Promise<string>
   }
@@ -826,6 +845,8 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
               'run.retrying',
               {
                 retryCount: binding.ledger.segmentIndex,
+                remainingAttempts:
+                  binding.ledger.remainingContinuationAttempts,
                 errorCode: 'max_agent_turns',
               },
               this.dependencies.now?.() ?? Date.now(),
@@ -863,91 +884,6 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
             )
             continueStreaming = true
             break
-          }
-          if (
-            publicRunId &&
-            binding?.snapshot &&
-            isRetryableProviderFailure(providerEvent)
-          ) {
-            if (binding.remainingBudgets.retries <= 0) {
-              // Let the terminal failure flow through when retry budget is gone.
-            } else {
-              const checkpoint = await this.writeCheckpoint(
-                publicRunId,
-                'model_round_completed',
-              )
-              if (
-                !checkpoint ||
-                !this.dependencies.gateway.resumeRun ||
-                !this.dependencies.runtimeRuns?.bindProviderAttempt
-              ) {
-                const blockedEvent = nextRuntimeEvent(
-                  binding,
-                  publicRunId,
-                  'run.recovery_blocked',
-                  {
-                    recoveryReason: 'resume_unavailable',
-                    recoveryActions: ['resume', 'branch', 'cancel'],
-                  },
-                  this.dependencies.now?.() ?? Date.now(),
-                )
-                await this.transitionRuntimeRun(
-                  publicRunId,
-                  'recovery_blocked',
-                  'recovery_blocked:resume_unavailable',
-                )
-                yield blockedEvent
-                return
-              }
-
-              binding.remainingBudgets.retries -= 1
-              await this.transitionRuntimeRun(publicRunId, 'retrying')
-              yield nextRuntimeEvent(
-                binding,
-                publicRunId,
-                'run.retrying',
-                {
-                  retryCount:
-                    binding.snapshot.budgets.maxRetries -
-                    binding.remainingBudgets.retries,
-                  errorCode: providerEvent.data.errorCode,
-                },
-                this.dependencies.now?.() ?? Date.now(),
-              )
-              const resumed = await this.dependencies.gateway.resumeRun(
-                {
-                  id: publicRunId,
-                  providerRunId,
-                  status: 'retrying',
-                  snapshot: binding.snapshot,
-                  createdAt: binding.snapshot.createdAt,
-                  updatedAt: this.dependencies.now?.() ?? Date.now(),
-                },
-                checkpoint,
-                binding.model,
-              )
-              await this.dependencies.runtimeRuns.bindProviderAttempt(
-                publicRunId,
-                resumed.runId,
-                checkpoint.resumeToken,
-                this.dependencies.now?.() ?? Date.now(),
-              )
-              this.dependencies.gateway.releaseRun?.(providerRunId)
-              this.providerRunIds.delete(providerRunId)
-              providerRunId = resumed.runId
-              binding.providerRunId = providerRunId
-              this.providerRunIds.set(providerRunId, publicRunId)
-              await this.transitionRuntimeRun(publicRunId, 'running')
-              yield nextRuntimeEvent(
-                binding,
-                publicRunId,
-                'run.resumed',
-                {},
-                this.dependencies.now?.() ?? Date.now(),
-              )
-              continueStreaming = true
-              break
-            }
           }
           if (
             publicRunId &&
@@ -1045,7 +981,12 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
               binding,
               publicRunId,
               'run.waiting_input',
-              { recoveryReason: binding.progressStopReason },
+              {
+                recoveryReason: binding.progressStopReason,
+                recoveryActions: progressRecoveryActions(
+                  binding.progressStopReason
+                ),
+              },
               this.dependencies.now?.() ?? Date.now(),
             )
             await this.writeCheckpoint(publicRunId, 'input_wait')
@@ -1151,7 +1092,9 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
       (await this.dependencies.capabilities?.resolve(
         capabilityScopes,
       )) ?? []
-    const connectorTools = installedCapabilities.flatMap((installed) =>
+    const availableCapabilities =
+      await this.filterRuntimeAvailableCapabilities(installedCapabilities)
+    const connectorTools = availableCapabilities.flatMap((installed) =>
       projectConnectorTools(installed),
     )
     const contexts = discoveryContexts(context)
@@ -1159,7 +1102,7 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
       'scheduleRunId' in context && Boolean(context.scheduleRunId)
     const discoverAll =
       !scheduled && ('conversationId' in context || 'nodeId' in context)
-    const enabledTools = catalog.tools
+    const contextExecutableTools = catalog.tools
       .filter(({ status }) => status === 'enabled')
       .sort(
         (left, right) =>
@@ -1173,6 +1116,11 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
       )
       .map(({ definition }) => definition)
       .filter((definition) => isToolExecutableInContext(definition, context))
+    const enabledTools = await this.filterRunScopedAvailableTools(
+      contextExecutableTools,
+      context,
+      capabilityScopes,
+    )
     const selectedSkill =
       'skill' in context && context.skill
         ? catalog.skills.find(
@@ -1251,7 +1199,7 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
           ...discoveredSkills,
           ...(selectedSkill ? [selectedSkill] : []),
         ]).map(skillCapabilityDescriptor),
-        ...installedCapabilities.map(({ definition }) => ({
+        ...availableCapabilities.map(({ definition }) => ({
           kind: definition.kind,
           id: definition.id,
           version: definition.version,
@@ -1286,7 +1234,7 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
     const allowedConnectorTools = connectorTools.filter((tool) => {
       if (tool.executor.kind !== 'connector') return false
       const executor = tool.executor
-      const installed = installedCapabilities.find(
+      const installed = availableCapabilities.find(
         ({ definition }) =>
           definition.id === executor.capabilityId &&
           definition.version === executor.capabilityVersion &&
@@ -1434,7 +1382,7 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
       toolPolicy: surface.policy!,
       modelFacing: { mode: surface.mode, ...(surface.directory ? { directory: surface.directory } : {}) },
       scenario,
-      catalogDigest: capabilityCatalogDigest(catalog, installedCapabilities),
+      catalogDigest: capabilityCatalogDigest(catalog, availableCapabilities),
       maxToolCalls: Math.min(
         requestedMaxToolCalls,
         profile.budgets.maxToolCalls,
@@ -1444,6 +1392,89 @@ export class AgentToolLoopCoordinator implements AiRunGateway {
       delegationAllowed:
         maxSubagents > 0 && delegationDepth(context) < MAX_DELEGATION_DEPTH,
     }
+  }
+
+  private async filterRuntimeAvailableCapabilities(
+    installedCapabilities: InstalledCapability[]
+  ): Promise<InstalledCapability[]> {
+    const connectorEligibility = new ConnectorRuntimeToolEligibilityService({
+      credentials: this.dependencies.connectorCredentials,
+      now: this.dependencies.now,
+    })
+    const availability = await Promise.all(
+      installedCapabilities.map(async (installed) =>
+        (await connectorEligibility.getInstalledCapabilityEligibility(
+          installed
+        )).status === 'ready'
+          ? installed
+          : undefined
+      )
+    )
+    return availability.filter(
+      (installed): installed is InstalledCapability => Boolean(installed)
+    )
+  }
+
+  private async filterRunScopedAvailableTools(
+    tools: ToolDefinition[],
+    context: RunContext,
+    capabilityScopes: CapabilityScope[],
+  ): Promise<ToolDefinition[]> {
+    const gitTools = tools.filter(isBuiltinGitTool)
+    if (gitTools.length === 0) return tools
+    const scopeRoots = await this.resolveModelSurfaceScopeRoots(
+      context,
+      capabilityScopes,
+    )
+    if (await this.hasAuthorizedGitRepository(scopeRoots)) return tools
+    const unavailableGitToolIds = new Set(gitTools.map(({ id }) => id))
+    return tools.filter((tool) => !unavailableGitToolIds.has(tool.id))
+  }
+
+  private async resolveModelSurfaceScopeRoots(
+    context: RunContext,
+    capabilityScopes: CapabilityScope[],
+  ): Promise<string[]> {
+    if (this.dependencies.resolveToolScopeRoots) {
+      try {
+        return await this.dependencies.resolveToolScopeRoots(
+          executionContext(
+            context,
+            'model-surface',
+            capabilityScopes,
+            'model-surface',
+          ),
+        )
+      } catch {
+        return []
+      }
+    }
+    if ('folderPath' in context && context.folderPath) {
+      return [context.folderPath]
+    }
+    return []
+  }
+
+  private async hasAuthorizedGitRepository(
+    scopeRoots: readonly string[],
+  ): Promise<boolean> {
+    if (scopeRoots.length === 0) return false
+    const resolver =
+      this.dependencies.gitRepositoryResolver ??
+      new FilesystemGitRepositoryResolver()
+    for (const root of scopeRoots) {
+      try {
+        await resolver.resolve({
+          selectedRoot: root,
+          authorizedRoots: scopeRoots,
+        })
+        return true
+      } catch {
+        // Unavailable Git tools should be hidden from the model surface; the
+        // execution path still returns stable errors if a stale call arrives.
+      }
+    }
+    return false
   }
 
   private async projectRuntimeLifecycle(
@@ -2313,6 +2344,13 @@ function updateCheckpointState(
           binding.ledger,
           binding.snapshot?.executionPolicy ??
             resolveAgentRunScenario(binding.context).executionPolicy,
+          toolFailureEvidence(
+            binding,
+            callId,
+            result,
+            pending,
+            event.data.toolName
+          ),
         )
         binding.ledger = progress.ledger
         binding.progressStopReason =
@@ -2321,7 +2359,10 @@ function updateCheckpointState(
             ? 'capability_unavailable'
             : progress.reason
       } else {
-        binding.ledger = recordSuccessfulToolExecution(binding.ledger)
+        binding.ledger = recordSuccessfulToolExecution(
+          binding.ledger,
+          toolSuccessEvidence(binding, callId, pending, event.data.toolName)
+        )
       }
       if (
         pending?.effect === 'local_write' ||
@@ -2362,6 +2403,84 @@ function updateCheckpointState(
       binding.pendingCalls.delete(callId)
     }
   }
+}
+
+function toolFailureEvidence(
+  binding: RunBinding,
+  callId: string,
+  result: AiRunToolResult,
+  pending: RunCheckpoint['pendingCalls'][number] | undefined,
+  eventToolName: string | undefined
+): ToolFailureProgressEvidence | undefined {
+  if (result.status !== 'failed') return undefined
+  const call = toolCallFor(binding, callId)
+  return {
+    toolName: pending?.toolName ?? eventToolName ?? call?.name ?? 'tool',
+    errorCode: result.errorCode,
+    targetScope: progressTargetScope(binding.context),
+    ...(call?.arguments ? { serializedArguments: call.arguments } : {}),
+    ...(typeof result.retryable === 'boolean'
+      ? { retryable: result.retryable }
+      : {}),
+    ...(typeof result.category === 'string' ? { category: result.category } : {})
+  }
+}
+
+function toolSuccessEvidence(
+  binding: RunBinding,
+  callId: string,
+  pending: RunCheckpoint['pendingCalls'][number] | undefined,
+  eventToolName: string | undefined
+): ToolSuccessProgressEvidence {
+  const call = toolCallFor(binding, callId)
+  return {
+    toolName: pending?.toolName ?? eventToolName ?? call?.name ?? 'tool',
+    targetScope: progressTargetScope(binding.context),
+    ...(call?.arguments ? { serializedArguments: call.arguments } : {})
+  }
+}
+
+function toolCallFor(
+  binding: RunBinding,
+  callId: string
+): NonNullable<RunCheckpoint['messageWindow'][number]['toolCalls']>[number] | undefined {
+  for (const message of binding.messageWindow) {
+    const call = message.toolCalls?.find((item) => item.id === callId)
+    if (call) return call
+  }
+  return undefined
+}
+
+function progressRecoveryActions(
+  reason: AgentProgressStopReason
+): Array<'resume' | 'cancel'> {
+  if (
+    reason === 'repeated_tool_call' ||
+    reason === 'deterministic_tool_failure' ||
+    reason === 'consecutive_tool_failures'
+  ) {
+    return ['resume', 'cancel']
+  }
+  return ['cancel']
+}
+
+function progressTargetScope(context: RunContext): string {
+  if ('nodeRunId' in context && context.nodeRunId) {
+    return `node-run:${context.nodeRunId}`
+  }
+  if ('requirementId' in context && context.requirementId) {
+    return `requirement:${context.requirementId}`
+  }
+  if ('workspaceId' in context && context.workspaceId) {
+    return `workspace:${context.workspaceId}`
+  }
+  if ('folderPath' in context && context.folderPath) {
+    return `folder:${context.folderPath}`
+  }
+  if ('conversationId' in context && context.conversationId) {
+    return `conversation:${context.conversationId}`
+  }
+  return 'global'
 }
 
 function checkpointEffect(
@@ -2422,17 +2541,6 @@ function isAgentTurnSegmentLimit(event: AiRunEvent): boolean {
   return (
     event.type === 'run.failed' &&
     event.data.errorCode === 'max_agent_turns'
-  )
-}
-
-function isRetryableProviderFailure(event: AiRunEvent): boolean {
-  if (event.type !== 'run.failed') return false
-  const errorCode = event.data.errorCode
-  return (
-    event.data.retryable === true ||
-    errorCode === 'provider_unavailable' ||
-    errorCode === 'provider_timeout' ||
-    errorCode === 'provider_rate_limited'
   )
 }
 
@@ -2549,6 +2657,12 @@ function isToolExecutableInContext(
     )
   }
   if (
+    definition.executor.handler === 'knowledge.note.create' ||
+    definition.executor.handler === 'knowledge.note.edit'
+  ) {
+    return 'conversationId' in context && Boolean(context.conversationId)
+  }
+  if (
     definition.executor.handler === 'realmflow.requirements.list'
   ) {
     return hasWorkspace
@@ -2569,6 +2683,13 @@ function isToolExecutableInContext(
     return 'nodeRunId' in context && Boolean(context.nodeRunId)
   }
   return true
+}
+
+function isBuiltinGitTool(definition: ToolDefinition): boolean {
+  return (
+    definition.executor.kind === 'builtin' &&
+    definition.executor.handler.startsWith('git.')
+  )
 }
 
 function uniqueDefinitions(definitions: ToolDefinition[]): ToolDefinition[] {

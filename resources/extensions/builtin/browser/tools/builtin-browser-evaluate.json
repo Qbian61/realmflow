@@ -25,19 +25,41 @@
         "properties": {
           "kind": {
             "type": "string",
-            "const": "current_run"
+            "const": "current_run",
+            "description": "Discriminator selecting the schema variant for this object.",
+            "examples": [
+              "current_run"
+            ]
           }
-        }
+        },
+        "description": "Current run target object for browser or UI automation.",
+        "examples": [
+          {
+            "kind": "current_run"
+          }
+        ]
       },
       "expression": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 16000
+        "maxLength": 16000,
+        "description": "Expression evaluated against the sanitized browser snapshot, not live page state.",
+        "examples": [
+          "example"
+        ]
       }
     },
     "required": [
       "target",
       "expression"
+    ],
+    "examples": [
+      {
+        "target": {
+          "kind": "current_run"
+        },
+        "expression": "example"
+      }
     ]
   },
   "outputSchema": {

@@ -1,4 +1,5 @@
 import {
+  BadgeCheck,
   FileText,
   FlaskConical,
   KeyRound,
@@ -442,6 +443,18 @@ export function CapabilityBuilderDialog({
                       {t('capabilities.builder.testCount', {
                         count: proposal.validationReport.tests.length
                       })}
+                    </dd>
+                  </div>
+                  <div>
+                    <BadgeCheck size={15} aria-hidden="true" />
+                    <dt>{t('capabilities.builder.contract')}</dt>
+                    <dd>
+                      {t(
+                        proposal.validationReport.contract.status ===
+                          'passed'
+                          ? 'capabilities.builder.contractPassed'
+                          : 'capabilities.builder.contractBlocked'
+                      )}
                     </dd>
                   </div>
                   <div>

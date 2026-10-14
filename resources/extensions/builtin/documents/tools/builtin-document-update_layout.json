@@ -18,39 +18,78 @@
     "properties": {
       "sessionId": {
         "type": "string",
-        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$",
+        "description": "Stable local editing or browser session ID returned by an inspect/create tool.",
+        "examples": [
+          "12345678-1234-4234-9234-123456789abc"
+        ]
       },
       "expectedRevision": {
         "type": "integer",
-        "minimum": 0
+        "minimum": 0,
+        "description": "Expected revision used for optimistic concurrency control. Copy this value from the latest RealmFlow UI/API state; do not invent it.",
+        "examples": [
+          1
+        ]
       },
       "sectionId": {
         "type": "string",
-        "pattern": "^section-[1-9][0-9]*$"
+        "pattern": "^section-[1-9][0-9]*$",
+        "description": "Stable document section ID whose page layout, header, or footer is updated.",
+        "examples": [
+          "section-1"
+        ]
       },
       "widthPt": {
         "type": "number",
         "minimum": 72,
-        "maximum": 2880
+        "maximum": 2880,
+        "description": "Width in points.",
+        "examples": [
+          960
+        ]
       },
       "heightPt": {
         "type": "number",
         "minimum": 72,
-        "maximum": 2880
+        "maximum": 2880,
+        "description": "Height in points.",
+        "examples": [
+          720
+        ]
       },
       "header": {
         "type": "string",
-        "maxLength": 100000
+        "maxLength": 100000,
+        "description": "Header text to apply to the selected document section.",
+        "examples": [
+          ""
+        ]
       },
       "footer": {
         "type": "string",
-        "maxLength": 100000
+        "maxLength": 100000,
+        "description": "Footer text to apply to the selected document section.",
+        "examples": [
+          ""
+        ]
       }
     },
     "required": [
       "sessionId",
       "expectedRevision",
       "sectionId"
+    ],
+    "examples": [
+      {
+        "sessionId": "12345678-1234-4234-9234-123456789abc",
+        "expectedRevision": 1,
+        "sectionId": "section-1",
+        "widthPt": 960,
+        "heightPt": 720,
+        "header": "",
+        "footer": ""
+      }
     ]
   },
   "outputSchema": {

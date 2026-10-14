@@ -46,6 +46,27 @@ describe('Tool Catalog projection', () => {
     })
   })
 
+  it('marks a Skill dependency disabled when the required Tool version is outside range', () => {
+    const events = baseEvents()
+    const mismatchedTool = toolDefinition({
+      version: '2.0.0',
+      definitionDigest: 'd'.repeat(64)
+    })
+    const catalog = reduceToolCatalogEvents([
+      events[0],
+      event(2, 'definition', 'tool.definition_published', {
+        definition: mismatchedTool
+      }),
+      events[2]
+    ])
+
+    expect(catalog.skills[0]).toMatchObject({
+      id: 'builtin.skills.summarize-file',
+      status: 'dependency_disabled',
+      dependencyIssues: ['builtin.files.read@^1.0.0']
+    })
+  })
+
   it('keeps published definition versions immutable and deterministically ordered', () => {
     const events = baseEvents()
     const catalog = reduceToolCatalogEvents([
@@ -234,7 +255,7 @@ function event(
   }
 }
 
-function toolDefinition() {
+function toolDefinition(overrides: Record<string, unknown> = {}) {
   return {
     schemaVersion: 1,
     id: 'builtin.files.read',
@@ -273,7 +294,8 @@ function toolDefinition() {
     discovery: {
       intents: ['read file'],
       contexts: ['workflow', 'schedule']
-    }
+    },
+    ...overrides
   }
 }
 
@@ -293,8 +315,31 @@ function skillDefinition() {
     description: 'Summarize one file.',
     instructionsPath: 'skills/summarize.md',
     runtime: { kind: 'instruction' },
-    inputSchema: { type: 'object' },
-    outputSchema: { type: 'object' },
+    inputSchema: {
+      type: 'object',
+      description: 'Inputs for summarizing one file.',
+      required: ['path'],
+      additionalProperties: false,
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Authorized file path to summarize.',
+        },
+      },
+    },
+    outputSchema: {
+      type: 'object',
+      description: 'Summary result.',
+      required: ['summary'],
+      additionalProperties: false,
+      properties: {
+        summary: {
+          type: 'string',
+          description: 'Concise summary of the file.',
+        },
+      },
+    },
+    examples: [{ path: 'README.md' }],
     requiredTools: [
       {
         toolId: 'builtin.files.read',

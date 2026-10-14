@@ -24,6 +24,7 @@ const baseDefinition: SkillDefinition = {
     additionalProperties: false,
   },
   outputSchema: { type: 'object', additionalProperties: true },
+  examples: [{ focus: 'correctness' }],
   requiredTools: [
     {
       toolId: 'builtin.files.read',

@@ -18,20 +18,36 @@
     "properties": {
       "sessionId": {
         "type": "string",
-        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$",
+        "description": "Stable local editing or browser session ID returned by an inspect/create tool.",
+        "examples": [
+          "12345678-1234-4234-9234-123456789abc"
+        ]
       },
       "expectedRevision": {
         "type": "integer",
-        "minimum": 0
+        "minimum": 0,
+        "description": "Expected revision used for optimistic concurrency control. Copy this value from the latest RealmFlow UI/API state; do not invent it.",
+        "examples": [
+          1
+        ]
       },
       "sheet": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 255
+        "maxLength": 255,
+        "description": "Spreadsheet sheet name.",
+        "examples": [
+          "Sheet1"
+        ]
       },
       "range": {
         "type": "string",
-        "pattern": "^[A-Za-z]{1,3}[1-9][0-9]*:[A-Za-z]{1,3}[1-9][0-9]*$"
+        "pattern": "^[A-Za-z]{1,3}[1-9][0-9]*:[A-Za-z]{1,3}[1-9][0-9]*$",
+        "description": "Spreadsheet A1 range affected by the operation.",
+        "examples": [
+          "A1:B2"
+        ]
       },
       "type": {
         "type": "string",
@@ -39,24 +55,44 @@
           "bar",
           "line",
           "pie"
+        ],
+        "description": "Type selector for the requested structured object. Allowed values: bar, line, pie.",
+        "examples": [
+          "bar"
         ]
       },
       "title": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 200
+        "maxLength": 200,
+        "description": "User-visible title.",
+        "examples": [
+          "Quarterly update"
+        ]
       },
       "dataRange": {
         "type": "string",
-        "pattern": "^[A-Za-z]{1,3}[1-9][0-9]*:[A-Za-z]{1,3}[1-9][0-9]*$"
+        "pattern": "^[A-Za-z]{1,3}[1-9][0-9]*:[A-Za-z]{1,3}[1-9][0-9]*$",
+        "description": "Spreadsheet range containing chart data values.",
+        "examples": [
+          "A1:B2"
+        ]
       },
       "categoryRange": {
         "type": "string",
-        "pattern": "^[A-Za-z]{1,3}[1-9][0-9]*:[A-Za-z]{1,3}[1-9][0-9]*$"
+        "pattern": "^[A-Za-z]{1,3}[1-9][0-9]*:[A-Za-z]{1,3}[1-9][0-9]*$",
+        "description": "Spreadsheet range containing chart category labels.",
+        "examples": [
+          "A1:B2"
+        ]
       },
       "anchor": {
         "type": "string",
-        "pattern": "^[A-Za-z]{1,3}[1-9][0-9]*$"
+        "pattern": "^[A-Za-z]{1,3}[1-9][0-9]*$",
+        "description": "Top-left spreadsheet cell where the generated chart is anchored.",
+        "examples": [
+          "A1"
+        ]
       }
     },
     "required": [
@@ -68,6 +104,19 @@
       "dataRange",
       "categoryRange",
       "anchor"
+    ],
+    "examples": [
+      {
+        "sessionId": "12345678-1234-4234-9234-123456789abc",
+        "expectedRevision": 1,
+        "sheet": "Sheet1",
+        "range": "A1:B2",
+        "type": "bar",
+        "title": "Quarterly update",
+        "dataRange": "A1:B2",
+        "categoryRange": "A1:B2",
+        "anchor": "A1"
+      }
     ]
   },
   "outputSchema": {

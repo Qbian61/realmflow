@@ -57,9 +57,73 @@ describe('CliConnectorAdapter', () => {
     ).rejects.toThrow('arguments')
     expect(spawn).not.toHaveBeenCalled()
   })
+
+  it('rejects null CLI argument values before spawning', async () => {
+    const spawn = vi.fn()
+    const adapter = new CliConnectorAdapter({
+      processes: { spawn },
+      resolveWorkingDirectory: () => '/workspace',
+      resolveCredential: async () => 'secret'
+    })
+
+    await expect(
+      adapter.invoke({
+        snapshot: snapshot(),
+        arguments: { short: null },
+        correlationId: 'run-1',
+        causationId: 'call-1'
+      })
+    ).rejects.toThrow('CLI Connector argument value is invalid')
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('maps every install-time supported CLI argument value', async () => {
+    const spawn = vi.fn(async () => ({
+      exitCode: 0,
+      stdout: '',
+      stderr: ''
+    }))
+    const adapter = new CliConnectorAdapter({
+      processes: { spawn },
+      resolveWorkingDirectory: () => '/workspace',
+      resolveCredential: async () => 'secret'
+    })
+
+    await adapter.invoke({
+      snapshot: snapshot({
+        argumentNames: ['short', 'branchName', 'limit', 'path', 'revision']
+      }),
+      arguments: {
+        short: true,
+        branchName: 'main',
+        limit: 10,
+        path: ['src/index.ts', 'src/main.ts'],
+        revision: [1, 2]
+      },
+      correlationId: 'run-1',
+      causationId: 'call-1'
+    })
+
+    expect(spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        arguments: [
+          'status',
+          '--short',
+          '--branch-name=main',
+          '--limit=10',
+          '--path=src/index.ts',
+          '--path=src/main.ts',
+          '--revision=1',
+          '--revision=2'
+        ]
+      })
+    )
+  })
 })
 
-function snapshot(): EffectiveConnectorSnapshot {
+function snapshot(
+  options: { argumentNames?: string[] } = {}
+): EffectiveConnectorSnapshot {
   return {
     capabilityId: 'connector.cli',
     capabilityVersion: '1.0.0',
@@ -88,7 +152,7 @@ function snapshot(): EffectiveConnectorSnapshot {
         kind: 'cli',
         executable: '/usr/bin/git',
         subcommand: ['status'],
-        argumentNames: ['short'],
+        argumentNames: options.argumentNames ?? ['short'],
         workingDirectory: 'workspace',
         environmentCredentialRefs: {
           GIT_TOKEN: 'git'

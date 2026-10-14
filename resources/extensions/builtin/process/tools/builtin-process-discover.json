@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.process.discover",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "name": "Discover tools",
   "description": "Discover local executables and versions.",
   "tags": [
@@ -26,17 +26,43 @@
         "uniqueItems": true,
         "items": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,199}$"
-        }
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,199}$",
+          "examples": [
+            "python3"
+          ]
+        },
+        "description": "Executable names to discover on the local machine.",
+        "examples": [
+          [
+            "python3"
+          ]
+        ]
       },
       "cwd": {
-        "type": "string"
+        "type": "string",
+        "description": "Working directory as a relative path under the authorized root. Do not invent or pass absolute local paths.",
+        "examples": [
+          "."
+        ]
       },
       "scopeRoot": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Optional authorized root override. Omit or pass \".\" to use the current authorized root.",
+        "examples": [
+          "."
+        ]
       }
-    }
+    },
+    "examples": [
+      {
+        "names": [
+          "python3"
+        ],
+        "cwd": ".",
+        "scopeRoot": "."
+      }
+    ]
   },
   "outputSchema": {
     "type": "object",

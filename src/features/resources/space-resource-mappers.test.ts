@@ -79,7 +79,46 @@ describe('space resource mappers', () => {
     })
   })
 
-  it('formats recent and older resource timestamps', () => {
+  it('preserves repository metadata from Main-owned resources', () => {
+    expect(
+      mapBusinessResource({
+        id: 'repository-1',
+        workspaceId: 'workspace-1',
+        name: 'RealmFlow',
+        type: 'repository',
+        locator: 'connector:github/org/realmflow',
+        detail: '1 file · 8 B',
+        sortOrder: 0,
+        status: 'indexed',
+        revision: 4,
+        createdAt: 1,
+        updatedAt: 2,
+        repository: {
+          sourceId: 'repository-1',
+          workspaceId: 'workspace-1',
+          mode: 'remote',
+          locator: 'connector:github/org/realmflow',
+          selectedBranch: 'main',
+          currentVersion: 1,
+          revisionLabel: 'main@abc123',
+          fileCount: 1,
+          totalBytes: 8,
+          lastScannedAt: 2,
+          createdAt: 1,
+          updatedAt: 2
+        }
+      })
+    ).toMatchObject({
+      id: 'repository-1',
+      repository: {
+        mode: 'remote',
+        selectedBranch: 'main',
+        revisionLabel: 'main@abc123'
+      }
+    })
+  })
+
+  it('formats resource updated timestamps', () => {
     vi.setSystemTime(new Date('2026-09-17T10:00:00Z'))
 
     expect(formatResourceUpdatedAt()).toBe('刚刚')

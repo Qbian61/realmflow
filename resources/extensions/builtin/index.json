@@ -6,7 +6,7 @@
       "packageId": "realmflow.builtin.archives",
       "version": "1.1.0",
       "path": "archives/extension.json",
-      "sourceDigest": "2cb8070f17e1c77a5b227d150a2edc00f1d7dad779d4ad10d5f9c3a92c400b41",
+      "sourceDigest": "97928b7aa89dae946f5bbd6447fed981025110557138e268819391d67f691141",
       "toolDefinitions": [
         {
           "id": "builtin.archives.create",
@@ -27,7 +27,7 @@
       "packageId": "realmflow.builtin.browser",
       "version": "1.0.0",
       "path": "browser/extension.json",
-      "sourceDigest": "d895ddc1fba3b9f7b835b918e194a5f9e7cfd9d27f6f45baecfb8c44c02a0946",
+      "sourceDigest": "1965e979b174c26195c7c383575ef0fcaa1dad6cc05cb5e53571b80520f70373",
       "toolDefinitions": [
         {
           "id": "builtin.browser.attach",
@@ -92,7 +92,7 @@
       "packageId": "realmflow.builtin.computer",
       "version": "1.0.0",
       "path": "computer/extension.json",
-      "sourceDigest": "fe7fb3aecd61d9d452d97907046ead3fbf084aaeb634c4eaee0542bed133900b",
+      "sourceDigest": "e66aae1ef68ad0daac273778b8acfb6060603c067e90ee481de405716aa2b771",
       "toolDefinitions": [
         {
           "id": "builtin.computer.click",
@@ -133,7 +133,7 @@
       "packageId": "realmflow.builtin.core-skills",
       "version": "1.0.0",
       "path": "core-skills/extension.json",
-      "sourceDigest": "e0565364ec59c35e61c18ff571d77a3e60780dd5f0946e529882bcc6cae195c9",
+      "sourceDigest": "eae3c184ccdd329757d737b2d8d89e753a6808d2210226029a80a8f18eb2fe45",
       "toolDefinitions": [],
       "skillDefinitions": [
         {
@@ -182,7 +182,7 @@
       "packageId": "realmflow.builtin.documents",
       "version": "1.1.0",
       "path": "documents/extension.json",
-      "sourceDigest": "8f0e063a4efff1d0d9c760897f201e4d270b350d1c8a6bf68fa376597f352848",
+      "sourceDigest": "d6c53dd791d3e721bcf227b2096d442bbdb89b2609b8ab97399644ee51d90c16",
       "toolDefinitions": [
         {
           "id": "builtin.artifact.verify",
@@ -198,6 +198,10 @@
         },
         {
           "id": "builtin.document.create",
+          "version": "1.1.0"
+        },
+        {
+          "id": "builtin.document.deliver_pdf",
           "version": "1.1.0"
         },
         {
@@ -247,7 +251,7 @@
       "packageId": "realmflow.builtin.domain",
       "version": "1.0.2",
       "path": "realmflow/extension.json",
-      "sourceDigest": "4d199a2a438ef65cd8c2cbcb51a58b64570343b4c6c0dafe1cbe482c8ec963eb",
+      "sourceDigest": "e72692be78d3a30672770d16cd64f0d63ba0653fe3aeb58dbc2512563614ede8",
       "toolDefinitions": [
         {
           "id": "builtin.attachment.read_chunk",
@@ -294,57 +298,57 @@
     },
     {
       "packageId": "realmflow.builtin.files",
-      "version": "1.3.1",
+      "version": "1.3.2",
       "path": "files/extension.json",
-      "sourceDigest": "239921946bb0d2cdbcf71c1835cbe852a7cbf5da63b8bb3732e1492fd499a396",
+      "sourceDigest": "3e8146fc6fbf41deb73120df870e601ecb97b3f8e6d5e1520cf9dcef83b665e9",
       "toolDefinitions": [
         {
           "id": "builtin.documents.read",
-          "version": "1.3.1"
+          "version": "1.3.2"
         },
         {
           "id": "builtin.files.apply_patch",
-          "version": "1.3.1"
+          "version": "1.3.2"
         },
         {
           "id": "builtin.files.copy",
-          "version": "1.3.1"
+          "version": "1.3.2"
         },
         {
           "id": "builtin.files.create_directory",
-          "version": "1.3.1"
+          "version": "1.3.2"
         },
         {
           "id": "builtin.files.delete_permanently",
-          "version": "1.3.1"
+          "version": "1.3.2"
         },
         {
           "id": "builtin.files.list",
-          "version": "1.3.1"
+          "version": "1.3.2"
         },
         {
           "id": "builtin.files.move",
-          "version": "1.3.1"
+          "version": "1.3.2"
         },
         {
           "id": "builtin.files.read",
-          "version": "1.3.1"
+          "version": "1.3.2"
         },
         {
           "id": "builtin.files.search",
-          "version": "1.3.1"
+          "version": "1.3.2"
         },
         {
           "id": "builtin.files.stat",
-          "version": "1.3.1"
+          "version": "1.3.2"
         },
         {
           "id": "builtin.files.trash",
-          "version": "1.3.1"
+          "version": "1.3.2"
         },
         {
           "id": "builtin.files.write",
-          "version": "1.3.1"
+          "version": "1.3.2"
         }
       ],
       "skillDefinitions": []
@@ -353,7 +357,7 @@
       "packageId": "realmflow.builtin.fixed-layout",
       "version": "1.1.0",
       "path": "fixed-layout/extension.json",
-      "sourceDigest": "f16e0c75aff53f28f3ee4d4b36f39771faa437034e9089da727eaf4cbb58fd78",
+      "sourceDigest": "dc2a66307b9e8b96622a9b1b8fe3c28f7162837777c57bcc645992ffc1d2b3e0",
       "toolDefinitions": [
         {
           "id": "builtin.fixed_layout.inspect",
@@ -370,7 +374,7 @@
       "packageId": "realmflow.builtin.git",
       "version": "1.0.1",
       "path": "git/extension.json",
-      "sourceDigest": "55a9d62d2f899bb54dca1134a7230fe01ad683e5b255a1c7c531cb890a3f07a3",
+      "sourceDigest": "063201b1f9a403bbac905f5885e231d84bd9eeac9357beab288e5044e5ba22b3",
       "toolDefinitions": [
         {
           "id": "builtin.git.commit",
@@ -407,7 +411,7 @@
       "packageId": "realmflow.builtin.images",
       "version": "1.0.0",
       "path": "images/extension.json",
-      "sourceDigest": "41f9fd1db51389909648f214cfaa1d0cb488d914cf5bf21bb48d2a7b3448d395",
+      "sourceDigest": "d5e6bd4de8c119e8adf5dec831d4dc72732e2e9e9384308ce2fc493b168756e1",
       "toolDefinitions": [
         {
           "id": "builtin.image.composite",
@@ -458,25 +462,29 @@
     },
     {
       "packageId": "realmflow.builtin.knowledge",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "path": "knowledge/extension.json",
-      "sourceDigest": "e3fbcc5dbfae10df7e6222091f6afd77fc88ca050529e6254220acc49ed8377a",
+      "sourceDigest": "13b70b57042c4f031f34ea276420dac94d33c8264697c1e0d5b58962c1d4988d",
       "toolDefinitions": [
         {
           "id": "builtin.knowledge.index.refresh",
-          "version": "1.0.2"
+          "version": "1.0.3"
         },
         {
-          "id": "builtin.knowledge.note.save",
-          "version": "1.0.2"
+          "id": "builtin.knowledge.note.create",
+          "version": "1.0.3"
+        },
+        {
+          "id": "builtin.knowledge.note.edit",
+          "version": "1.0.3"
         },
         {
           "id": "builtin.knowledge.search",
-          "version": "1.0.2"
+          "version": "1.0.3"
         },
         {
           "id": "builtin.knowledge.source.read",
-          "version": "1.0.2"
+          "version": "1.0.3"
         }
       ],
       "skillDefinitions": []
@@ -485,7 +493,7 @@
       "packageId": "realmflow.builtin.legacy-office",
       "version": "1.2.0",
       "path": "legacy-office/extension.json",
-      "sourceDigest": "b834cac3ee6a28246f24f39e826c90ce95457b998d0f503392365ab9c7166f0b",
+      "sourceDigest": "2d90f67c1456df53529b767d9ac5d8af1424dce79de445d080d4c8da11c963c3",
       "toolDefinitions": [
         {
           "id": "builtin.office.create_safe_copy",
@@ -506,7 +514,7 @@
       "packageId": "realmflow.builtin.pdf",
       "version": "1.0.1",
       "path": "pdf/extension.json",
-      "sourceDigest": "6164ce3a8315c0b60b5ffb346100a346155ec16d5937c4700798ddee8443ba12",
+      "sourceDigest": "4183cd4ebd31fa4bfdaa76e15241dd88c79a9da226d201f323236fea31446702",
       "toolDefinitions": [
         {
           "id": "builtin.pdf.annotation_add",
@@ -537,6 +545,10 @@
           "version": "1.0.1"
         },
         {
+          "id": "builtin.pdf.save_as",
+          "version": "1.0.1"
+        },
+        {
           "id": "builtin.pdf.split",
           "version": "1.0.1"
         },
@@ -555,7 +567,7 @@
       "packageId": "realmflow.builtin.presentations",
       "version": "1.0.0",
       "path": "presentations/extension.json",
-      "sourceDigest": "40430c27edd29c87ac761226922f47689a99bac9926080a0f2fa0d86f49188da",
+      "sourceDigest": "d99e0bc3a04253e11adeddb3bb4ef8792f29f92abbb907cb93664fa47d87c5da",
       "toolDefinitions": [
         {
           "id": "builtin.presentation.add_chart",
@@ -626,29 +638,29 @@
     },
     {
       "packageId": "realmflow.builtin.process",
-      "version": "1.0.3",
+      "version": "1.0.4",
       "path": "process/extension.json",
-      "sourceDigest": "241379e238dd78b700895d744d28d931fe65016834063bd4782353bd06a358eb",
+      "sourceDigest": "1ecff8f37807de36e4751f68af5787d61586c31a8c0fcd6c08392ae0c4fb1c6f",
       "toolDefinitions": [
         {
           "id": "builtin.process.discover",
-          "version": "1.0.3"
+          "version": "1.0.4"
         },
         {
           "id": "builtin.process.list",
-          "version": "1.0.3"
+          "version": "1.0.4"
         },
         {
           "id": "builtin.process.run",
-          "version": "1.0.3"
+          "version": "1.0.4"
         },
         {
           "id": "builtin.process.start",
-          "version": "1.0.3"
+          "version": "1.0.4"
         },
         {
           "id": "builtin.process.stop",
-          "version": "1.0.3"
+          "version": "1.0.4"
         }
       ],
       "skillDefinitions": []
@@ -657,7 +669,7 @@
       "packageId": "realmflow.builtin.spreadsheets",
       "version": "1.0.0",
       "path": "spreadsheets/extension.json",
-      "sourceDigest": "325e75eb2329a272df410dc88e89d1001a73cc7ba5af1261fb31a597c4e6c2b6",
+      "sourceDigest": "eecdbc285bab52ee9ae9ab62bc76646c8eeecf4fa926fd4f5133fb1ec10b60b0",
       "toolDefinitions": [
         {
           "id": "builtin.spreadsheet.chart",
@@ -710,7 +722,7 @@
       "packageId": "realmflow.builtin.web",
       "version": "1.1.0",
       "path": "web/extension.json",
-      "sourceDigest": "2fbec962abfa4a4dfc2e143348ca5ccdc24da3ed5e6e6a4042de7d6d90242367",
+      "sourceDigest": "8f84528878bffb62dc1042ced7b1ff3eeb4b8de681213374215ba520383c3921",
       "toolDefinitions": [
         {
           "id": "builtin.web.fetch",

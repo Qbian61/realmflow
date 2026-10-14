@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.files.create_directory",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "name": "Create directory",
   "description": "Create an authorized directory.",
   "tags": [
@@ -22,17 +22,36 @@
     "properties": {
       "path": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Authorized local path as a relative path under the authorized root. Do not invent or pass absolute local paths.",
+        "examples": [
+          "docs/example.md"
+        ]
       },
       "scopeRoot": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Optional authorized root override. Omit or pass \".\" to use the current authorized root.",
+        "examples": [
+          "."
+        ]
       },
       "expectedAbsent": {
         "type": "boolean",
-        "const": true
+        "const": true,
+        "description": "Must be true to confirm the target path does not already exist.",
+        "examples": [
+          true
+        ]
       }
-    }
+    },
+    "examples": [
+      {
+        "path": "docs/example.md",
+        "scopeRoot": ".",
+        "expectedAbsent": true
+      }
+    ]
   },
   "outputSchema": {
     "type": "object",

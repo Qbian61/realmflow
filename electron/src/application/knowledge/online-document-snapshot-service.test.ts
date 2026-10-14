@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { vi } from 'vitest'
 import { createConnector } from '../../../../domain/connector'
 import {
@@ -40,7 +41,9 @@ describe('OnlineDocumentSnapshotService', () => {
         snapshot: expect.objectContaining({
           id: 'snapshot-3',
           version: 1,
-          content: '# Product brief',
+          documents: [
+            expect.objectContaining({ content: '# Product brief' })
+          ],
           mediaType: 'text/markdown',
           etag: '"revision-1"'
         })
@@ -48,6 +51,63 @@ describe('OnlineDocumentSnapshotService', () => {
     )
     expect(result.source).toMatchObject({ status: 'indexed', revision: 3 })
     expect(result.snapshot).toMatchObject({ version: 1 })
+  })
+
+  it('extracts a binary PDF response into frozen snapshot documents', async () => {
+    const harness = createHarness()
+    const body = Uint8Array.from([0x25, 0x50, 0x44, 0x46, 0x2d, 0xff])
+    harness.connectors.invoke.mockResolvedValue(
+      response({
+        headers: { 'content-type': 'application/pdf' },
+        body
+      })
+    )
+    harness.contentExtractor.extract.mockResolvedValue({
+      sourceChecksum:
+        'sha256:e470722efcc0cdc1e6d7ba74bf65bd79688cf884ed83b5003d3cf6d2ad72ad76',
+      format: 'pdf',
+      extractorVersion: 'pdf-v1',
+      units: [
+        {
+          key: 'page/000001',
+          title: 'Page 1',
+          text: 'Quarterly report',
+          checksum: 'sha256:page-1',
+          byteSize: 16,
+          metadata: {
+            format: 'pdf',
+            extraction: 'native',
+            page: 1
+          }
+        }
+      ]
+    })
+
+    await harness.service.create(createCommand())
+
+    expect(harness.contentExtractor.extract).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bytes: body,
+        fileName: '/documents/brief',
+        mimeType: 'application/pdf',
+        policy: expect.objectContaining({ consumer: 'online_document' })
+      })
+    )
+    expect(harness.store.completeOnlineDocumentSync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        snapshot: expect.objectContaining({
+          contentChecksum:
+            'sha256:e470722efcc0cdc1e6d7ba74bf65bd79688cf884ed83b5003d3cf6d2ad72ad76',
+          byteSize: body.byteLength,
+          documents: [
+            expect.objectContaining({
+              unitKey: 'page/000001',
+              content: 'Quarterly report'
+            })
+          ]
+        })
+      })
+    )
   })
 
   it('rejects a missing workspace before Connector, store or network access', async () => {
@@ -104,6 +164,9 @@ describe('OnlineDocumentSnapshotService', () => {
         headers: { 'content-type': 'application/octet-stream' },
         body: new Uint8Array([0xff])
       })
+    )
+    harness.contentExtractor.extract.mockRejectedValue(
+      new Error('File format is not available for local extraction')
     )
 
     const result = await harness.service.create(createCommand())
@@ -215,7 +278,12 @@ describe('OnlineDocumentSnapshotService', () => {
     expect(harness.connectors.invoke).toHaveBeenCalledOnce()
     expect(harness.store.completeOnlineDocumentSync).toHaveBeenCalledWith(
       expect.objectContaining({
-        snapshot: expect.objectContaining({ content: '# Changed', version: 2 })
+        snapshot: expect.objectContaining({
+          documents: [
+            expect.objectContaining({ content: '# Changed' })
+          ],
+          version: 2
+        })
       })
     )
   })
@@ -256,6 +324,9 @@ describe('OnlineDocumentSnapshotService', () => {
             headers: { 'content-type': 'application/octet-stream' },
             body: new Uint8Array([0xff])
           })
+        )
+        harness.contentExtractor.extract.mockRejectedValue(
+          new Error('File format is not available for local extraction')
         )
       },
       errorCode: 'unsupported_format'
@@ -368,15 +439,38 @@ function createHarness(options: {
     invoke: vi.fn().mockResolvedValue(response())
   }
   const store = storeMock()
+  const contentExtractor = {
+    extract: vi.fn().mockImplementation(async ({ bytes }) => {
+      const content = new TextDecoder().decode(bytes)
+      return {
+        sourceChecksum: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
+        format: 'md',
+        extractorVersion: 'text-v1',
+        units: [
+          {
+            key: 'content',
+            title: 'Product brief',
+            text: content,
+            checksum: `sha256:${createHash('sha256')
+              .update(content)
+              .digest('hex')}`,
+            byteSize: bytes.byteLength
+          }
+        ]
+      }
+    })
+  }
   let id = 0
-  const service = new OnlineDocumentSnapshotService({
+  const dependencies = {
     workspaces,
     connectors,
     store: store as unknown as OnlineDocumentStore,
+    contentExtractor,
     now: () => 20,
-    createId: (kind) => `${kind}-${++id}`
-  })
-  return { service, workspaces, connectors, store }
+    createId: (kind: 'event' | 'snapshot') => `${kind}-${++id}`
+  }
+  const service = new OnlineDocumentSnapshotService(dependencies)
+  return { service, workspaces, connectors, store, contentExtractor }
 }
 
 function storeMock() {
@@ -497,12 +591,24 @@ function indexedSource(
 }
 
 function snapshot(version: number) {
+  const body = new TextEncoder().encode('# Product brief')
   return createOnlineDocumentSnapshot({
     id: `snapshot-${version}`,
     sourceId: 'source-1',
     version,
-    body: new TextEncoder().encode('# Product brief'),
+    body,
     mediaType: 'text/markdown',
+    documents: [
+      {
+        unitKey: 'content',
+        title: 'Product brief',
+        content: '# Product brief',
+        checksum: `sha256:${createHash('sha256')
+          .update('# Product brief')
+          .digest('hex')}`,
+        byteSize: body.byteLength
+      }
+    ],
     fetchedAt: 20
   })
 }

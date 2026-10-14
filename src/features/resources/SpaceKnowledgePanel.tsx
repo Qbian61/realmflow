@@ -1,16 +1,12 @@
 import {
   BookOpen,
-  CircleCheck,
-  CircleX,
   ExternalLink,
-  File,
   GitBranch,
   Search,
   Upload,
 } from "lucide-react";
 import {
   useCallback,
-  useEffect,
   useMemo,
   useState,
   type Dispatch,
@@ -21,25 +17,20 @@ import type {
   BusinessApi,
   ConnectorDto,
   KnowledgeIndexViewDto,
-  KnowledgeRuntimeHealthDto,
-  OnlineDocumentSnapshotViewDto,
   RepositorySnapshotViewDto,
 } from "../../../shared/business";
 import type { RealmFlowApi } from "../../../shared/types";
 import type { KnowledgeRefreshPreset } from "../../../domain/knowledge-refresh";
 import type { LocalFileStorageMode } from "../../../domain/local-file-source";
-import type {
-  SpaceResource,
-  SpaceResourceType,
-} from "../../domain/space-resource";
+import type { SpaceResource } from "../../domain/space-resource";
 import { mapBusinessResource } from "./space-resource-mappers";
-import { KnowledgeResourceRow } from "./KnowledgeResourceRow";
-import { KnowledgeIndexJobDialog } from "./KnowledgeIndexJobDialog";
+import type { RepositoryIndexStatusSummaryState } from "./KnowledgeResourceRow";
 import { KnowledgeNotesPanel } from "./KnowledgeNotesPanel";
-import { OnlineDocumentSnapshotDialog } from "./OnlineDocumentSnapshotDialog";
 import { RepositorySnapshotDialog } from "./RepositorySnapshotDialog";
 import { RepositorySourceDialog } from "./RepositorySourceDialog";
+import { ResourceDetailDialog } from "./ResourceDetailDialog";
 import { ResourceDialog } from "./ResourceDialog";
+import { SpaceKnowledgeResourceTable } from "./SpaceKnowledgeResourceTable";
 import { useWorkbench } from "../workbench/WorkbenchProvider";
 import { useLocalization } from "../../localization/LocalizationProvider";
 import { useToast } from "../toast/ToastProvider";
@@ -50,13 +41,23 @@ import {
   useUrlQueryState,
 } from "../../navigation/url-query-state";
 import {
-  Badge,
   Button,
-  EmptyState,
-  ListPagination,
   Toolbar,
   useListPagination,
 } from "../../components/ui";
+import {
+  getResourceDisplayType,
+  resourceDisplayTypeLabelKeys,
+} from "./resource-display-type";
+import {
+  getResourceIndexHealth,
+  resourceIndexHealthLabelKeys,
+  summarizeRepositoryIndexStatusCounts,
+} from "./resource-presentation";
+import {
+  spaceResourceIndexOptions,
+  spaceResourceTypeOptions,
+} from "./space-resource-filter-options";
 
 type SpaceKnowledgePanelProps = {
   spaceId: string;
@@ -67,8 +68,27 @@ type SpaceKnowledgePanelProps = {
   onPersistenceUnavailable: (unavailable: boolean) => void;
 };
 
+type ResourceIndexJobState = {
+  sourceId: string;
+  name: string;
+  loading: boolean;
+  view?: KnowledgeIndexViewDto;
+  error?: boolean;
+};
+
 const resourceTypeCodec = createEnumQueryCodec(
-  ["all", "file", "document", "repository"] as const,
+  [
+    "all",
+    "localFile",
+    "localReference",
+    "document",
+    "repository",
+    "remoteRepository",
+  ] as const,
+  "all",
+);
+const resourceIndexHealthCodec = createEnumQueryCodec(
+  ["all", "missing", "building", "ready", "failed"] as const,
   "all",
 );
 const resourceSearchCodec = createTextQueryCodec();
@@ -93,18 +113,22 @@ export function SpaceKnowledgePanel({
   const [connectors, setConnectors] = useState<ConnectorDto[]>([]);
   const [resourceError, setResourceError] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [preview, setPreview] = useState<{
-    name: string;
-    view: OnlineDocumentSnapshotViewDto;
-  }>();
+  const [resourceDetail, setResourceDetail] = useState<SpaceResource>();
+  const [openingResourceId, setOpeningResourceId] = useState("");
   const [repositoryPreview, setRepositoryPreview] = useState<{
     name: string;
     sourceRevision: number;
     view: RepositorySnapshotViewDto;
+    resource: SpaceResource;
   }>();
-  const [resourceFilter, setResourceFilter] = useUrlQueryState<
-    "all" | SpaceResourceType
-  >("resourceType", resourceTypeCodec);
+  const [resourceFilter, setResourceFilter] = useUrlQueryState(
+    "resourceType",
+    resourceTypeCodec,
+  );
+  const [resourceIndexFilter, setResourceIndexFilter] = useUrlQueryState(
+    "resourceIndex",
+    resourceIndexHealthCodec,
+  );
   const [resourceSearch, setResourceSearch] = useUrlQueryState(
     "resourceQuery",
     resourceSearchCodec,
@@ -113,51 +137,37 @@ export function SpaceKnowledgePanel({
     "resourcePage",
     resourcePageCodec,
   );
-  const [runtimeHealth, setRuntimeHealth] =
-    useState<KnowledgeRuntimeHealthDto>();
-  const [indexJobDialog, setIndexJobDialog] = useState<{
-    sourceId: string;
-    name: string;
-    loading: boolean;
-    view?: KnowledgeIndexViewDto;
-    error?: boolean;
-  }>();
-
-  useEffect(() => {
-    if (!business?.getKnowledgeRuntimeHealth) return;
-    let disposed = false;
-    void business
-      .getKnowledgeRuntimeHealth()
-      .then((health) => {
-        if (!disposed) setRuntimeHealth(health);
-      })
-      .catch(() => {
-        if (!disposed) {
-          setRuntimeHealth({
-            status: "unavailable",
-            components: {
-              vectorStore: "unavailable",
-              embeddings: "unavailable",
-            },
-          });
-        }
-      });
-    return () => {
-      disposed = true;
-    };
-  }, [business]);
+  const [resourceIndexJob, setResourceIndexJob] =
+    useState<ResourceIndexJobState>();
+  const [repositoryIndexStatusSummaries, setRepositoryIndexStatusSummaries] =
+    useState<Record<string, RepositoryIndexStatusSummaryState>>({});
 
   const filteredResources = useMemo(() => {
     const query = resourceSearch.trim().toLowerCase();
-    return resources.filter(
-      (resource) =>
-        (resourceFilter === "all" || resource.type === resourceFilter) &&
+    return resources.filter((resource) => {
+      const displayType = getResourceDisplayType(resource);
+      const displayTypeLabel = t(resourceDisplayTypeLabelKeys[displayType]);
+      const indexHealth = getResourceIndexHealth(resource);
+      const indexStatusLabel = t(resourceIndexHealthLabelKeys[indexHealth]);
+      return (
+        (resourceFilter === "all" || displayType === resourceFilter) &&
+        (resourceIndexFilter === "all" ||
+          indexHealth === resourceIndexFilter) &&
         (!query ||
-          `${resource.name} ${resource.detail} ${resource.locator}`
+          `${resource.name} ${resource.detail} ${resource.locator} ${displayTypeLabel} ${indexStatusLabel}`
             .toLowerCase()
-            .includes(query)),
-    );
-  }, [resourceFilter, resourceSearch, resources]);
+            .includes(query))
+      );
+    });
+  }, [resourceFilter, resourceIndexFilter, resourceSearch, resources, t]);
+  const resourceTypeOptions = useMemo(
+    () => spaceResourceTypeOptions(t),
+    [t],
+  );
+  const resourceIndexOptions = useMemo(
+    () => spaceResourceIndexOptions(t),
+    [t],
+  );
   const resourcePagination = useListPagination(filteredResources, undefined, {
     page: resourcePage,
     onPageChange: (page) => setResourcePage(page, { replace: page === 1 }),
@@ -267,23 +277,6 @@ export function SpaceKnowledgePanel({
   };
 
   const openResource = async (resource: SpaceResource): Promise<void> => {
-    if (resource.type === "document") {
-      if (!business) {
-        toast.error("app.persistenceUnavailable");
-        return onPersistenceUnavailable(true);
-      }
-      try {
-        const view = await business.getOnlineDocumentSnapshot({
-          sourceId: resource.id,
-        });
-        setPreview({ name: resource.name, view });
-        onPersistenceUnavailable(false);
-      } catch {
-        toast.error("app.persistenceUnavailable");
-        onPersistenceUnavailable(true);
-      }
-      return;
-    }
     if (resource.type === "repository") {
       if (!business) {
         toast.error("app.persistenceUnavailable");
@@ -297,7 +290,9 @@ export function SpaceKnowledgePanel({
           name: resource.name,
           sourceRevision: resource.revision ?? 1,
           view,
+          resource,
         });
+        void loadLatestIndexJob(resource.id, resource.name);
         onPersistenceUnavailable(false);
       } catch {
         toast.error("app.persistenceUnavailable");
@@ -305,8 +300,30 @@ export function SpaceKnowledgePanel({
       }
       return;
     }
+
+    setResourceDetail(resource);
+    void loadLatestIndexJob(resource.id, resource.name);
+  };
+
+  const openResourceInWorkbench = async (
+    resource: SpaceResource,
+  ): Promise<void> => {
+    setOpeningResourceId(resource.id);
+    if (resource.type === "document") {
+      try {
+        await workbench.openUrl(resource.locator);
+        onPersistenceUnavailable(false);
+      } catch {
+        toast.error("app.persistenceUnavailable");
+        onPersistenceUnavailable(true);
+      } finally {
+        setOpeningResourceId("");
+      }
+      return;
+    }
     if (!business) {
       toast.error("app.persistenceUnavailable");
+      setOpeningResourceId("");
       return onPersistenceUnavailable(true);
     }
     try {
@@ -318,6 +335,8 @@ export function SpaceKnowledgePanel({
     } catch {
       toast.error("app.persistenceUnavailable");
       onPersistenceUnavailable(true);
+    } finally {
+      setOpeningResourceId("");
     }
   };
 
@@ -332,6 +351,10 @@ export function SpaceKnowledgePanel({
         idempotencyKey: `refresh-${crypto.randomUUID()}`,
       });
       await reloadResources();
+      setRepositoryIndexStatusSummaries((current) => {
+        const { [resource.id]: _removed, ...rest } = current;
+        return rest;
+      });
       onPersistenceUnavailable(false);
     } catch {
       toast.error(
@@ -345,33 +368,61 @@ export function SpaceKnowledgePanel({
     }
   };
 
-  const indexResource = async (resource: SpaceResource): Promise<void> => {
-    if (!business || resource.revision === undefined) return;
-    try {
-      const result = await business.buildKnowledgeIndex({
-        id: resource.id,
-        expectedRevision: resource.revision,
-        idempotencyKey: `index-${crypto.randomUUID()}`,
-      });
-      void result;
-      await reloadResources();
-      onPersistenceUnavailable(false);
-    } catch {
-      onPersistenceUnavailable(true);
-    }
-  };
+  const loadRepositoryIndexStatusSummary = useCallback(
+    (resource: SpaceResource): void => {
+      if (resource.type !== "repository") return;
+      if (!business || typeof business.getRepositorySnapshot !== "function") {
+        setRepositoryIndexStatusSummaries((current) => ({
+          ...current,
+          [resource.id]: {
+            loading: false,
+            error: true,
+          },
+        }));
+        return;
+      }
+      const current = repositoryIndexStatusSummaries[resource.id];
+      if (current?.loading || current?.counts) return;
+      setRepositoryIndexStatusSummaries((items) => ({
+        ...items,
+        [resource.id]: { loading: true },
+      }));
+      void business
+        .getRepositorySnapshot({ sourceId: resource.id })
+        .then((view) => {
+          setRepositoryIndexStatusSummaries((items) => ({
+            ...items,
+            [resource.id]: {
+              loading: false,
+              counts: summarizeRepositoryIndexStatusCounts(view),
+            },
+          }));
+          onPersistenceUnavailable(false);
+        })
+        .catch(() => {
+          setRepositoryIndexStatusSummaries((items) => ({
+            ...items,
+            [resource.id]: {
+              loading: false,
+              error: true,
+            },
+          }));
+        });
+    },
+    [business, onPersistenceUnavailable, repositoryIndexStatusSummaries],
+  );
 
   const loadLatestIndexJob = async (
     sourceId: string,
     name: string,
   ): Promise<void> => {
-    setIndexJobDialog({
+    setResourceIndexJob({
       sourceId,
       name,
       loading: true,
     });
     if (!business) {
-      setIndexJobDialog({
+      setResourceIndexJob({
         sourceId,
         name,
         loading: false,
@@ -382,7 +433,7 @@ export function SpaceKnowledgePanel({
     }
     try {
       const view = await business.getKnowledgeIndex({ sourceId });
-      setIndexJobDialog((current) =>
+      setResourceIndexJob((current) =>
         current?.sourceId === sourceId
           ? {
               sourceId,
@@ -394,7 +445,7 @@ export function SpaceKnowledgePanel({
       );
       onPersistenceUnavailable(false);
     } catch {
-      setIndexJobDialog((current) =>
+      setResourceIndexJob((current) =>
         current?.sourceId === sourceId
           ? {
               sourceId,
@@ -406,10 +457,6 @@ export function SpaceKnowledgePanel({
       );
       onPersistenceUnavailable(true);
     }
-  };
-
-  const viewLatestIndexJob = async (resource: SpaceResource): Promise<void> => {
-    await loadLatestIndexJob(resource.id, resource.name);
   };
 
   const changeRefreshPolicy = async (
@@ -464,34 +511,11 @@ export function SpaceKnowledgePanel({
           className="space-resource-section"
           aria-label={t("resources.title")}
         >
-          <header className="space-resource-header">
-            <div>
-              <p>{t("resources.description")}</p>
-              {runtimeHealth ? (
-                <Badge
-                  tone={runtimeHealth.status === "ready" ? "success" : "danger"}
-                  className={`knowledge-runtime-health ${runtimeHealth.status}`}
-                  role="status"
-                  aria-label={t("resources.runtime.aria")}
-                >
-                  {runtimeHealth.status === "ready" ? (
-                    <CircleCheck size={13} />
-                  ) : (
-                    <CircleX size={13} />
-                  )}
-                  {t(
-                    runtimeHealth.status === "ready"
-                      ? "resources.runtime.ready"
-                      : "resources.runtime.unavailable",
-                  )}
-                  <small>{t("resources.runtime.detail")}</small>
-                </Badge>
-              ) : null}
-            </div>
-            <Toolbar
-              className="space-resource-actions"
-              aria-label={t("resources.title")}
-            >
+          <Toolbar
+            className="space-resource-controls"
+            aria-label={t("resources.title")}
+          >
+            <div className="space-resource-actions">
               <Button
                 variant="primary"
                 onClick={() => void addLocalFiles("managed_copy")}
@@ -523,41 +547,12 @@ export function SpaceKnowledgePanel({
               >
                 {t("resources.repository.connect")}
               </Button>
-            </Toolbar>
-          </header>
-
-          <Toolbar
-            className="space-resource-toolbar"
-            aria-label={t("resources.filterAria")}
-          >
-            <div role="group" aria-label={t("resources.filterAria")}>
-              {(
-                [
-                  ["all", "resources.type.all"],
-                  ["file", "resources.type.file"],
-                  ["document", "resources.type.document"],
-                  ["repository", "resources.type.repository"],
-                ] as const
-              ).map(([value, labelKey]) => (
-                <Button
-                  size="compact"
-                  variant={resourceFilter === value ? "neutral" : "ghost"}
-                  aria-pressed={resourceFilter === value}
-                  key={value}
-                  onClick={() => setResourceFilter(value)}
-                >
-                  {t(labelKey)}
-                  <span>
-                    {value === "all"
-                      ? resources.length
-                      : resources.filter((item) => item.type === value).length}
-                  </span>
-                </Button>
-              ))}
             </div>
-            <label>
+            <label className="space-resource-search">
               <Search size={14} />
-              <input name="resources-search-aria" autoComplete="off"
+              <input
+                name="resources-search-aria"
+                autoComplete="off"
                 type="search"
                 aria-label={t("resources.searchAria")}
                 placeholder={t("resources.searchPlaceholder")}
@@ -569,48 +564,31 @@ export function SpaceKnowledgePanel({
             </label>
           </Toolbar>
 
-          {filteredResources.length > 0 ? (
-            <>
-              <div className="space-resource-table" role="table">
-                <div role="row">
-                  <span role="columnheader">{t("resources.column.name")}</span>
-                  <span role="columnheader">{t("resources.column.type")}</span>
-                  <span role="columnheader">{t("resources.column.detail")}</span>
-                  <span role="columnheader">
-                    {t("resources.column.updatedAt")}
-                  </span>
-                  <span aria-hidden="true" />
-                </div>
-                {resourcePagination.pageItems.map((resource) => (
-                  <KnowledgeResourceRow
-                    key={resource.id}
-                    resource={resource}
-                    onOpen={openResource}
-                    onSync={syncResource}
-                    onIndex={indexResource}
-                    onViewLatestIndexJob={(item) => {
-                      void viewLatestIndexJob(item);
-                    }}
-                    onRefreshPolicyChange={changeRefreshPolicy}
-                    onRemove={removeResource}
-                  />
-                ))}
-              </div>
-              <ListPagination
-                total={filteredResources.length}
-                page={resourcePagination.page}
-                pageSize={resourcePagination.pageSize}
-                onPageChange={resourcePagination.setPage}
-              />
-            </>
-          ) : (
-            <EmptyState
-              className="space-empty-block"
-              icon={<File size={21} />}
-              title={t("resources.empty")}
-              description={t("resources.emptyDescription")}
-            />
-          )}
+          <SpaceKnowledgeResourceTable
+            total={filteredResources.length}
+            pageItems={resourcePagination.pageItems}
+            page={resourcePagination.page}
+            pageSize={resourcePagination.pageSize}
+            resourceTypeOptions={resourceTypeOptions}
+            resourceFilter={resourceFilter}
+            resourceIndexOptions={resourceIndexOptions}
+            resourceIndexFilter={resourceIndexFilter}
+            repositoryIndexStatusSummaries={repositoryIndexStatusSummaries}
+            onPageChange={resourcePagination.setPage}
+            onResourceFilterChange={(value) =>
+              setResourceFilter(value, { replace: true })
+            }
+            onResourceIndexFilterChange={(value) =>
+              setResourceIndexFilter(value, { replace: true })
+            }
+            onOpen={openResource}
+            onSync={syncResource}
+            onRefreshPolicyChange={changeRefreshPolicy}
+            onRemove={removeResource}
+            onLoadRepositoryIndexStatusSummary={
+              loadRepositoryIndexStatusSummary
+            }
+          />
         </section>
         <KnowledgeNotesPanel workspaceId={spaceId} business={business} />
       </div>
@@ -634,11 +612,23 @@ export function SpaceKnowledgePanel({
           onSubmit={submitResource}
         />
       ) : null}
-      {preview ? (
-        <OnlineDocumentSnapshotDialog
-          name={preview.name}
-          view={preview.view}
-          onClose={() => setPreview(undefined)}
+      {resourceDetail ? (
+        <ResourceDetailDialog
+          resource={resourceDetail}
+          loading={openingResourceId === resourceDetail.id}
+          indexJob={
+            resourceIndexJob?.sourceId === resourceDetail.id
+              ? resourceIndexJob
+              : undefined
+          }
+          onRetryIndexJob={() =>
+            void loadLatestIndexJob(resourceDetail.id, resourceDetail.name)
+          }
+          onOpen={openResourceInWorkbench}
+          onClose={() => {
+            setResourceDetail(undefined);
+            setResourceIndexJob(undefined);
+          }}
         />
       ) : null}
       {repositoryDialog && business ? (
@@ -663,22 +653,22 @@ export function SpaceKnowledgePanel({
           business={business!}
           sourceRevision={repositoryPreview.sourceRevision}
           view={repositoryPreview.view}
-          onClose={() => setRepositoryPreview(undefined)}
-        />
-      ) : null}
-      {indexJobDialog ? (
-        <KnowledgeIndexJobDialog
-          name={indexJobDialog.name}
-          view={indexJobDialog.view}
-          loading={indexJobDialog.loading}
-          error={indexJobDialog.error}
-          onRetry={() =>
+          resource={repositoryPreview.resource}
+          indexJob={
+            resourceIndexJob?.sourceId === repositoryPreview.resource.id
+              ? resourceIndexJob
+              : undefined
+          }
+          onRetryIndexJob={() =>
             void loadLatestIndexJob(
-              indexJobDialog.sourceId,
-              indexJobDialog.name,
+              repositoryPreview.resource.id,
+              repositoryPreview.name,
             )
           }
-          onClose={() => setIndexJobDialog(undefined)}
+          onClose={() => {
+            setRepositoryPreview(undefined);
+            setResourceIndexJob(undefined);
+          }}
         />
       ) : null}
     </div>

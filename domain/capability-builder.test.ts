@@ -310,6 +310,7 @@ function proposalMetadata() {
     validationReport: {
       compatible: true as const,
       dependencyStatus: 'resolved' as const,
+      contract: { status: 'passed' as const, diagnostics: [] },
       tests: []
     },
     fileNames: ['README.md', 'capability.yaml'],

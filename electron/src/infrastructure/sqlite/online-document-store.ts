@@ -8,6 +8,7 @@ import {
 } from '../../../../domain/knowledge-source'
 import type {
   OnlineDocumentSnapshot,
+  OnlineDocumentSnapshotDocument,
   OnlineDocumentSource
 } from '../../../../domain/online-document'
 import type {
@@ -57,13 +58,21 @@ type SnapshotRow = {
   id: string
   source_id: string
   version: number
-  content: string
   media_type: string
   content_checksum: string
   byte_size: number
   etag: string | null
   last_modified: string | null
   fetched_at: number
+}
+
+type SnapshotDocumentRow = {
+  unit_key: string
+  title: string
+  content: string
+  content_checksum: string
+  byte_size: number
+  metadata_json: string | null
 }
 
 type CommandRow = {
@@ -190,6 +199,7 @@ export class SqliteOnlineDocumentStore implements OnlineDocumentStore {
       }
 
       this.insertSnapshot(input.snapshot)
+      this.insertSnapshotDocuments(input.snapshot)
       this.updateDocumentFromSnapshot(input.snapshot, input.at)
       const source = this.applyTransition({
         current,
@@ -247,7 +257,9 @@ export class SqliteOnlineDocumentStore implements OnlineDocumentStore {
          WHERE source_id = ? ORDER BY version DESC LIMIT 1`
       )
       .get(sourceId) as SnapshotRow | undefined
-    return row ? mapSnapshot(row) : undefined
+    return row
+      ? mapSnapshot(row, this.getSnapshotDocuments(row.id))
+      : undefined
   }
 
   private replayBegin(
@@ -405,15 +417,14 @@ export class SqliteOnlineDocumentStore implements OnlineDocumentStore {
     this.database
       .prepare(
         `INSERT INTO online_document_snapshots (
-          id, source_id, version, content, media_type, content_checksum,
-          byte_size, etag, last_modified, fetched_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          id, source_id, version, media_type, content_checksum, byte_size,
+          etag, last_modified, fetched_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         snapshot.id,
         snapshot.sourceId,
         snapshot.version,
-        snapshot.content,
         snapshot.mediaType,
         snapshot.contentChecksum,
         snapshot.byteSize,
@@ -421,6 +432,26 @@ export class SqliteOnlineDocumentStore implements OnlineDocumentStore {
         snapshot.lastModified ?? null,
         snapshot.fetchedAt
       )
+  }
+
+  private insertSnapshotDocuments(snapshot: OnlineDocumentSnapshot): void {
+    const insert = this.database.prepare(
+      `INSERT INTO online_document_snapshot_documents (
+        snapshot_id, unit_key, title, content, content_checksum, byte_size,
+        metadata_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    )
+    for (const document of snapshot.documents) {
+      insert.run(
+        snapshot.id,
+        document.unitKey,
+        document.title,
+        document.content,
+        document.checksum,
+        document.byteSize,
+        document.metadata ? JSON.stringify(document.metadata) : null
+      )
+    }
   }
 
   private updateDocumentFromSnapshot(
@@ -554,6 +585,21 @@ export class SqliteOnlineDocumentStore implements OnlineDocumentStore {
       .get(idempotencyKey) as CommandRow | undefined
   }
 
+  private getSnapshotDocuments(
+    snapshotId: string
+  ): OnlineDocumentSnapshotDocument[] {
+    const rows = this.database
+      .prepare(
+        `SELECT
+          unit_key, title, content, content_checksum, byte_size, metadata_json
+         FROM online_document_snapshot_documents
+         WHERE snapshot_id = ?
+         ORDER BY unit_key`
+      )
+      .all(snapshotId) as SnapshotDocumentRow[]
+    return rows.map(mapSnapshotDocument)
+  }
+
   private nextVersion(sourceId: string): number {
     const current = this.database
       .prepare(
@@ -606,18 +652,40 @@ function mapDocument(row: DocumentRow): OnlineDocumentSource {
   }
 }
 
-function mapSnapshot(row: SnapshotRow): OnlineDocumentSnapshot {
+function mapSnapshot(
+  row: SnapshotRow,
+  documents: OnlineDocumentSnapshotDocument[]
+): OnlineDocumentSnapshot {
   return {
     id: row.id,
     sourceId: row.source_id,
     version: row.version,
-    content: row.content,
     mediaType: row.media_type,
     contentChecksum: row.content_checksum,
     byteSize: row.byte_size,
+    documents,
     ...(row.etag === null ? {} : { etag: row.etag }),
     ...(row.last_modified === null ? {} : { lastModified: row.last_modified }),
     fetchedAt: row.fetched_at
+  }
+}
+
+function mapSnapshotDocument(
+  row: SnapshotDocumentRow
+): OnlineDocumentSnapshotDocument {
+  return {
+    unitKey: row.unit_key,
+    title: row.title,
+    content: row.content,
+    checksum: row.content_checksum,
+    byteSize: row.byte_size,
+    ...(row.metadata_json === null
+      ? {}
+      : {
+          metadata: JSON.parse(
+            row.metadata_json
+          ) as OnlineDocumentSnapshotDocument['metadata']
+        })
   }
 }
 

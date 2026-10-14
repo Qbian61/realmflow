@@ -44,7 +44,7 @@ describe('BuiltinCatalogSyncService', () => {
 
     await expect(service.synchronize()).resolves.toEqual({
       publishedPackages: 17,
-      publishedTools: 132,
+      publishedTools: 135,
       publishedSkills: 10
     })
     await expect(service.synchronize()).resolves.toEqual({
@@ -55,7 +55,7 @@ describe('BuiltinCatalogSyncService', () => {
 
     const catalog = await projections.getCatalog()
     expect(catalog.packages).toHaveLength(17)
-    expect(catalog.tools).toHaveLength(132)
+    expect(catalog.tools).toHaveLength(135)
     expect(catalog.skills).toHaveLength(10)
     expect(catalog.packages.every(({ status }) => status === 'enabled')).toBe(
       true
@@ -103,7 +103,7 @@ describe('BuiltinCatalogSyncService', () => {
     )
     expect(versions).toMatchObject([
       {
-        version: '1.3.1',
+        version: '1.3.2',
         enabledPreference: false,
         status: 'disabled'
       },

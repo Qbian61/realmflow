@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "packageId": "realmflow.builtin.knowledge",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "name": "Knowledge",
   "description": "Scoped local knowledge operations.",
   "publisher": {
@@ -24,7 +24,10 @@
       "path": "tools/builtin-knowledge-source-read.json"
     },
     {
-      "path": "tools/builtin-knowledge-note-save.json"
+      "path": "tools/builtin-knowledge-note-create.json"
+    },
+    {
+      "path": "tools/builtin-knowledge-note-edit.json"
     },
     {
       "path": "tools/builtin-knowledge-index-refresh.json"

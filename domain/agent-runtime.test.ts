@@ -157,6 +157,7 @@ describe('Agent runtime', () => {
         maxOutputTokens: 32_000,
         maxFileReadTokens: 25_000,
         maxRepeatedEquivalentCalls: 3,
+        maxRepeatedDeterministicFailures: 2,
         maxConsecutiveFailures: 5
       },
       budgetLedger: {
@@ -168,6 +169,7 @@ describe('Agent runtime', () => {
         sideEffects: 0,
         consecutiveFailures: 0,
         repeatedCallFingerprints: {},
+        deterministicFailureFingerprints: {},
         activeRuntimeMs: 0,
         remainingContinuationAttempts: 2
       },
@@ -184,6 +186,9 @@ describe('Agent runtime', () => {
     expect(Object.isFrozen(snapshot.budgetLedger)).toBe(true)
     expect(
       Object.isFrozen(snapshot.budgetLedger.repeatedCallFingerprints)
+    ).toBe(true)
+    expect(
+      Object.isFrozen(snapshot.budgetLedger.deterministicFailureFingerprints)
     ).toBe(true)
   })
 

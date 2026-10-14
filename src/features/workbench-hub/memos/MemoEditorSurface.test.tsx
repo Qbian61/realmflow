@@ -280,6 +280,7 @@ function createAttachmentApi(
     list: vi.fn().mockResolvedValue([]),
     pickAndAttach: vi.fn(),
     readImage: vi.fn().mockResolvedValue('data:image/png;base64,cG5n'),
+    readExtracted: vi.fn(),
     open: vi.fn(),
     reveal: vi.fn(),
     delete: vi.fn(),

@@ -1,0 +1,123 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.knowledge.note.create",
+  "version": "1.0.3",
+  "name": "Create knowledge note",
+  "description": "Create a durable knowledge note from the current conversation.",
+  "tags": [
+    "knowledge"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "knowledge.note.create",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "kind",
+      "sourceMessageIds",
+      "title",
+      "content"
+    ],
+    "properties": {
+      "kind": {
+        "type": "string",
+        "enum": [
+          "conversation_note",
+          "decision",
+          "retrospective"
+        ],
+        "description": "Discriminator selecting the schema variant for this object. Allowed values: conversation_note, decision, retrospective.",
+        "examples": [
+          "conversation_note"
+        ]
+      },
+      "sourceMessageIds": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 50,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "examples": [
+            [
+              "message-1"
+            ]
+          ]
+        },
+        "uniqueItems": true,
+        "description": "Conversation message IDs used as source evidence for the knowledge note.",
+        "examples": [
+          [
+            "message-1"
+          ]
+        ]
+      },
+      "title": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200,
+        "description": "User-visible title.",
+        "examples": [
+          "Quarterly update"
+        ]
+      },
+      "content": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 20000,
+        "description": "UTF-8 text content to write into the authorized local file.",
+        "examples": [
+          "Example content."
+        ]
+      }
+    },
+    "examples": [
+      {
+        "kind": "conversation_note",
+        "sourceMessageIds": [
+          "message-1"
+        ],
+        "title": "Quarterly update",
+        "content": "Example content."
+      }
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "knowledge.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "create knowledge note"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

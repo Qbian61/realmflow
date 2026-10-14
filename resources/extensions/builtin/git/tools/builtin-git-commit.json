@@ -22,12 +22,20 @@
     "properties": {
       "scopeRoot": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Optional authorized root override. Omit or pass \".\" to use the current authorized root.",
+        "examples": [
+          "."
+        ]
       },
       "message": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 10000
+        "maxLength": 10000,
+        "description": "Commit message or user-visible operation message.",
+        "examples": [
+          "chore: update generated artifact"
+        ]
       },
       "files": {
         "type": "array",
@@ -36,10 +44,30 @@
         "uniqueItems": true,
         "items": {
           "type": "string",
-          "minLength": 1
-        }
+          "minLength": 1,
+          "examples": [
+            [
+              "src/index.ts"
+            ]
+          ]
+        },
+        "description": "Explicit repository file paths to include in the commit.",
+        "examples": [
+          [
+            "src/index.ts"
+          ]
+        ]
       }
-    }
+    },
+    "examples": [
+      {
+        "scopeRoot": ".",
+        "message": "chore: update generated artifact",
+        "files": [
+          "src/index.ts"
+        ]
+      }
+    ]
   },
   "outputSchema": {
     "type": "object",

@@ -18,15 +18,27 @@
     "properties": {
       "sessionId": {
         "type": "string",
-        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$",
+        "description": "Stable local editing or browser session ID returned by an inspect/create tool.",
+        "examples": [
+          "12345678-1234-4234-9234-123456789abc"
+        ]
       },
       "expectedRevision": {
         "type": "integer",
-        "minimum": 0
+        "minimum": 0,
+        "description": "Expected revision used for optimistic concurrency control. Copy this value from the latest RealmFlow UI/API state; do not invent it.",
+        "examples": [
+          1
+        ]
       },
       "afterBlockId": {
         "type": "string",
-        "pattern": "^(paragraph|table)-[1-9][0-9]*$"
+        "pattern": "^(paragraph|table)-[1-9][0-9]*$",
+        "description": "Stable block ID after which new document content is inserted.",
+        "examples": [
+          "paragraph-1"
+        ]
       },
       "rows": {
         "type": "array",
@@ -38,9 +50,34 @@
           "maxItems": 100,
           "items": {
             "type": "string",
-            "maxLength": 100000
-          }
-        }
+            "maxLength": 100000,
+            "examples": [
+              [
+                [
+                  "Name",
+                  "Value"
+                ]
+              ]
+            ]
+          },
+          "examples": [
+            [
+              [
+                "Name",
+                "Value"
+              ]
+            ]
+          ]
+        },
+        "description": "Two-dimensional table rows written into a document, slide, or sheet.",
+        "examples": [
+          [
+            [
+              "Name",
+              "Value"
+            ]
+          ]
+        ]
       }
     },
     "required": [
@@ -48,6 +85,19 @@
       "expectedRevision",
       "afterBlockId",
       "rows"
+    ],
+    "examples": [
+      {
+        "sessionId": "12345678-1234-4234-9234-123456789abc",
+        "expectedRevision": 1,
+        "afterBlockId": "paragraph-1",
+        "rows": [
+          [
+            "Name",
+            "Value"
+          ]
+        ]
+      }
     ]
   },
   "outputSchema": {

@@ -25,8 +25,16 @@ describe("OnlineDocumentSnapshotDialog", () => {
               version: 3,
               mediaType: "text/markdown",
               byteSize: 24,
-              content: "# Architecture\nLocal first.",
               contentChecksum: "sha256:document",
+              documents: [
+                {
+                  unitKey: "content",
+                  title: "Architecture notes",
+                  content: "# Architecture\nLocal first.",
+                  checksum: "sha256:document",
+                  byteSize: 24,
+                },
+              ],
               fetchedAt: 3,
             },
           }}

@@ -234,6 +234,7 @@ function toolCatalogFixture(): ToolCatalogState {
     runtime: { kind: 'instruction' },
           inputSchema: {},
           outputSchema: {},
+          examples: [{}],
           requiredTools: [
             {
               toolId: 'builtin.files.read',

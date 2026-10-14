@@ -18,9 +18,18 @@
     "properties": {
       "scopeRoot": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Optional authorized root override. Omit or pass \".\" to use the current authorized root.",
+        "examples": [
+          "."
+        ]
       }
-    }
+    },
+    "examples": [
+      {
+        "scopeRoot": "."
+      }
+    ]
   },
   "outputSchema": {
     "type": "object",

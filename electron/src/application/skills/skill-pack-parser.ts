@@ -29,6 +29,9 @@ const FRONTMATTER_KEYS = new Set([
   'intents',
   'tools',
   'limits',
+  'inputSchema',
+  'outputSchema',
+  'examples',
   'boundary',
 ])
 
@@ -69,6 +72,9 @@ export function parseSkillPack(input: SkillPackInput): RegisteredSkillVersion {
   const intents = requireStringArray(metadata.intents, 'intents')
   const dependencies = requireToolDependencies(metadata.tools)
   const limits = requireLimits(metadata.limits)
+  const inputSchema = metadata.inputSchema
+  const outputSchema = metadata.outputSchema
+  const examples = metadata.examples
   const boundaryNotes = requireText(metadata.boundary, 'boundary')
   const instructionsDigest = hash(body)
   const packageDigest = hash({
@@ -86,6 +92,9 @@ export function parseSkillPack(input: SkillPackInput): RegisteredSkillVersion {
     intents,
     dependencies,
     limits,
+    inputSchema,
+    outputSchema,
+    examples,
     boundaryNotes,
     instructionsDigest,
     sourceId: input.source.id,
@@ -105,8 +114,9 @@ export function parseSkillPack(input: SkillPackInput): RegisteredSkillVersion {
     description,
     instructionsPath: 'SKILL.md',
     runtime: { kind: 'instruction' },
-    inputSchema: { type: 'object', additionalProperties: true },
-    outputSchema: { type: 'object', additionalProperties: true },
+    inputSchema,
+    outputSchema,
+    examples,
     requiredTools: dependencies,
     activation: { intents, contexts },
     limits,

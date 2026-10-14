@@ -18,15 +18,27 @@
     "properties": {
       "sessionId": {
         "type": "string",
-        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$",
+        "description": "Stable local editing or browser session ID returned by an inspect/create tool.",
+        "examples": [
+          "12345678-1234-4234-9234-123456789abc"
+        ]
       },
       "expectedRevision": {
         "type": "integer",
-        "minimum": 0
+        "minimum": 0,
+        "description": "Expected revision used for optimistic concurrency control. Copy this value from the latest RealmFlow UI/API state; do not invent it.",
+        "examples": [
+          1
+        ]
       },
       "blockId": {
         "type": "string",
-        "pattern": "^paragraph-[1-9][0-9]*$"
+        "pattern": "^paragraph-[1-9][0-9]*$",
+        "description": "Stable document block ID to update or comment on.",
+        "examples": [
+          "paragraph-1"
+        ]
       },
       "style": {
         "type": "object",
@@ -35,20 +47,42 @@
           "styleName": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 100
+            "maxLength": 100,
+            "description": "Named document style to apply to the selected text block.",
+            "examples": [
+              "example"
+            ]
           },
           "bold": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether the selected document text should use bold styling.",
+            "examples": [
+              true
+            ]
           },
           "italic": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether the selected document text should use italic styling.",
+            "examples": [
+              true
+            ]
           },
           "fontSizePt": {
             "type": "number",
             "exclusiveMinimum": 0,
-            "maximum": 512
+            "maximum": 512,
+            "description": "Document font size in points for the selected text style.",
+            "examples": [
+              1
+            ]
           }
-        }
+        },
+        "description": "Structured style patch for the target document or spreadsheet range.",
+        "examples": [
+          {
+            "bold": true
+          }
+        ]
       }
     },
     "required": [
@@ -56,6 +90,16 @@
       "expectedRevision",
       "blockId",
       "style"
+    ],
+    "examples": [
+      {
+        "sessionId": "12345678-1234-4234-9234-123456789abc",
+        "expectedRevision": 1,
+        "blockId": "paragraph-1",
+        "style": {
+          "bold": true
+        }
+      }
     ]
   },
   "outputSchema": {

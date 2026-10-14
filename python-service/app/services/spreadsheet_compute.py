@@ -46,7 +46,10 @@ class SpreadsheetComputeService:
             )
         delimiter = "," if format_ == "csv" else "\t"
         rows = _read_delimited(document, delimiter)
-        if operation == "inspect":
+        if operation == "extract_text":
+            result = _extract_delimited_text(rows)
+            modified = False
+        elif operation == "inspect":
             result = _inspect_delimited(rows, format_)
             modified = False
         elif operation == "read_range":
@@ -92,9 +95,11 @@ def _compute_xlsx(
             "Spreadsheet workbook is invalid",
         ) from error
     _assert_supported_workbook(workbook)
-    modified = operation not in {"inspect", "read_range"}
+    modified = operation not in {"extract_text", "inspect", "read_range"}
     requires_recalculation = operation == "set_formula"
-    if operation == "inspect":
+    if operation == "extract_text":
+        result = _extract_xlsx_text(workbook)
+    elif operation == "inspect":
         result = _inspect_xlsx(workbook)
     elif operation == "read_range":
         result = _read_xlsx_range(workbook, parameters)
@@ -131,6 +136,122 @@ def _compute_xlsx(
         modified=modified,
         requires_recalculation=requires_recalculation,
     )
+
+
+MAX_EXTRACTED_SHEETS = 200
+MAX_EXTRACTED_CELLS = 1_000_000
+
+
+def _extract_delimited_text(
+    rows: list[list[str]],
+) -> dict[str, object]:
+    trimmed = _trim_text_rows(rows)
+    non_empty = sum(
+        1 for row in trimmed for value in row if value.strip()
+    )
+    _assert_extraction_limits(1, non_empty, _matrix_size(trimmed))
+    return {
+        "sheets": [
+            {
+                "name": "Sheet1",
+                "rows": trimmed,
+                "nonEmptyCellCount": non_empty,
+            }
+        ]
+    }
+
+
+def _extract_xlsx_text(workbook: Any) -> dict[str, object]:
+    if len(workbook.worksheets) > MAX_EXTRACTED_SHEETS:
+        raise SpreadsheetComputeError(
+            "spreadsheet_limit_exceeded",
+            "Spreadsheet contains too many sheets",
+        )
+    sheets: list[dict[str, object]] = []
+    total_non_empty = 0
+    total_matrix_cells = 0
+    for sheet in workbook.worksheets:
+        cells: list[tuple[int, int, str]] = []
+        for cell in sheet._cells.values():
+            if isinstance(cell, MergedCell):
+                continue
+            value = _extraction_cell_text(cell.value)
+            if value:
+                cells.append((cell.row, cell.column, value))
+        non_empty = len(cells)
+        total_non_empty += non_empty
+        if cells:
+            max_row = max(row for row, _, _ in cells)
+            max_column = max(column for _, column, _ in cells)
+            matrix_cells = max_row * max_column
+            total_matrix_cells += matrix_cells
+            _assert_extraction_limits(
+                len(workbook.worksheets),
+                total_non_empty,
+                total_matrix_cells,
+            )
+            rows = [
+                ["" for _ in range(max_column)]
+                for _ in range(max_row)
+            ]
+            for row, column, value in cells:
+                rows[row - 1][column - 1] = value
+        else:
+            rows = []
+        sheets.append(
+            {
+                "name": sheet.title,
+                "rows": rows,
+                "nonEmptyCellCount": non_empty,
+            }
+        )
+    return {"sheets": sheets}
+
+
+def _trim_text_rows(rows: list[list[str]]) -> list[list[str]]:
+    last_row = 0
+    last_column = 0
+    for row_number, row in enumerate(rows, start=1):
+        for column_number, value in enumerate(row, start=1):
+            if value.strip():
+                last_row = row_number
+                last_column = max(last_column, column_number)
+    if last_row == 0:
+        return []
+    return [
+        (row + [""] * last_column)[:last_column]
+        for row in rows[:last_row]
+    ]
+
+
+def _extraction_cell_text(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (datetime, date, time)):
+        return value.isoformat()
+    return str(value)
+
+
+def _matrix_size(rows: list[list[str]]) -> int:
+    return len(rows) * max((len(row) for row in rows), default=0)
+
+
+def _assert_extraction_limits(
+    sheet_count: int,
+    non_empty_cells: int,
+    matrix_cells: int,
+) -> None:
+    if (
+        sheet_count > MAX_EXTRACTED_SHEETS
+        or non_empty_cells > MAX_EXTRACTED_CELLS
+        or matrix_cells > MAX_EXTRACTED_CELLS
+    ):
+        raise SpreadsheetComputeError(
+            "spreadsheet_limit_exceeded",
+            "Spreadsheet exceeds local extraction limits",
+        )
 
 
 def _assert_supported_workbook(workbook: Any) -> None:

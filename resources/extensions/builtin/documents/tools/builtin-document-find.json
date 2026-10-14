@@ -18,24 +18,48 @@
     "properties": {
       "sessionId": {
         "type": "string",
-        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$",
+        "description": "Stable local editing or browser session ID returned by an inspect/create tool.",
+        "examples": [
+          "12345678-1234-4234-9234-123456789abc"
+        ]
       },
       "expectedRevision": {
         "type": "integer",
-        "minimum": 0
+        "minimum": 0,
+        "description": "Expected revision used for optimistic concurrency control. Copy this value from the latest RealmFlow UI/API state; do not invent it.",
+        "examples": [
+          1
+        ]
       },
       "query": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 100000
+        "maxLength": 100000,
+        "description": "Search or match query supplied by the user or current task.",
+        "examples": [
+          "release notes"
+        ]
       },
       "caseSensitive": {
-        "type": "boolean"
+        "type": "boolean",
+        "description": "Whether text matching treats uppercase and lowercase as distinct.",
+        "examples": [
+          true
+        ]
       }
     },
     "required": [
       "sessionId",
       "query"
+    ],
+    "examples": [
+      {
+        "sessionId": "12345678-1234-4234-9234-123456789abc",
+        "expectedRevision": 1,
+        "query": "release notes",
+        "caseSensitive": true
+      }
     ]
   },
   "outputSchema": {

@@ -906,6 +906,89 @@ describe('NetworkGateway', () => {
     }
   })
 
+  it('honors provider Retry-After before spending the unified retry budget', async () => {
+    const order: string[] = []
+    let requestIndex = 0
+    const outbound = vi.fn().mockImplementation(() => {
+      order.push(`request:${requestIndex}`)
+      requestIndex += 1
+      return Promise.resolve(
+        new Response('busy', {
+          status: 429,
+          headers: { 'Retry-After': '5' }
+        })
+      )
+    })
+    const sleep = vi.fn().mockImplementation((durationMs: number) => {
+      order.push(`sleep:${durationMs}`)
+      return Promise.resolve()
+    })
+    const gateway = new NetworkGateway({
+      request: outbound,
+      createToken: () => 'rate-limit-budget-grant',
+      sleep
+    })
+    await gateway.start()
+
+    try {
+      const response = await callGateway(
+        gateway,
+        remoteExecution({ maxRetries: 1 }),
+        'rate-limit-budget-grant'
+      )
+
+      expect(response.status).toBe(429)
+      await expect(response.json()).resolves.toMatchObject({
+        error: {
+          code: 'provider_rate_limited',
+          retryable: true,
+          retryCount: 1,
+          retryAfterMs: 5_000,
+          remainingAttempts: 0
+        }
+      })
+      expect(outbound).toHaveBeenCalledTimes(2)
+      expect(sleep).toHaveBeenCalledOnce()
+      expect(sleep).toHaveBeenCalledWith(5_000, expect.any(AbortSignal))
+      expect(order).toEqual(['request:0', 'sleep:5000', 'request:1'])
+    } finally {
+      await gateway.stop()
+    }
+  })
+
+  it('does not retry earlier than the local provider backoff when Retry-After is shorter', async () => {
+    const outbound = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response('busy', {
+          status: 429,
+          headers: { 'Retry-After': '0.05' }
+        })
+      )
+      .mockResolvedValueOnce(completionResponse('Recovered result'))
+    const sleep = vi.fn().mockResolvedValue(undefined)
+    const gateway = new NetworkGateway({
+      request: outbound,
+      createToken: () => 'short-retry-after-grant',
+      sleep
+    })
+    await gateway.start()
+
+    try {
+      const response = await callGateway(
+        gateway,
+        remoteExecution({ maxRetries: 1 }),
+        'short-retry-after-grant'
+      )
+
+      expect(response.status).toBe(200)
+      expect(outbound).toHaveBeenCalledTimes(2)
+      expect(sleep).toHaveBeenCalledWith(100, expect.any(AbortSignal))
+    } finally {
+      await gateway.stop()
+    }
+  })
+
   it('classifies exhausted rate limits with a bounded retry hint', async () => {
     const outbound = vi.fn().mockResolvedValue(
       new Response('busy', {

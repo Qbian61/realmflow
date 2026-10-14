@@ -26,6 +26,15 @@ vi.mock('./app/hooks/use-model-profiles', () => ({
   })
 }))
 
+function openSchedules(): void {
+  fireEvent.click(screen.getByRole('link', { name: '工作台' }))
+  fireEvent.click(
+    within(screen.getByTestId('app-content')).getByRole('tab', {
+      name: '定时任务'
+    })
+  )
+}
+
 describe('RealmFlow navigation', () => {
   beforeEach(() => {
     window.localStorage.clear()
@@ -60,7 +69,6 @@ describe('RealmFlow navigation', () => {
     expect(links.map((link) => link.textContent)).toEqual([
         '工作台',
         '新对话',
-        '定时任务',
         '能力',
         '流程模板',
         '统计分析'
@@ -282,9 +290,9 @@ describe('RealmFlow navigation', () => {
       '工作台',
       '任务待办',
       '常用网站',
+      '定时任务',
       '备忘录',
-      '终端',
-      '系统状态'
+      '终端'
     ])
     expect(
       within(tabs).getByRole('tab', { name: '工作台' })
@@ -368,10 +376,10 @@ describe('RealmFlow navigation', () => {
     ).toBeInTheDocument()
     expect(workbench).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('link', { name: '定时任务' }))
+    openSchedules()
     expect(
-      within(screen.getByTestId('app-content')).getByRole('tab', {
-        name: '任务模板'
+      within(screen.getByTestId('app-content')).getByRole('navigation', {
+        name: '工具列表'
       })
     ).toBeInTheDocument()
     expect(workbench).toBeInTheDocument()
@@ -417,8 +425,7 @@ describe('RealmFlow navigation', () => {
       target: { value: '保留这段未发送内容' }
     })
 
-    fireEvent.click(screen.getByRole('link', { name: '定时任务' }))
-    fireEvent.click(screen.getByRole('tab', { name: '进行中任务 (0)' }))
+    openSchedules()
     fireEvent.click(screen.getByRole('button', { name: '新建任务' }))
     fireEvent.change(screen.getByRole('textbox', { name: '任务名称' }), {
       target: { value: '保留定时任务草稿' }
@@ -432,10 +439,7 @@ describe('RealmFlow navigation', () => {
       '保留这段未发送内容'
     )
 
-    fireEvent.click(screen.getByRole('link', { name: '定时任务' }))
-    expect(
-      screen.getByRole('tab', { name: '进行中任务 (0)' })
-    ).toHaveAttribute('aria-selected', 'true')
+    openSchedules()
     expect(
       screen.getByRole('dialog', { name: '新建定时任务' })
     ).toBeVisible()
@@ -453,7 +457,7 @@ describe('RealmFlow navigation', () => {
   it('does not dispatch global keyboard events to inactive workspace pages', () => {
     render(<App />)
 
-    fireEvent.click(screen.getByRole('link', { name: '定时任务' }))
+    openSchedules()
     fireEvent.click(screen.getByRole('button', { name: '新建任务' }))
     fireEvent.change(screen.getByRole('textbox', { name: '任务名称' }), {
       target: { value: '后台页面草稿' }
@@ -461,7 +465,7 @@ describe('RealmFlow navigation', () => {
 
     fireEvent.click(screen.getByRole('link', { name: '新对话' }))
     fireEvent.keyDown(document, { key: 'Escape' })
-    fireEvent.click(screen.getByRole('link', { name: '定时任务' }))
+    openSchedules()
 
     expect(
       screen.getByRole('dialog', { name: '新建定时任务' })
@@ -480,7 +484,7 @@ describe('RealmFlow navigation', () => {
       target: { value: '保留模板参数' }
     })
 
-    fireEvent.click(screen.getByRole('link', { name: '定时任务' }))
+    openSchedules()
     fireEvent.keyDown(document, { key: 'Escape' })
     fireEvent.click(screen.getByRole('link', { name: '新对话' }))
 
@@ -501,7 +505,7 @@ describe('RealmFlow navigation', () => {
       '#/templates/template-1/edit'
     )
 
-    fireEvent.click(screen.getByRole('link', { name: '定时任务' }))
+    fireEvent.click(screen.getByRole('link', { name: '能力' }))
     fireEvent.click(screen.getByRole('link', { name: '流程模板' }))
 
     expect(window.location.hash).toBe('#/templates/template-1/edit')
@@ -515,8 +519,11 @@ describe('RealmFlow navigation', () => {
     const toggle = screen.getByRole('button', { name: '空间 (1)' })
     const actions = screen.getByRole('button', { name: '空间操作' })
     const spaceLink = screen.getByRole('link', { name: 'xxx 空间' })
+    const spaceIcon = spaceLink
+      .closest('.space-row')
+      ?.querySelector('.space-icon svg')
 
-    expect(spaceLink.querySelector('svg')).toBeInTheDocument()
+    expect(spaceIcon).toBeInTheDocument()
     expect(
       toggle.querySelector('.spaces-heading-icon')
     ).not.toBeInTheDocument()
@@ -919,7 +926,7 @@ describe('RealmFlow navigation', () => {
     ).toBeInTheDocument()
   })
 
-  it('reorders spaces by dragging a space handle onto another space', () => {
+  it('reorders spaces by dragging a space name onto another space', () => {
     render(<App />)
 
     for (const name of ['产品空间', '研发空间']) {
@@ -931,14 +938,13 @@ describe('RealmFlow navigation', () => {
       fireEvent.click(screen.getByRole('button', { name: '确认新建空间' }))
     }
 
-    const productSpace = screen
-      .getByRole('link', { name: '产品空间' })
-      .closest('.space-entry')
+    const productLink = screen.getByRole('link', { name: '产品空间' })
+    const productSpace = productLink.closest('.space-entry')
     expect(productSpace).not.toBeNull()
-    expect(productSpace).toHaveAttribute('draggable', 'true')
+    expect(productLink).toHaveAttribute('draggable', 'true')
+    expect(screen.queryByLabelText('拖拽排序 产品空间')).toBeNull()
 
-    const researchHandle = screen.getByLabelText('拖拽排序 研发空间')
-    fireEvent.dragStart(researchHandle.closest('.space-entry') as HTMLElement)
+    fireEvent.dragStart(screen.getByRole('link', { name: '研发空间' }))
     fireEvent.dragOver(productSpace as HTMLElement)
     fireEvent.drop(productSpace as HTMLElement)
 
@@ -962,14 +968,13 @@ describe('RealmFlow navigation', () => {
       fireEvent.click(screen.getByRole('button', { name: '确认新建需求' }))
     }
 
-    const requirementA = screen
-      .getByRole('link', { name: '需求 A' })
-      .closest('li')
+    const requirementALink = screen.getByRole('link', { name: '需求 A' })
+    const requirementA = requirementALink.closest('li')
     expect(requirementA).not.toBeNull()
-    expect(requirementA).toHaveAttribute('draggable', 'true')
+    expect(requirementALink).toHaveAttribute('draggable', 'true')
+    expect(screen.queryByLabelText('拖拽排序 需求 A')).toBeNull()
 
-    const requirementBHandle = screen.getByLabelText('拖拽排序 需求 B')
-    fireEvent.dragStart(requirementBHandle.closest('li') as HTMLElement)
+    fireEvent.dragStart(screen.getByRole('link', { name: '需求 B' }))
     fireEvent.dragOver(requirementA as HTMLElement)
     fireEvent.drop(requirementA as HTMLElement)
 
@@ -996,8 +1001,7 @@ describe('RealmFlow navigation', () => {
     const productSpace = screen
       .getByRole('link', { name: '产品空间' })
       .closest('.space-entry')
-    const researchHandle = screen.getByLabelText('拖拽排序 研发空间')
-    fireEvent.dragStart(researchHandle.closest('.space-entry') as HTMLElement)
+    fireEvent.dragStart(screen.getByRole('link', { name: '研发空间' }))
     fireEvent.dragOver(productSpace as HTMLElement)
     fireEvent.drop(productSpace as HTMLElement)
 
@@ -1052,8 +1056,7 @@ describe('RealmFlow navigation', () => {
     const productRequirement = screen
       .getByRole('link', { name: '产品需求' })
       .closest('li')
-    const testRequirementHandle = screen.getByLabelText('拖拽排序 测试需求')
-    fireEvent.dragStart(testRequirementHandle.closest('li') as HTMLElement)
+    fireEvent.dragStart(screen.getByRole('link', { name: '测试需求' }))
     fireEvent.dragOver(productRequirement as HTMLElement)
     fireEvent.drop(productRequirement as HTMLElement)
 
@@ -1282,14 +1285,14 @@ describe('RealmFlow navigation', () => {
     render(<App />)
 
     const populatedSpace = screen.getByRole('link', { name: 'xxx 空间' })
-    expect(populatedSpace.querySelector('svg')).toHaveClass(
-      'lucide-folder-open-dot'
-    )
+    const populatedSpaceIcon = () =>
+      populatedSpace.closest('.space-row')?.querySelector('.space-icon svg')
+    expect(populatedSpaceIcon()).toHaveClass('lucide-folder-open-dot')
 
     fireEvent.click(
       screen.getByRole('button', { name: '折叠 xxx 空间需求' })
     )
-    expect(populatedSpace.querySelector('svg')).toHaveClass('lucide-folder-dot')
+    expect(populatedSpaceIcon()).toHaveClass('lucide-folder-dot')
 
     fireEvent.click(screen.getByRole('button', { name: '空间操作' }))
     fireEvent.click(screen.getByRole('menuitem', { name: '新建空间' }))
@@ -1299,10 +1302,12 @@ describe('RealmFlow navigation', () => {
     fireEvent.click(screen.getByRole('button', { name: '确认新建空间' }))
 
     const emptySpace = screen.getByRole('link', { name: '空空间' })
-    expect(emptySpace.querySelector('svg')).toHaveClass('lucide-folder-open')
+    const emptySpaceIcon = () =>
+      emptySpace.closest('.space-row')?.querySelector('.space-icon svg')
+    expect(emptySpaceIcon()).toHaveClass('lucide-folder-open')
 
     fireEvent.click(screen.getByRole('button', { name: '折叠 空空间需求' }))
-    expect(emptySpace.querySelector('svg')).toHaveClass('lucide-folder-closed')
+    expect(emptySpaceIcon()).toHaveClass('lucide-folder-closed')
   })
 
   it('requires the exact space name before deleting the space and its requirements', () => {
@@ -1422,7 +1427,7 @@ describe('RealmFlow navigation', () => {
     )
   })
 
-  it('groups requirement drag and menu controls in one hover overlay', () => {
+  it('keeps only the requirement menu control in the hover overlay', () => {
     render(<App />)
 
     const requirementLink = screen.getByRole('link', { name: '测试需求' })
@@ -1430,9 +1435,8 @@ describe('RealmFlow navigation', () => {
     const overlay = requirementRow?.querySelector('.requirement-row-actions')
 
     expect(overlay).not.toBeNull()
-    expect(
-      within(overlay as HTMLElement).getByLabelText('拖拽排序 测试需求')
-    ).toBeInTheDocument()
+    expect(screen.queryByLabelText('拖拽排序 测试需求')).toBeNull()
+    expect(requirementLink).toHaveAttribute('draggable', 'true')
     expect(
       within(overlay as HTMLElement).getByRole('button', {
         name: '测试需求操作'
@@ -1552,12 +1556,12 @@ describe('RealmFlow navigation', () => {
   it('keeps schedule and requirement details mounted when the sidebar is hidden', () => {
     render(<App />)
 
-    fireEvent.click(screen.getByRole('link', { name: '定时任务' }))
+    openSchedules()
     fireEvent.click(screen.getByRole('button', { name: '隐藏菜单栏' }))
 
     const content = screen.getByTestId('app-content')
     expect(
-      within(content).getByRole('tab', { name: '任务模板' })
+      within(content).getByRole('navigation', { name: '工具列表' })
     ).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '展示菜单栏' }))
@@ -1731,31 +1735,21 @@ describe('RealmFlow navigation', () => {
 
   it('renders the schedule management sections', () => {
     render(<App />)
-    fireEvent.click(screen.getByRole('link', { name: '定时任务' }))
+    openSchedules()
 
     expect(
       screen.getByRole('heading', { level: 1, name: '定时任务' })
     ).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: '任务模板' })).toHaveAttribute(
-      'aria-selected',
-      'true'
-    )
-    expect(
-      screen.getByRole('tab', { name: '进行中任务 (0)' })
-    ).toHaveAttribute('aria-selected', 'false')
+    expect(screen.queryByRole('tab', { name: '任务模板' })).toBeNull()
     expect(
       screen.queryByRole('heading', { name: '为你推荐' })
     ).not.toBeInTheDocument()
     expect(
-      screen.getByRole('heading', { name: '工作周报' })
+      screen.getByRole('navigation', { name: '工具列表' })
     ).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('tab', { name: '进行中任务 (0)' }))
     expect(
-      screen.queryByRole('heading', { name: '进行中' })
-    ).not.toBeInTheDocument()
-    expect(
-      screen.getByRole('tabpanel', { name: '进行中任务 (0)' })
-    ).toBeInTheDocument()
+      screen.getByRole('region', { name: '工具内容' })
+    ).toBeEmptyDOMElement()
     const createButton = screen.getByRole('button', { name: '新建任务' })
     expect(
       screen.queryByRole('textbox', { name: '定时任务描述' })
@@ -1771,7 +1765,7 @@ describe('RealmFlow navigation', () => {
 
   it('closes the schedule creation dialog with Escape and the backdrop', () => {
     render(<App />)
-    fireEvent.click(screen.getByRole('link', { name: '定时任务' }))
+    openSchedules()
 
     const createButton = screen.getByRole('button', { name: '新建任务' })
     fireEvent.click(createButton)

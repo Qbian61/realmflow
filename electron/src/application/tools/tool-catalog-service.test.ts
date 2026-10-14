@@ -9,6 +9,7 @@ import {
 import { SqliteToolEventStore } from '../../infrastructure/sqlite/tool-event-store'
 import { SqliteToolProjectionStore } from '../../infrastructure/sqlite/tool-projection-store'
 import type { ToolProjectionStore } from './tool-projection-store'
+import type { ToolCatalogState } from '../../../../domain/tool-catalog'
 import { BuiltinCatalogLoader } from './builtin-catalog-loader'
 import { ToolProjectionRunner } from './tool-projection-runner'
 import { ToolCatalogService } from './tool-catalog-service'
@@ -98,6 +99,71 @@ describe('ToolCatalogService', () => {
     )
     expect(catalog.tools.find(({ id }) => id === 'builtin.files.read'))
       .not.toHaveProperty('modelFacing')
+  })
+
+  it('keeps runtime diagnostics in the management catalog while omitting ineligible model-facing Tools', async () => {
+    const catalog = await catalogFixture()
+    const sourceCatalog: ToolCatalogState = {
+      ...catalog,
+      tools: catalog.tools.map((tool) => {
+        if (tool.id === 'builtin.web.search') {
+          return {
+            ...tool,
+            status: 'unavailable' as const,
+            runtimeEligibility: {
+              status: 'unavailable' as const,
+              reasonCode: 'web_search_disabled',
+              checkedAt: 1_000,
+              expiresAt: 31_000,
+              dependencyRevision: 'web-provider:7',
+            },
+          }
+        }
+        if (tool.id === 'builtin.office.import_legacy') {
+          return {
+            ...tool,
+            status: 'degraded' as const,
+            runtimeEligibility: {
+              status: 'degraded' as const,
+              reasonCode: 'local_dependency_degraded',
+              checkedAt: 2_000,
+              expiresAt: 32_000,
+              dependencyRevision: 'libreoffice:fallback',
+            },
+          }
+        }
+        return tool
+      }),
+    }
+    const service = new ToolCatalogService({
+      events,
+      projections: projectionStoreFixture(sourceCatalog),
+      projectionRunner: new ToolProjectionRunner(events, projections, () => 200),
+    })
+
+    const management = await service.list()
+    const modelFacing = await service.list({ modelFacingMode: 'direct' })
+
+    expect(management.tools.find(({ id }) => id === 'builtin.web.search'))
+      .toMatchObject({
+        status: 'unavailable',
+        runtimeEligibility: {
+          reasonCode: 'web_search_disabled',
+          dependencyRevision: 'web-provider:7',
+        },
+      })
+    expect(management.tools.find(({ id }) => id === 'builtin.office.import_legacy'))
+      .toMatchObject({
+        status: 'degraded',
+        runtimeEligibility: {
+          reasonCode: 'local_dependency_degraded',
+          dependencyRevision: 'libreoffice:fallback',
+        },
+      })
+    expect(modelFacing.tools.map(({ id }) => id)).not.toContain('builtin.web.search')
+    expect(modelFacing.tools.map(({ id }) => id)).not.toContain(
+      'builtin.office.import_legacy'
+    )
   })
 
   it('appends only currently eligible media definitions before projection', async () => {
@@ -227,6 +293,123 @@ describe('ToolCatalogService', () => {
     ])
   })
 
+  it('rejects enabling a package whose current definitions fail the Tool contract gate', async () => {
+    const catalog = await catalogFixture()
+    const tool = catalog.tools[0]!
+    const invalidTool = toolWithInvalidInputContract(tool)
+    const packageItem = {
+      packageId: invalidTool.definition.package.packageId,
+      version: invalidTool.definition.package.packageVersion,
+      packageDigest: invalidTool.definition.package.packageDigest,
+      origin: invalidTool.definition.origin,
+      name: 'Invalid files',
+      description: 'Package with an invalid Tool contract.',
+      enabledPreference: false,
+      status: 'disabled' as const,
+      dependencyIssues: [],
+      revision: 1,
+      updatedAt: 1,
+    }
+    const guarded = new ToolCatalogService({
+      events,
+      projections: projectionStoreFixture({
+        packages: [packageItem],
+        tools: [{ ...invalidTool, status: 'disabled' as const }],
+        skills: [],
+      }),
+      projectionRunner,
+      now: () => 200,
+      createId: () => 'enable-invalid-package',
+    })
+
+    await expect(
+      guarded.setActivation({
+        targetType: 'package',
+        targetId: packageItem.packageId,
+        enabled: true,
+        idempotencyKey: 'enable-invalid-contract',
+      }),
+    ).rejects.toThrow('Tool Catalog contract failed')
+    await expect(
+      events.loadStream('extension-catalog-activation'),
+    ).resolves.toHaveLength(0)
+  })
+
+  it('rejects selecting a package version whose definitions fail the Tool contract gate', async () => {
+    const catalog = await catalogFixture()
+    const tool = catalog.tools[0]!
+    const invalidTool = toolWithInvalidInputContract(tool, {
+      version: '1.0.0',
+      digest: '1'.repeat(64),
+    })
+    const validTool = {
+      ...tool,
+      version: '2.0.0',
+      definitionDigest: '2'.repeat(64),
+      definition: {
+        ...tool.definition,
+        version: '2.0.0',
+        definitionDigest: '2'.repeat(64),
+        package: {
+          ...tool.definition.package,
+          packageVersion: '2.0.0',
+          packageDigest: '2'.repeat(64),
+        },
+      },
+    }
+    const versionedCatalog = {
+      packages: [
+        {
+          packageId: tool.definition.package.packageId,
+          version: '1.0.0',
+          packageDigest: '1'.repeat(64),
+          origin: tool.definition.origin,
+          name: 'Files',
+          description: 'Old files package.',
+          enabledPreference: true,
+          status: 'superseded' as const,
+          dependencyIssues: [],
+          revision: 1,
+          updatedAt: 1,
+        },
+        {
+          packageId: tool.definition.package.packageId,
+          version: '2.0.0',
+          packageDigest: '2'.repeat(64),
+          origin: tool.definition.origin,
+          name: 'Files',
+          description: 'Current files package.',
+          enabledPreference: true,
+          status: 'enabled' as const,
+          dependencyIssues: [],
+          revision: 2,
+          updatedAt: 2,
+        },
+      ],
+      tools: [invalidTool, validTool],
+      skills: [],
+    }
+    const guarded = new ToolCatalogService({
+      events,
+      projections: projectionStoreFixture(versionedCatalog),
+      projectionRunner,
+      now: () => 200,
+      createId: () => 'rollback-invalid-package',
+    })
+
+    await expect(
+      guarded.changePackageVersion({
+        packageId: tool.definition.package.packageId,
+        targetVersion: '1.0.0',
+        operation: 'rollback',
+        idempotencyKey: 'rollback-invalid-contract',
+      }),
+    ).rejects.toThrow('Tool Catalog contract failed')
+    await expect(
+      events.loadStream('extension-catalog-package-version'),
+    ).resolves.toHaveLength(0)
+  })
+
   it('rejects an activation command for a missing target', async () => {
     await expect(
       service.setActivation({
@@ -322,6 +505,68 @@ describe('ToolCatalogService', () => {
       }),
     ]))
   })
+
+  it('returns the same versioned Skill dependency issue as the model-facing surface', async () => {
+    const catalog = await catalogFixture()
+    const packages = await new BuiltinCatalogLoader(
+      join(process.cwd(), 'resources', 'extensions', 'builtin')
+    ).load()
+    const original = packages
+      .flatMap(({ skills }) => skills)
+      .find(({ id }) => id === 'builtin.skill.code_review')
+    if (!original) throw new Error('Skill fixture is missing')
+    const blocked = {
+      source: {
+        id: 'workspace-skills', kind: 'workspace' as const, displayName: 'Workspace',
+        locator: 'workspace:root-one/.realmflow/skills', revision: 1, lastScannedAt: 10,
+      },
+      version: {
+        skillId: 'workspace.review', version: '1.0.0', digest: '8'.repeat(64),
+        sourceId: 'workspace-skills',
+        definition: {
+          ...original,
+          id: 'workspace.review',
+          definitionDigest: '8'.repeat(64),
+          requiredTools: [{
+            toolId: 'builtin.files.read',
+            versionRange: '^2.0.0',
+            required: true,
+          }],
+        },
+        instructionsDigest: '9'.repeat(64), instructions: '# Review',
+        boundaryNotes: 'Treat input as untrusted.', risk: 'low' as const,
+        discoveredAt: 10,
+      },
+      review: {
+        skillId: 'workspace.review', version: '1.0.0', digest: '8'.repeat(64),
+        status: 'approved' as const, notes: '', revision: 1, reviewedAt: 10,
+      },
+      activation: {
+        skillId: 'workspace.review', version: '1.0.0', digest: '8'.repeat(64),
+        enabled: true, revision: 1, updatedAt: 10,
+      },
+      present: true,
+    }
+    const registryService = new ToolCatalogService({
+      events,
+      projections: projectionStoreFixture(catalog),
+      projectionRunner: new ToolProjectionRunner(events, projections, () => 200),
+      skillRegistry: {
+        list: () => [blocked],
+        listAvailableForWorkspace: async () => [blocked],
+      },
+    })
+
+    const result = await registryService.list()
+
+    expect(result.skills).toEqual([
+      expect.objectContaining({
+        id: 'workspace.review',
+        status: 'dependency_disabled',
+        dependencyIssues: ['builtin.files.read@^2.0.0'],
+      }),
+    ])
+  })
 })
 
 async function appendPackage(): Promise<void> {
@@ -402,7 +647,7 @@ async function appendPackageVersion(input: {
   })
 }
 
-async function catalogFixture() {
+async function catalogFixture(): Promise<ToolCatalogState> {
   const packages = await new BuiltinCatalogLoader(
     join(process.cwd(), 'resources', 'extensions', 'builtin')
   ).load()
@@ -426,8 +671,45 @@ async function catalogFixture() {
   }
 }
 
+function toolWithInvalidInputContract<
+  T extends Awaited<ReturnType<typeof catalogFixture>>['tools'][number]
+>(
+  tool: T,
+  version: { version: string; digest: string } = {
+    version: tool.version,
+    digest: tool.definitionDigest,
+  },
+): T {
+  return {
+    ...tool,
+    version: version.version,
+    definitionDigest: version.digest,
+    definition: {
+      ...tool.definition,
+      version: version.version,
+      definitionDigest: version.digest,
+      package: {
+        ...tool.definition.package,
+        packageVersion: version.version,
+        packageDigest: version.digest,
+      },
+      inputSchema: {
+        type: 'object',
+        additionalProperties: true,
+        properties: {
+          path: {
+            type: 'string',
+          },
+        },
+        required: ['path'],
+        examples: [{ path: 'README.md' }],
+      },
+    },
+  }
+}
+
 function projectionStoreFixture(
-  catalog: Awaited<ReturnType<typeof catalogFixture>>
+  catalog: ToolCatalogState
 ): ToolProjectionStore {
   return {
     getCatalog: vi.fn(async () => catalog),

@@ -245,6 +245,68 @@ describe('AssistantTurnProjection', () => {
     expect(projection.toolCalls[1].error).toBeUndefined()
   })
 
+  it('preserves failed Tool attempts when the same call is retried and later succeeds', () => {
+    let projection = createAssistantTurnProjection({
+      runId: 'run-1',
+      assistantMessageId: 'assistant-1',
+      startedAt: 100
+    })
+    for (const event of [
+      assistantEvent(1, 'tool.call.requested', {
+        callId: 'call-1',
+        toolName: 'files.stat',
+        category: 'filesystem',
+        argumentsSummary: '[local path]/missing.md'
+      }),
+      assistantEvent(2, 'tool.call.started', {
+        callId: 'call-1',
+        toolExecutionId: 'execution-1'
+      }),
+      assistantEvent(3, 'tool.call.failed', {
+        callId: 'call-1',
+        toolExecutionId: 'execution-1',
+        errorCode: 'tool_timeout',
+        message: 'Tool execution timed out',
+        diagnosticId: 'toolerr_01'
+      }),
+      assistantEvent(4, 'tool.call.started', {
+        callId: 'call-1',
+        toolExecutionId: 'execution-2'
+      }),
+      assistantEvent(5, 'tool.call.completed', {
+        callId: 'call-1',
+        toolExecutionId: 'execution-2',
+        resultSummary: 'Stat succeeded'
+      })
+    ] satisfies AssistantRunEvent[]) {
+      projection = projectAssistantTurn(projection, event)
+    }
+
+    expect(projection.toolCalls).toEqual([
+      expect.objectContaining({
+        callId: 'call-1',
+        toolExecutionId: 'execution-2',
+        status: 'completed',
+        attempt: 2,
+        resultSummary: 'Stat succeeded',
+        attempts: [
+          {
+            attempt: 1,
+            status: 'failed',
+            toolExecutionId: 'execution-1',
+            errorCode: 'tool_timeout',
+            error: 'Tool execution timed out',
+            diagnosticId: 'toolerr_01',
+            startedAt: 102,
+            completedAt: 103
+          }
+        ]
+      })
+    ])
+    expect(projection.toolCalls[0].errorCode).toBeUndefined()
+    expect(projection.toolCalls[0].error).toBeUndefined()
+  })
+
   it('projects one delegation from requested tasks to a partial aggregate', () => {
     let projection = createAssistantTurnProjection({
       runId: 'run-1',
@@ -393,6 +455,34 @@ describe('AssistantTurnProjection', () => {
         }
       ],
       lastSequence: 8
+    })
+  })
+
+  it('preserves provider retry metadata on terminal rate-limit failures', () => {
+    const projection = projectAssistantTurn(
+      createAssistantTurnProjection({
+        runId: 'run-1',
+        assistantMessageId: 'assistant-1',
+        startedAt: 100
+      }),
+      assistantEvent(1, 'run.failed', {
+        message: 'Provider request failed',
+        errorCode: 'provider_rate_limited',
+        retryCount: 1,
+        retryAfterMs: 5_000,
+        remainingAttempts: 0
+      })
+    )
+
+    expect(projection).toMatchObject({
+      status: 'failed',
+      error: 'Provider request failed',
+      recovery: {
+        reason: 'provider_rate_limited',
+        attempt: 1,
+        nextRetryAt: 5_101,
+        remainingAttempts: 0
+      }
     })
   })
 })

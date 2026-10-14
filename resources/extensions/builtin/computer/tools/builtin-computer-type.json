@@ -18,17 +18,31 @@
     "properties": {
       "bundleId": {
         "type": "string",
-        "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]{1,199}$"
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]{1,199}$",
+        "description": "macOS application bundle identifier for the authorized target app.",
+        "examples": [
+          "com.realmflow.App"
+        ]
       },
       "text": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 10000
+        "maxLength": 10000,
+        "description": "Text content used by the requested operation.",
+        "examples": [
+          "Example text."
+        ]
       }
     },
     "required": [
       "bundleId",
       "text"
+    ],
+    "examples": [
+      {
+        "bundleId": "com.realmflow.App",
+        "text": "Example text."
+      }
     ]
   },
   "outputSchema": {

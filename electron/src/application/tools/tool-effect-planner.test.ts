@@ -46,12 +46,38 @@ describe('planBuiltinToolEffects', () => {
     }, { protectedRoots: [outside] } as never)).toMatchObject({ outcome: 'unresolved' })
   })
 
-  it.each(['process.list', 'process.discover'])('plans %s as a bounded read rather than execution', async handlerName => {
+  it('plans process.discover as a bounded read against the selected workspace root', async () => {
     const result = await planBuiltinToolEffects({
-      handlerName, capabilities: ['process.discover'],
+      handlerName: 'process.discover',
+      capabilities: ['process.discover'],
       arguments: { names: ['node'] }, scopeRoots: [root]
     })
-    expect(result).toMatchObject({ outcome: 'planned', effects: [{ kind: 'process.inspect' }] })
+    expect(result).toMatchObject({
+      outcome: 'planned',
+      effects: [{ kind: 'process.inspect', workingDirectory: await realpath(root) }]
+    })
+  })
+
+  it('plans process.list as an owner-scoped read without requiring a file scope root', async () => {
+    await expect(planBuiltinToolEffects({
+      handlerName: 'process.list',
+      capabilities: ['process.inspect'],
+      arguments: {},
+      scopeRoots: [],
+      context: {
+        owner: { type: 'conversation', id: 'conversation-1' },
+        correlationId: 'correlation',
+        causationId: 'cause'
+      }
+    })).resolves.toEqual({
+      outcome: 'planned',
+      effects: [
+        {
+          kind: 'process.inspect',
+          owner: { type: 'conversation', id: 'conversation-1' }
+        }
+      ]
+    })
   })
 
   it('requires Main evidence that a stopped process belongs to the current Run', async () => {
@@ -128,12 +154,63 @@ describe('planBuiltinToolEffects', () => {
   })
 
   it('plans local Git commit as a repository-local mutation', async () => {
+    await mkdir(join(root, '.git'))
+
     await expect(planBuiltinToolEffects({
       handlerName: 'git.commit', capabilities: ['repository.modify'],
       arguments: {}, scopeRoots: [root],
     })).resolves.toEqual({
       outcome: 'planned',
       effects: [{ kind: 'repository.local_write', repositoryRoot: await realpath(root) }],
+    })
+  })
+
+  it('rejects Git effects when the selected folder is not a repository', async () => {
+    await expect(planBuiltinToolEffects({
+      handlerName: 'git.status', capabilities: ['repository.read'],
+      arguments: {}, scopeRoots: [root],
+    })).resolves.toEqual({
+      outcome: 'unresolved',
+      error: {
+        code: 'tool_effects_unresolved',
+        message: 'Tool effects could not be resolved',
+        retryable: false
+      },
+    })
+  })
+
+  it('plans Git effects against the discovered nested repository top-level', async () => {
+    const repository = join(root, 'repository')
+    const selected = join(repository, 'src')
+    await mkdir(join(repository, '.git'), { recursive: true })
+    await mkdir(selected, { recursive: true })
+
+    await expect(planBuiltinToolEffects({
+      handlerName: 'git.status', capabilities: ['repository.read'],
+      arguments: { scopeRoot: 'repository/src' }, scopeRoots: [root],
+    })).resolves.toEqual({
+      outcome: 'planned',
+      effects: [{ kind: 'filesystem.read', path: await realpath(repository) }],
+    })
+  })
+
+  it('rejects Git effects when the parent repository escapes the authorized root', async () => {
+    const parentRepository = join(directory, 'parent-repository')
+    const authorizedChild = join(parentRepository, 'child')
+    await mkdir(join(parentRepository, '.git'), { recursive: true })
+    await mkdir(authorizedChild, { recursive: true })
+
+    await expect(planBuiltinToolEffects({
+      handlerName: 'git.status', capabilities: ['repository.read'],
+      arguments: {}, scopeRoots: [authorizedChild],
+    })).resolves.toEqual({
+      outcome: 'unresolved',
+      error: {
+        code: 'tool_effects_unresolved',
+        message:
+          'Git repository is outside the authorized scope. Choose the repository folder as the scope root.',
+        retryable: false
+      },
     })
   })
 
@@ -144,6 +221,38 @@ describe('planBuiltinToolEffects', () => {
     })).resolves.toEqual({
       outcome: 'planned',
       effects: [{ kind: 'network.public_read', origin: 'https://example.com', localDataEgress: false }],
+    })
+  })
+
+  it('rejects private-network web fetch targets during effect planning', async () => {
+    await expect(planBuiltinToolEffects({
+      handlerName: 'web.fetch', capabilities: ['network.connect'],
+      arguments: { url: 'http://127.0.0.1:8080/private' }, scopeRoots: [root],
+    })).resolves.toEqual({
+      outcome: 'unresolved',
+      error: {
+        code: 'tool_effects_unresolved',
+        message: 'Tool effects could not be resolved',
+        retryable: false
+      },
+    })
+  })
+
+  it.each([
+    'http://[::127.0.0.1]/private',
+    'http://[64:ff9b::a9fe:a9fe]/metadata',
+    'http://[2002:0a00:0001::]/private'
+  ])('rejects IPv6 literal aliases for private web fetch targets %s', async (url) => {
+    await expect(planBuiltinToolEffects({
+      handlerName: 'web.fetch', capabilities: ['network.connect'],
+      arguments: { url }, scopeRoots: [root],
+    })).resolves.toEqual({
+      outcome: 'unresolved',
+      error: {
+        code: 'tool_effects_unresolved',
+        message: 'Tool effects could not be resolved',
+        retryable: false
+      },
     })
   })
 
@@ -498,7 +607,7 @@ describe('planBuiltinToolEffects', () => {
     })
   })
 
-  it('plans a public browser fallback when search provider is unconfigured', async () => {
+  it('does not plan browser fallback effects when search provider is unconfigured', async () => {
     await expect(
       planBuiltinToolEffects({
         handlerName: 'web.search',
@@ -509,13 +618,12 @@ describe('planBuiltinToolEffects', () => {
         scopeRoots: [root]
       })
     ).resolves.toEqual({
-      outcome: 'planned',
-      effects: [{
-        kind: 'network.public_read',
-        localDataEgress: false,
-        providerId: 'browser',
-        origin: 'https://www.google.com'
-      }]
+      outcome: 'unresolved',
+      error: {
+        code: 'provider_unconfigured',
+        message: 'Web search provider is not configured',
+        retryable: false
+      }
     })
   })
 

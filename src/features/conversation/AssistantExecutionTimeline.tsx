@@ -10,7 +10,9 @@ import {
   summarizeToolCalls,
   type AssistantTurnProjection,
   type DelegationProjection,
-  type ToolCallCategory
+  type ToolCallAttemptProjection,
+  type ToolCallCategory,
+  type ToolCallProjection
 } from '../../../domain/assistant-turn'
 import type { AgentRunRecoveryResult } from '../../../shared/ai-run'
 import {
@@ -65,12 +67,18 @@ export function AssistantExecutionTimeline({
   const open =
     manualOpen ??
     execution.status !== 'completed'
-  const hasDetails =
-    execution.references.length > 0 ||
-    execution.executionSummaries.length > 0 ||
-    displayToolCalls(execution).length > 0 ||
-    execution.delegations.length > 0 ||
-    (execution.compactions?.length ?? 0) > 0
+  const toolCalls = displayToolCalls(execution)
+  const unrecoveredFailureCount = countUnrecoveredToolFailures(toolCalls)
+  const terminalError =
+    execution.error ??
+    (execution.status === 'completed' && unrecoveredFailureCount > 0
+      ? t('chat.execution.tool.unrecoveredFailures', {
+          count: unrecoveredFailureCount
+        })
+      : undefined)
+  const recoveryMeta = execution.recovery
+    ? recoveryMetaLabel(execution.recovery, t)
+    : ''
 
   return (
     <section
@@ -103,6 +111,11 @@ export function AssistantExecutionTimeline({
           <p className="assistant-recovery-reason">
             {recoveryReasonLabel(execution.recovery.reason)}
           </p>
+          {recoveryMeta ? (
+            <p className="assistant-recovery-meta">
+              {recoveryMeta}
+            </p>
+          ) : null}
           {onRecoveryAction &&
           (execution.recovery.actions?.length ?? 0) > 0 ? (
             <div className="assistant-recovery-actions">
@@ -179,12 +192,12 @@ export function AssistantExecutionTimeline({
           delegation={delegation}
         />
       ))}
-      {execution.toolCalls.length > 0 ? (
-        <ToolDisclosure execution={execution} />
+      {toolCalls.length > 0 ? (
+        <ToolDisclosure toolCalls={toolCalls} status={execution.status} />
       ) : null}
-      {!hasDetails && execution.error ? (
+      {terminalError ? (
         <p className="assistant-execution-error">
-          {execution.error}
+          {terminalError}
         </p>
       ) : null}
       </div> : null}
@@ -250,17 +263,18 @@ function DelegationDisclosure({
 }
 
 function ToolDisclosure({
-  execution
+  toolCalls,
+  status
 }: {
-  execution: AssistantTurnProjection
+  toolCalls: DisplayToolCall[]
+  status: AssistantTurnProjection['status']
 }): JSX.Element {
   const { t } = useLocalization()
-  const toolCalls = displayToolCalls(execution)
   const defaultOpen =
-    execution.status === 'failed' ||
-    execution.status === 'cancelled' ||
-    execution.status === 'waiting_permission' ||
-    execution.status === 'recovery_blocked'
+    status === 'failed' ||
+    status === 'cancelled' ||
+    status === 'waiting_permission' ||
+    status === 'recovery_blocked'
   const [open, setOpen] = useState(defaultOpen)
   const toolPagination = useListPagination(toolCalls)
   return (
@@ -287,11 +301,57 @@ function ToolDisclosure({
                 {toolDisplayName(toolCall.toolName, toolCall.category, t)}
               </span>
               <span>{toolStatusLabel(toolCall.status)}</span>
+              {toolCall.recoveredAttempts.length > 0 &&
+              toolCall.status === 'completed' ? (
+                <span className="assistant-tool-call-retry">
+                  {t('chat.execution.tool.retrySucceeded')}
+                </span>
+              ) : null}
               {toolCall.error ? (
                 <span className="assistant-tool-call-error">
                   {toolErrorLabel(toolCall.errorCode, toolCall.error)}
                 </span>
               ) : null}
+              {toolCall.recoveryHint ? (
+                <span className="assistant-tool-call-recovery">
+                  {toolCall.recoveryHint}
+                </span>
+              ) : null}
+              {toolCall.diagnosticId ? (
+                <span className="assistant-tool-call-diagnostic">
+                  {t('chat.execution.tool.diagnosticId', {
+                    id: toolCall.diagnosticId
+                  })}
+                </span>
+              ) : null}
+              {toolCall.recoveredAttempts.map((attempt) => (
+                <Disclosure
+                  key={toolAttemptKey(attempt)}
+                  label={t('chat.execution.tool.failedAttempt', {
+                    attempt: attempt.attempt
+                  })}
+                >
+                  <div className="assistant-tool-attempt-detail">
+                    {attempt.error ? (
+                      <span className="assistant-tool-call-error">
+                        {toolErrorLabel(attempt.errorCode, attempt.error)}
+                      </span>
+                    ) : null}
+                    {attempt.recoveryHint ? (
+                      <span className="assistant-tool-call-recovery">
+                        {attempt.recoveryHint}
+                      </span>
+                    ) : null}
+                    {attempt.diagnosticId ? (
+                      <span className="assistant-tool-call-diagnostic">
+                        {t('chat.execution.tool.diagnosticId', {
+                          id: attempt.diagnosticId
+                        })}
+                      </span>
+                    ) : null}
+                  </div>
+                </Disclosure>
+              ))}
             </li>
           ))}
         </ul>
@@ -308,27 +368,69 @@ function ToolDisclosure({
   )
 }
 
-function visibleToolCalls(
-  execution: AssistantTurnProjection
-): AssistantTurnProjection['toolCalls'] {
-  if (execution.status !== 'completed') return execution.toolCalls
-  return execution.toolCalls.filter((toolCall, index) => {
-    if (toolCall.status !== 'failed') return true
-    return !execution.toolCalls
-      .slice(index + 1)
-      .some(
-        (candidate) =>
-          candidate.status === 'completed' &&
-          (candidate.toolName === toolCall.toolName ||
-            candidate.category === toolCall.category)
-      )
-  })
+type DisplayToolCall = ToolCallProjection & {
+  recoveredAttempts: ToolCallAttemptProjection[]
 }
 
 function displayToolCalls(
   execution: AssistantTurnProjection
-): AssistantTurnProjection['toolCalls'] {
-  return visibleToolCalls(execution)
+): DisplayToolCall[] {
+  const byCallId = new Map(
+    execution.toolCalls.map((toolCall) => [toolCall.callId, toolCall])
+  )
+  const foldedCallIds = new Set<string>()
+  const recoveredByCallId = new Map<string, ToolCallAttemptProjection[]>()
+  for (const toolCall of execution.toolCalls) {
+    if (!toolCall.retryOfCallId || toolCall.status !== 'completed') continue
+    const retried = byCallId.get(toolCall.retryOfCallId)
+    if (!retried || retried.status !== 'failed') continue
+    foldedCallIds.add(retried.callId)
+    recoveredByCallId.set(toolCall.callId, [
+      ...(retried.attempts ?? [toolCallAsAttempt(retried)]),
+      ...(recoveredByCallId.get(toolCall.callId) ?? [])
+    ])
+  }
+  return execution.toolCalls
+    .filter((toolCall) => !foldedCallIds.has(toolCall.callId))
+    .map((toolCall) => ({
+      ...toolCall,
+      recoveredAttempts: [
+        ...(recoveredByCallId.get(toolCall.callId) ?? []),
+        ...(toolCall.attempts ?? [])
+      ].filter((attempt) => attempt.status === 'failed')
+    }))
+}
+
+function countUnrecoveredToolFailures(
+  toolCalls: readonly DisplayToolCall[]
+): number {
+  return toolCalls.filter((toolCall) => toolCall.status === 'failed').length
+}
+
+function toolCallAsAttempt(
+  toolCall: ToolCallProjection
+): ToolCallAttemptProjection {
+  return {
+    attempt: toolCall.attempt ?? 1,
+    status: 'failed',
+    toolExecutionId: toolCall.toolExecutionId,
+    errorCode: toolCall.errorCode,
+    error: toolCall.error,
+    diagnosticId: toolCall.diagnosticId,
+    startedAt: toolCall.startedAt,
+    completedAt: toolCall.completedAt
+  }
+}
+
+function toolAttemptKey(attempt: ToolCallAttemptProjection): string {
+  return [
+    attempt.attempt,
+    attempt.toolExecutionId,
+    attempt.completedAt,
+    attempt.errorCode
+  ]
+    .filter((part) => part !== undefined)
+    .join(':')
 }
 
 function Disclosure({
@@ -397,6 +499,7 @@ function recoveryReasonLabel(reason: string): string {
     max_agent_turns: '已达到当前执行分段上限，正在自动续跑',
     continuation_limit_reached: '已完成两次自动续跑，需要确认后继续',
     repeated_tool_call: '检测到重复工具调用，需要确认后继续',
+    deterministic_tool_failure: '检测到确定性工具失败循环，需要确认后继续',
     consecutive_tool_failures: '连续工具执行失败，需要确认后继续',
     user_requested: '任务已由用户暂停',
     profile_unavailable: '所需智能体版本不可用',
@@ -409,6 +512,31 @@ function recoveryReasonLabel(reason: string): string {
     resume_unavailable: '恢复服务暂时不可用'
   }
   return labels[reason] ?? '任务暂时无法继续'
+}
+
+function recoveryMetaLabel(
+  recovery: NonNullable<AssistantTurnProjection['recovery']>,
+  t: Translator
+): string {
+  const parts: string[] = []
+  if (Number.isInteger(recovery.attempt) && recovery.attempt! > 0) {
+    parts.push(`第 ${recovery.attempt} 次重试`)
+  }
+  if (
+    Number.isInteger(recovery.remainingAttempts) &&
+    recovery.remainingAttempts! >= 0
+  ) {
+    parts.push(`剩余 ${recovery.remainingAttempts} 次`)
+  }
+  if (Number.isInteger(recovery.nextRetryAt)) {
+    const delayMs = Math.max(0, recovery.nextRetryAt! - Date.now())
+    parts.push(
+      delayMs > 0
+        ? `下次重试 ${formatDuration(delayMs, t)}后`
+        : '下次重试即将开始'
+    )
+  }
+  return parts.join(' · ')
 }
 
 function recoveryActionLabel(

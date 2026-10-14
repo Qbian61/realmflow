@@ -10,7 +10,6 @@ import { ConversationMessageList } from "../features/conversation/ConversationMe
 import { FollowUpSuggestionList } from "../features/conversation/FollowUpSuggestionList";
 import { ConversationShareController } from "../features/conversation/ConversationShareController";
 import { KnowledgeNoteCapture } from "../features/conversation/KnowledgeNoteCapture";
-import { ConversationContextDiagnostics } from "../features/conversation/ConversationContextDiagnostics";
 import { WorkspaceHeaderPortal } from "../features/navigation/WorkspaceLayout";
 import { useToast } from "../features/toast/ToastProvider";
 import { useOptionalWorkbench } from "../features/workbench/WorkbenchProvider";
@@ -68,9 +67,6 @@ export default function ChatSessionPage({
   const [copiedMessageId, setCopiedMessageId] = useState("");
   const [sendingSuggestionSetId, setSendingSuggestionSetId] = useState("");
   const [cancellingRunId, setCancellingRunId] = useState("");
-  const [contextMode, setContextMode] = useState<
-    "auto" | "fresh" | "continuation"
-  >("auto");
   const session = sessions.find((item) => item.id === sessionId);
   const [selectedApproval, setSelectedApproval] = useState<{
     sessionId?: string; value: import("../../domain/approval-profile").ApprovalProfileId
@@ -143,7 +139,7 @@ export default function ChatSessionPage({
           "auto",
           submission,
           approvalProfileId,
-          contextMode,
+          "auto",
         );
       } else {
         await onAppendMessage(
@@ -153,10 +149,9 @@ export default function ChatSessionPage({
           "auto",
           undefined,
           approvalProfileId,
-          contextMode,
+          "auto",
         );
       }
-      setContextMode("auto");
       if (clearPrompt) {
         setPrompt("");
         setAttachments([]);
@@ -372,13 +367,9 @@ export default function ChatSessionPage({
           )}
         </ConversationShareController>
         <div className="chat-session-composer">
-          <ConversationContextDiagnostics sessionId={session.id} />
           <Composer
             approvalProfileId={approvalProfileId}
             onApprovalProfileChange={(value) => setSelectedApproval({ sessionId, value })}
-            contextMode={contextMode}
-            onContextModeChange={setContextMode}
-            showContextMode
             permissionRunIds={session.messages.flatMap(message => message.runId ? [message.runId] : [])}
             value={prompt}
             placeholder={t("chat.placeholder")}

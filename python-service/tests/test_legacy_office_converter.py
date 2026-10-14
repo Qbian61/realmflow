@@ -40,6 +40,10 @@ def ooxml(format_: str) -> bytes:
         ("ppt", "pptx"),
         ("pps", "pptx"),
         ("pot", "pptx"),
+        ("odt", "docx"),
+        ("rtf", "docx"),
+        ("ods", "xlsx"),
+        ("odp", "pptx"),
     ],
 )
 def test_converter_maps_legacy_formats_and_uses_isolated_directories(
@@ -88,6 +92,40 @@ def test_converter_reports_a_stable_error_without_libreoffice() -> None:
 
     assert raised.value.code == "converter_unavailable"
     assert "Install LibreOffice" in str(raised.value)
+
+
+def test_optional_capabilities_are_empty_without_converter_and_conservative_when_available() -> None:
+    assert LegacyOfficeConverter(
+        resolve_executable=lambda: None
+    ).capabilities() == {}
+    assert LegacyOfficeConverter(
+        resolve_executable=lambda: "/usr/bin/soffice"
+    ).capabilities() == {
+        "vsd": "pdf",
+        "vsdx": "pdf",
+        "pub": "pdf",
+    }
+
+
+def test_converts_a_probed_visio_document_to_pdf() -> None:
+    async def run(
+        _executable: str,
+        _source_path: Path,
+        output_path: Path,
+        _profile_path: Path,
+    ) -> None:
+        output_path.write_bytes(b"%PDF-1.7\n%%EOF")
+
+    converter = LegacyOfficeConverter(
+        resolve_executable=lambda: "/usr/bin/soffice",
+        run=run,
+    )
+    result = asyncio.run(
+        converter.convert(format_="vsdx", document=b"visio")
+    )
+
+    assert result.target_format == "pdf"
+    assert result.document.startswith(b"%PDF-")
 
 
 @pytest.mark.parametrize("bad_document", [b"", b"not-a-zip"])

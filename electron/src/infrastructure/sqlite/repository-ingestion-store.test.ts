@@ -5,6 +5,7 @@ import { afterEach, beforeEach } from 'vitest'
 import { createKnowledgeSource } from '../../../../domain/knowledge-source'
 import {
   createRepositorySnapshot,
+  createRepositorySnapshotBinaryFile,
   createRepositorySnapshotFile,
   createRepositorySource
 } from '../../../../domain/repository-source'
@@ -48,7 +49,22 @@ describe('SqliteRepositoryIngestionStore', () => {
 
   it('commits snapshot files, source summary and lifecycle completion together', async () => {
     await store.beginRepositoryCreate(createInput())
-    const snapshot = snapshotInput(1)
+    const snapshot = {
+      ...snapshotInput(1),
+      skippedFiles: [
+        {
+          relativePath: 'large.txt',
+          reason: 'file_too_large',
+          byteSize: 5 * 1024 * 1024 + 1
+        }
+      ]
+    } as ReturnType<typeof snapshotInput> & {
+      skippedFiles: Array<{
+        relativePath: string
+        reason: 'file_too_large'
+        byteSize: number
+      }>
+    }
 
     await expect(
       store.completeRepositorySync({
@@ -69,6 +85,21 @@ describe('SqliteRepositoryIngestionStore', () => {
     await expect(
       store.getCurrentRepositorySnapshot('repo-1')
     ).resolves.toEqual(snapshot)
+    expect(
+      database
+        .prepare(
+          `SELECT relative_path, reason, byte_size
+           FROM repository_snapshot_skipped_files
+           WHERE snapshot_id = ?`
+        )
+        .all('snapshot-1')
+    ).toEqual([
+      {
+        relative_path: 'large.txt',
+        reason: 'file_too_large',
+        byte_size: 5 * 1024 * 1024 + 1
+      }
+    ])
     await expect(store.getRepositorySource('repo-1')).resolves.toMatchObject({
       selectedBranch: 'main',
       currentVersion: 1,
@@ -115,6 +146,82 @@ describe('SqliteRepositoryIngestionStore', () => {
     await expect(
       store.getCurrentRepositorySnapshot('repo-1')
     ).resolves.toMatchObject({ version: 2, revisionLabel: 'main@2' })
+  })
+
+  it('persists frozen structured documents with their repository snapshot', async () => {
+    await store.beginRepositoryCreate(createInput())
+    const bytes = Uint8Array.from([0x25, 0x50, 0x44, 0x46, 0, 1])
+    const snapshot = createRepositorySnapshot({
+      id: 'snapshot-1',
+      sourceId: 'repo-1',
+      version: 1,
+      branch: 'main',
+      revisionLabel: 'main@1',
+      files: [
+        createRepositorySnapshotBinaryFile({
+          relativePath: 'docs/brief.pdf',
+          content: bytes
+        })
+      ],
+      documents: [
+        {
+          sourcePath: 'docs/brief.pdf',
+          unitKey: 'page/1',
+          title: 'Page 1',
+          content: 'Quarterly report',
+          checksum: 'sha256:page-1',
+          byteSize: 16,
+          metadata: {
+            format: 'pdf',
+            extraction: 'native',
+            page: 1
+          }
+        }
+      ],
+      scannedAt: 20
+    })
+
+    await store.completeRepositorySync({
+      sourceId: 'repo-1',
+      expectedRevision: 2,
+      snapshot,
+      eventId: 'event-complete-1',
+      idempotencyKey: 'create-repository-1',
+      at: 20
+    })
+
+    await expect(
+      store.getCurrentRepositorySnapshot('repo-1')
+    ).resolves.toEqual(snapshot)
+    expect(
+      database
+        .prepare(
+          `SELECT source_path, unit_key, title, content, content_checksum,
+             byte_size, metadata_json
+           FROM repository_snapshot_documents
+           WHERE snapshot_id = ?`
+        )
+        .all('snapshot-1')
+    ).toEqual([
+      {
+        source_path: 'docs/brief.pdf',
+        unit_key: 'page/1',
+        title: 'Page 1',
+        content: 'Quarterly report',
+        content_checksum: 'sha256:page-1',
+        byte_size: 16,
+        metadata_json:
+          '{"format":"pdf","extraction":"native","page":1}'
+      }
+    ])
+    expect(() =>
+      database
+        .prepare(
+          `UPDATE repository_snapshot_documents
+           SET content = 'changed' WHERE snapshot_id = ?`
+        )
+        .run('snapshot-1')
+    ).toThrow('Repository snapshot documents are immutable')
   })
 
   it('records a safe failure without replacing the current snapshot', async () => {
@@ -292,7 +399,24 @@ describe('SqliteRepositoryIngestionStore', () => {
   })
 
   it('keeps snapshots and their files immutable', async () => {
-    await completeCreate(store)
+    await store.beginRepositoryCreate(createInput())
+    await store.completeRepositorySync({
+      sourceId: 'repo-1',
+      expectedRevision: 2,
+      snapshot: {
+        ...snapshotInput(1),
+        skippedFiles: [
+          {
+            relativePath: 'large.txt',
+            reason: 'file_too_large',
+            byteSize: 5 * 1024 * 1024 + 1
+          }
+        ]
+      },
+      eventId: 'event-complete-1',
+      idempotencyKey: 'create-repository-1',
+      at: 20
+    })
 
     expect(() =>
       database
@@ -306,6 +430,13 @@ describe('SqliteRepositoryIngestionStore', () => {
         )
         .run('changed', 'snapshot-1')
     ).toThrow('Repository snapshot files are immutable')
+    expect(() =>
+      database
+        .prepare(
+          'UPDATE repository_snapshot_skipped_files SET reason = ? WHERE snapshot_id = ?'
+        )
+        .run('binary', 'snapshot-1')
+    ).toThrow('Repository snapshot skipped files are immutable')
   })
 })
 

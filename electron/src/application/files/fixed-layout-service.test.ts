@@ -144,6 +144,48 @@ describe('FixedLayoutService', () => {
     )
   })
 
+  it('inspects and OCRs immutable OFD bytes without resolving a path', async () => {
+    const adapter = {
+      inspect: vi.fn().mockResolvedValue(OCR_INSPECTION),
+      renderPage: vi.fn().mockResolvedValue({
+        sourcePage: 2,
+        mimeType: 'image/png',
+        width: 100,
+        height: 120,
+        content: Buffer.from('png')
+      })
+    }
+    const recognize = vi.fn().mockResolvedValue({
+      language: 'chi_sim',
+      blocks: [
+        {
+          text: '发票',
+          confidence: 0.96,
+          bounds: { x: 5, y: 8, width: 30, height: 12 }
+        }
+      ]
+    })
+    const storage = createStorage()
+    const service = new FixedLayoutService({
+      adapter,
+      storage,
+      localOcr: { recognize }
+    })
+
+    await expect(
+      service.inspectBytes(OFD_BYTES, signal())
+    ).resolves.toEqual(OCR_INSPECTION)
+    await expect(
+      service.ocrPageBytes(OFD_BYTES, 2, signal(), {
+        language: 'chi_sim'
+      })
+    ).resolves.toMatchObject({
+      language: 'chi_sim',
+      blocks: [{ text: '发票' }]
+    })
+    expect(storage.read).not.toHaveBeenCalled()
+  })
+
   it('rejects redundant OCR for a native-text page', async () => {
     await expect(
       new FixedLayoutService({

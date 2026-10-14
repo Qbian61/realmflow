@@ -1,20 +1,31 @@
 import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { lstat, readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { promisify } from 'node:util'
+import {
+  CONTENT_EXTRACTION_LIMITS,
+  classifyExtractableContent
+} from '../../../../domain/content-extraction'
 import {
   MAX_REPOSITORY_FILES,
   MAX_REPOSITORY_FILE_BYTES,
   MAX_REPOSITORY_TEXT_BYTES,
   createRepositorySnapshot,
+  createRepositorySnapshotBinaryFile,
   createRepositorySnapshotFile,
   isForcedRepositoryExclusion,
   normalizeRepositoryBranch,
   normalizeRepositoryPath,
   type RepositoryBranch,
-  type RepositorySnapshot
+  type RepositorySnapshot,
+  type RepositorySnapshotDocument,
+  type RepositorySnapshotFile,
+  type RepositorySnapshotSkippedFile,
+  type RepositorySnapshotSkippedFileReason
 } from '../../../../domain/repository-source'
 import { SecurePathService } from '../../workspace/secure-path-service'
+import type { LocalContentExtractionService } from '../content-extraction/local-content-extraction-service'
 
 const executeFile = promisify(execFile)
 
@@ -24,6 +35,8 @@ type RepositoryScannerOptions = {
   now?: () => number
   createId?: () => string
   maxTotalBytes?: number
+  maxFiles?: number
+  contentExtractor?: Pick<LocalContentExtractionService, 'extract'>
 }
 
 export class RepositoryScanner {
@@ -32,6 +45,8 @@ export class RepositoryScanner {
   private readonly now: () => number
   private readonly createId: () => string
   private readonly maxTotalBytes: number
+  private readonly maxFiles: number
+  private readonly contentExtractor?: Pick<LocalContentExtractionService, 'extract'>
 
   constructor(options: RepositoryScannerOptions = {}) {
     this.securePaths = options.securePaths ?? new SecurePathService()
@@ -40,6 +55,8 @@ export class RepositoryScanner {
     this.createId = options.createId ?? (() => crypto.randomUUID())
     this.maxTotalBytes =
       options.maxTotalBytes ?? MAX_REPOSITORY_TEXT_BYTES
+    this.maxFiles = options.maxFiles ?? MAX_REPOSITORY_FILES
+    this.contentExtractor = options.contentExtractor
   }
 
   async scan(
@@ -55,12 +72,11 @@ export class RepositoryScanner {
     await this.assertGitWorkTree(root)
     const before = await this.readRepositoryState(root)
     const paths = await this.listCandidatePaths(root)
-    if (paths.length > MAX_REPOSITORY_FILES) {
-      throw new Error('Repository contains too many files')
-    }
 
-    const files = []
-    let totalBytes = 0
+    const files: RepositorySnapshotFile[] = []
+    const documents: RepositorySnapshotDocument[] = []
+    const skippedFiles: RepositorySnapshotSkippedFile[] = []
+    const budget = { totalBytes: 0 }
     for (const candidate of paths) {
       const relativePath = normalizeRepositoryPath(candidate)
       if (isForcedRepositoryExclusion(relativePath)) continue
@@ -74,32 +90,25 @@ export class RepositoryScanner {
       )
       const metadata = await lstat(resolved.targetPath)
       if (!metadata.isFile()) continue
-      if (metadata.size > MAX_REPOSITORY_FILE_BYTES) continue
+      if (metadata.size > MAX_REPOSITORY_FILE_BYTES) {
+        skippedFiles.push(
+          skippedFile(relativePath, 'file_too_large', metadata.size)
+        )
+        continue
+      }
       const content = await this.readBytes(resolved.targetPath)
       const afterRead = await lstat(resolved.targetPath)
       if (!sameFileState(metadata, afterRead)) {
         throw new Error('Repository changed during scan')
       }
-      if (content.includes(0)) continue
-      let file
-      try {
-        file = createRepositorySnapshotFile({ relativePath, content })
-      } catch (error) {
-        if (
-          error instanceof Error &&
-          (error.message === 'Repository file is binary' ||
-            error.message === 'Repository file is not valid UTF-8' ||
-            error.message === 'Repository file is too large')
-        ) {
-          continue
-        }
-        throw error
-      }
-      totalBytes += file.byteSize
-      if (totalBytes > this.maxTotalBytes) {
-        throw new Error('Repository text exceeds the size limit')
-      }
-      files.push(file)
+      await this.collectFile({
+        relativePath,
+        content,
+        files,
+        documents,
+        skippedFiles,
+        budget
+      })
     }
     const after = await this.readRepositoryState(root)
     if (
@@ -118,6 +127,8 @@ export class RepositoryScanner {
         input.branch ?? (before.branch === 'detached' ? 'HEAD' : before.branch),
       revisionLabel: input.revisionLabel ?? before.revisionLabel,
       files,
+      documents,
+      skippedFiles,
       scannedAt: this.now()
     })
   }
@@ -174,37 +185,28 @@ export class RepositoryScanner {
     const branch = normalizeRepositoryBranch(input.branch)
     const revision = await this.resolveBranch(root, branch)
     const paths = await this.listBranchPaths(root, revision)
-    if (paths.length > MAX_REPOSITORY_FILES) {
-      throw new Error('Repository contains too many files')
-    }
-    const files = []
-    let totalBytes = 0
+    const files: RepositorySnapshotFile[] = []
+    const documents: RepositorySnapshotDocument[] = []
+    const skippedFiles: RepositorySnapshotSkippedFile[] = []
+    const budget = { totalBytes: 0 }
     for (const candidate of paths) {
       const relativePath = normalizeRepositoryPath(candidate)
       if (isForcedRepositoryExclusion(relativePath)) continue
       const content = await this.readBranchFile(root, revision, relativePath)
-      if (content.byteLength > MAX_REPOSITORY_FILE_BYTES || content.includes(0)) {
+      if (content.byteLength > MAX_REPOSITORY_FILE_BYTES) {
+        skippedFiles.push(
+          skippedFile(relativePath, 'file_too_large', content.byteLength)
+        )
         continue
       }
-      let file
-      try {
-        file = createRepositorySnapshotFile({ relativePath, content })
-      } catch (error) {
-        if (
-          error instanceof Error &&
-          (error.message === 'Repository file is binary' ||
-            error.message === 'Repository file is not valid UTF-8' ||
-            error.message === 'Repository file is too large')
-        ) {
-          continue
-        }
-        throw error
-      }
-      totalBytes += file.byteSize
-      if (totalBytes > this.maxTotalBytes) {
-        throw new Error('Repository text exceeds the size limit')
-      }
-      files.push(file)
+      await this.collectFile({
+        relativePath,
+        content,
+        files,
+        documents,
+        skippedFiles,
+        budget
+      })
     }
     if ((await this.resolveBranch(root, branch)) !== revision) {
       throw new Error('Repository branch changed during scan')
@@ -216,6 +218,8 @@ export class RepositoryScanner {
       branch,
       revisionLabel: revision,
       files,
+      documents,
+      skippedFiles,
       scannedAt: this.now()
     })
   }
@@ -244,6 +248,108 @@ export class RepositoryScanner {
     } catch {
       throw new Error('Repository is not a Git work tree')
     }
+  }
+
+  private async collectFile(input: {
+    relativePath: string
+    content: Uint8Array
+    files: RepositorySnapshotFile[]
+    documents: RepositorySnapshotDocument[]
+    skippedFiles: RepositorySnapshotSkippedFile[]
+    budget: { totalBytes: number }
+  }): Promise<void> {
+    const format = classifyExtractableContent({
+      fileName: input.relativePath,
+      head: input.content.subarray(0, 512)
+    })
+    const structured =
+      format.support !== 'unsupported' && format.strategy !== 'text'
+    if (structured && this.contentExtractor) {
+      const file = createRepositorySnapshotBinaryFile({
+        relativePath: input.relativePath,
+        content: input.content
+      })
+      if (!this.reserveFile(file, input.files, input.skippedFiles, input.budget)) {
+        return
+      }
+      const sourceChecksum = digest(input.content)
+      const bundle = await this.contentExtractor.extract({
+        bytes: input.content,
+        fileName: input.relativePath,
+        sourceChecksum,
+        policy: {
+          consumer: 'repository_snapshot',
+          allowLocalOcr: true,
+          allowLocalConversion: true,
+          maxCharacters: CONTENT_EXTRACTION_LIMITS.maxExtractedCharacters,
+          maxUnits: CONTENT_EXTRACTION_LIMITS.maxArchiveEntries
+        },
+        signal: new AbortController().signal,
+        depth: 0
+      })
+      input.documents.push(
+        ...bundle.units.map((unit) => ({
+          sourcePath: input.relativePath,
+          unitKey: unit.key,
+          title: unit.title,
+          content: unit.text,
+          checksum: unit.checksum,
+          byteSize: unit.byteSize,
+          ...(unit.metadata ? { metadata: unit.metadata } : {})
+        }))
+      )
+      return
+    }
+    if (input.content.includes(0)) {
+      input.skippedFiles.push(
+        skippedFile(input.relativePath, 'binary', input.content.byteLength)
+      )
+      return
+    }
+    let file: RepositorySnapshotFile
+    try {
+      file = createRepositorySnapshotFile({
+        relativePath: input.relativePath,
+        content: input.content
+      })
+    } catch (error) {
+      const reason = skippedReasonForSnapshotFileError(error)
+      if (reason) {
+        input.skippedFiles.push(
+          skippedFile(input.relativePath, reason, input.content.byteLength)
+        )
+        return
+      }
+      throw error
+    }
+    this.reserveFile(file, input.files, input.skippedFiles, input.budget)
+  }
+
+  private reserveFile(
+    file: RepositorySnapshotFile,
+    files: RepositorySnapshotFile[],
+    skippedFiles: RepositorySnapshotSkippedFile[],
+    budget: { totalBytes: number }
+  ): boolean {
+    if (files.length >= this.maxFiles) {
+      skippedFiles.push(
+        skippedFile(file.relativePath, 'file_count_limit_exceeded', file.byteSize)
+      )
+      return false
+    }
+    if (budget.totalBytes + file.byteSize > this.maxTotalBytes) {
+      skippedFiles.push(
+        skippedFile(
+          file.relativePath,
+          'repository_text_limit_exceeded',
+          file.byteSize
+        )
+      )
+      return false
+    }
+    budget.totalBytes += file.byteSize
+    files.push(file)
+    return true
   }
 
   private async resolveBranch(rootPath: string, branch: string): Promise<string> {
@@ -295,7 +401,10 @@ export class RepositoryScanner {
         }
       )
       return Buffer.from(stdout, 'latin1')
-    } catch {
+    } catch (error) {
+      if (isStdoutMaxBufferExceeded(error)) {
+        return new Uint8Array(MAX_REPOSITORY_FILE_BYTES + 1)
+      }
       throw new Error('Repository branch file read failed')
     }
   }
@@ -385,6 +494,46 @@ export class RepositoryScanner {
       throw new Error('Repository status probe failed')
     }
   }
+}
+
+function isStdoutMaxBufferExceeded(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    ((error as NodeJS.ErrnoException).code ===
+      'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ||
+      String((error as Error).message).includes('maxBuffer'))
+  )
+}
+
+function skippedFile(
+  relativePath: string,
+  reason: RepositorySnapshotSkippedFileReason,
+  byteSize?: number
+): RepositorySnapshotSkippedFile {
+  return {
+    relativePath,
+    reason,
+    ...(byteSize === undefined ? {} : { byteSize })
+  }
+}
+
+function skippedReasonForSnapshotFileError(
+  error: unknown
+): RepositorySnapshotSkippedFileReason | undefined {
+  if (!(error instanceof Error)) return undefined
+  if (error.message === 'Repository file is binary') return 'binary'
+  if (error.message === 'Repository file is not valid UTF-8') {
+    return 'invalid_utf8'
+  }
+  if (error.message === 'Repository file is too large') {
+    return 'file_too_large'
+  }
+  return undefined
+}
+
+function digest(content: Uint8Array): string {
+  return `sha256:${createHash('sha256').update(content).digest('hex')}`
 }
 
 function sameFileState(

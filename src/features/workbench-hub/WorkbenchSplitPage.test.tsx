@@ -68,7 +68,7 @@ describe("WorkbenchSplitPage", () => {
 
     expect(screen.getByRole("button", { name: "新增备忘录" })).toHaveAttribute(
       "title",
-      "新增",
+      "新建",
     );
     expect(screen.getByRole("button", { name: "新增网站" })).toHaveAttribute(
       "title",

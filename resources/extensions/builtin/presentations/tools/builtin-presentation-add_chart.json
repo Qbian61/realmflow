@@ -18,15 +18,27 @@
     "properties": {
       "sessionId": {
         "type": "string",
-        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$",
+        "description": "Stable local editing or browser session ID returned by an inspect/create tool.",
+        "examples": [
+          "12345678-1234-4234-9234-123456789abc"
+        ]
       },
       "expectedRevision": {
         "type": "integer",
-        "minimum": 0
+        "minimum": 0,
+        "description": "Expected revision used for optimistic concurrency control. Copy this value from the latest RealmFlow UI/API state; do not invent it.",
+        "examples": [
+          1
+        ]
       },
       "slideId": {
         "type": "string",
-        "pattern": "^slide-[0-9]+$"
+        "pattern": "^slide-[0-9]+$",
+        "description": "Stable presentation slide ID.",
+        "examples": [
+          "slide-1"
+        ]
       },
       "type": {
         "type": "string",
@@ -35,11 +47,19 @@
           "column",
           "line",
           "pie"
+        ],
+        "description": "Type selector for the requested structured object. Allowed values: bar, column, line, pie.",
+        "examples": [
+          "bar"
         ]
       },
       "title": {
         "type": "string",
-        "maxLength": 255
+        "maxLength": 255,
+        "description": "User-visible title.",
+        "examples": [
+          "Quarterly update"
+        ]
       },
       "categories": {
         "type": "array",
@@ -49,8 +69,19 @@
           "type": [
             "string",
             "number"
+          ],
+          "examples": [
+            [
+              "Q1"
+            ]
           ]
-        }
+        },
+        "description": "Ordered category labels used by the chart data series.",
+        "examples": [
+          [
+            "Q1"
+          ]
+        ]
       },
       "series": {
         "type": "array",
@@ -67,18 +98,58 @@
             "name": {
               "type": "string",
               "minLength": 1,
-              "maxLength": 255
+              "maxLength": 255,
+              "description": "Display name or identifier used by the requested operation.",
+              "examples": [
+                "example"
+              ]
             },
             "values": {
               "type": "array",
               "minItems": 1,
               "maxItems": 1000,
               "items": {
-                "type": "number"
-              }
+                "type": "number",
+                "examples": [
+                  [
+                    [
+                      "Example value"
+                    ]
+                  ]
+                ]
+              },
+              "description": "Two-dimensional value matrix written into the target range.",
+              "examples": [
+                [
+                  [
+                    "Example value"
+                  ]
+                ]
+              ]
             }
-          }
-        }
+          },
+          "examples": [
+            [
+              {
+                "name": "Revenue",
+                "values": [
+                  100
+                ]
+              }
+            ]
+          ]
+        },
+        "description": "Ordered chart data series.",
+        "examples": [
+          [
+            {
+              "name": "Revenue",
+              "values": [
+                100
+              ]
+            }
+          ]
+        ]
       },
       "bounds": {
         "type": "object",
@@ -93,24 +164,49 @@
           "leftPt": {
             "type": "number",
             "minimum": 0,
-            "maximum": 2880
+            "maximum": 2880,
+            "description": "Left coordinate in points within the target slide.",
+            "examples": [
+              0
+            ]
           },
           "topPt": {
             "type": "number",
             "minimum": 0,
-            "maximum": 2880
+            "maximum": 2880,
+            "description": "Top coordinate in points within the target slide.",
+            "examples": [
+              0
+            ]
           },
           "widthPt": {
             "type": "number",
             "exclusiveMinimum": 0,
-            "maximum": 2880
+            "maximum": 2880,
+            "description": "Width in points.",
+            "examples": [
+              960
+            ]
           },
           "heightPt": {
             "type": "number",
             "exclusiveMinimum": 0,
-            "maximum": 2880
+            "maximum": 2880,
+            "description": "Height in points.",
+            "examples": [
+              720
+            ]
           }
-        }
+        },
+        "description": "Rectangle position and size in points within the target slide.",
+        "examples": [
+          {
+            "leftPt": 24,
+            "topPt": 24,
+            "widthPt": 320,
+            "heightPt": 180
+          }
+        ]
       }
     },
     "required": [
@@ -122,6 +218,32 @@
       "categories",
       "series",
       "bounds"
+    ],
+    "examples": [
+      {
+        "sessionId": "12345678-1234-4234-9234-123456789abc",
+        "expectedRevision": 1,
+        "slideId": "slide-1",
+        "type": "bar",
+        "title": "Quarterly update",
+        "categories": [
+          "Q1"
+        ],
+        "series": [
+          {
+            "name": "Revenue",
+            "values": [
+              100
+            ]
+          }
+        ],
+        "bounds": {
+          "leftPt": 24,
+          "topPt": 24,
+          "widthPt": 320,
+          "heightPt": 180
+        }
+      }
     ]
   },
   "outputSchema": {

@@ -1,11 +1,7 @@
-import { Plus, Sparkles, Square
-} from "lucide-react";
+import { Plus, Sparkles, Square } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { Navigate, useParams, useSearchParams } from "react-router-dom";
-import {
-  Spinner,
-  Select,
-} from "../components/ui";
+import { Select, Spinner } from "../components/ui";
 import type { AiRunController } from "../app/hooks/use-ai-run-controller";
 import type {
   RequirementNode,
@@ -83,9 +79,7 @@ export default function RequirementDetailPage({
   const [todoError, setTodoError] = useState("");
   const [nodeQuestions, setNodeQuestions] = useState<NodeQuestionDto[]>([]);
   const [gatePending, setGatePending] = useState(false);
-  const [gateError, setGateError] = useState("");
   const [controlPending, setControlPending] = useState(false);
-  const [controlError, setControlError] = useState("");
   const workbench = useWorkbench();
   const models = useModelProfiles();
   const executionWorkbench =
@@ -258,8 +252,9 @@ export default function RequirementDetailPage({
       status: order === 0 ? "ready" : "pending",
       allowSkip: false,
     }));
+  const selectedStageId = executionView?.selectedNode.id ?? activeStage;
   const selectedNode =
-    displayNodes.find((node) => node.id === activeStage) ?? displayNodes[0];
+    displayNodes.find((node) => node.id === selectedStageId) ?? displayNodes[0];
   const selectedLegacyStage = selectedNode
     ? legacyStageFromNodeId(selectedNode.id)
     : undefined;
@@ -276,7 +271,6 @@ export default function RequirementDetailPage({
     const business = window.realmflow?.business;
     if (!business || !nodeExecution || !selectedNode) return;
     setGatePending(true);
-    setGateError("");
     try {
       const nextWorkflow = await business.resolveWorkflowNodeGate({
         requirementId: requirement.id,
@@ -318,7 +312,6 @@ export default function RequirementDetailPage({
       ...(models.selectedId ? { modelProfileId: models.selectedId } : {}),
     };
     setControlPending(true);
-    setControlError("");
     try {
       const result =
         action === "start"
@@ -510,9 +503,6 @@ export default function RequirementDetailPage({
                 </button>
               ) : null}
             </div>
-            {gateError || controlError ? (
-              <p role="alert">{gateError || controlError}</p>
-            ) : null}
             {activeRun ? (
               <div className={`stage-run-state ${activeRun.status}`}>
                 <div className="stage-run-progress">
@@ -582,7 +572,9 @@ export default function RequirementDetailPage({
                           .finally(() => setTodoPendingId(undefined));
                       }}
                     >
-                      <input name="requirement-detail-new-todo" autoComplete="off"
+                      <input
+                        name="requirement-detail-new-todo"
+                        autoComplete="off"
                         aria-label={t("requirementDetail.newTodo")}
                         maxLength={500}
                         placeholder={t("requirementDetail.todoPlaceholder")}
@@ -590,7 +582,9 @@ export default function RequirementDetailPage({
                         onChange={(event) => setTodoTitle(event.target.value)}
                       />
                       <label>
-                        <input name="requirement-detail-page-todo-required" autoComplete="off"
+                        <input
+                          name="requirement-detail-page-todo-required"
+                          autoComplete="off"
                           type="checkbox"
                           checked={todoRequired}
                           onChange={(event) =>
@@ -622,7 +616,9 @@ export default function RequirementDetailPage({
                           ) : null}
                           {getAllowedNodeTodoTransitions(todo.status).length >
                           0 ? (
-                            <Select name={`requirement-todo-${todo.id}-status`} autoComplete="off"
+                            <Select
+                              name={`requirement-todo-${todo.id}-status`}
+                              autoComplete="off"
                               aria-label={t(
                                 "requirementDetail.updateTodoAria",
                                 { title: todo.title },

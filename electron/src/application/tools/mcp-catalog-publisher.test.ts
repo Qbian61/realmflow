@@ -50,7 +50,18 @@ describe('McpCatalogPublisher', () => {
             {
               name: 'search',
               description: 'Search',
-              inputSchema: { type: 'object' }
+              inputSchema: {
+                type: 'object',
+                description: 'Search input.',
+                additionalProperties: false,
+                required: ['query'],
+                properties: {
+                  query: {
+                    type: 'string',
+                    description: 'Search query sent to the remote MCP server.'
+                  }
+                }
+              }
             }
           ],
           callTool: async () => ({ content: [] }),

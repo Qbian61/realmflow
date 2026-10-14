@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "packageId": "realmflow.builtin.process",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "name": "Processes",
   "description": "Local tool discovery and managed processes.",
   "publisher": {

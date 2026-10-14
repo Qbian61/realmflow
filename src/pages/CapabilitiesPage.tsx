@@ -1,5 +1,4 @@
 import {
-  Bot,
   Box,
   ChevronDown,
   MessageCirclePlus,
@@ -20,13 +19,12 @@ import type {
 } from "../../shared/capability-catalog";
 import type { CapabilityInstallation } from "../../domain/capability";
 import { WorkspaceHeaderPortal } from "../features/navigation/WorkspaceLayout";
-import { ToolPolicyPanel } from "../features/capabilities/ToolPolicyPanel";
 import { ConnectorCatalogPanel } from "../features/capabilities/ConnectorCatalogPanel";
 import { CapabilityImportDialog } from "../features/capabilities/CapabilityImportDialog";
-import { InstalledCapabilityList } from "../features/capabilities/InstalledCapabilityList";
 import { filterCapabilitySnapshot } from "../features/capabilities/filter-capability-snapshot";
 import { CapabilityBuilderDialog } from "../features/capabilities/CapabilityBuilderDialog";
 import { ProductCapabilityDirectory } from "../features/capabilities/ProductCapabilityDirectory";
+import { AgentProfileDirectory } from "../features/capabilities/AgentProfileDirectory";
 import { CatalogManagementDialog } from "../features/capabilities/CatalogManagementDialog";
 import {
   CapabilityFilterBar,
@@ -45,7 +43,6 @@ import {
 } from "./page-query-state";
 import {
   Button,
-  EmptyState,
   InlineAlert,
   Menu,
   MenuContent,
@@ -208,8 +205,8 @@ export default function CapabilitiesPage(): JSX.Element {
         idempotencyKey: `extension-import-${crypto.randomUUID()}`,
       });
       if (imported) setCatalog(await toolCatalog.list(currentCatalogQuery()));
-    } catch {
-      toast.error("capabilities.importFailed");
+    } catch (error) {
+      publishImportFailure(toast, error);
     } finally {
       setImporting(undefined);
     }
@@ -223,8 +220,8 @@ export default function CapabilitiesPage(): JSX.Element {
         sourceType: "archive",
       });
       if (next) setProposal(next);
-    } catch {
-      toast.error("capabilities.importFailed");
+    } catch (error) {
+      publishImportFailure(toast, error);
     } finally {
       setImporting(undefined);
     }
@@ -242,8 +239,8 @@ export default function CapabilitiesPage(): JSX.Element {
       setCapabilitySnapshot(await capabilityCatalog.list({ locale }));
       setActiveTab(`${installed.definition.kind}s` as CapabilityTab);
       setProposal(undefined);
-    } catch {
-      toast.error("capabilities.importFailed");
+    } catch (error) {
+      publishImportFailure(toast, error);
     } finally {
       setInstallingProposal(false);
     }
@@ -469,7 +466,7 @@ export default function CapabilitiesPage(): JSX.Element {
               title={<span className="model-page-error">{error}</span>}
             />
           ) : null}
-          {activeTab === "agents" || activeTab === "connectors" ? (
+          {activeTab === "connectors" ? (
             <CapabilityFilterBar
               value={filters}
               onChange={(key, value) => {
@@ -544,30 +541,13 @@ export default function CapabilitiesPage(): JSX.Element {
               role="tabpanel"
               aria-labelledby="capabilities-agents-tab"
             >
-              {window.realmflow?.toolPolicy ? (
-                <ToolPolicyPanel api={window.realmflow.toolPolicy} business={business} />
-              ) : null}
-              <InstalledCapabilityList
-                kind="agent"
-                {...filteredCapabilitySnapshot}
-                busyInstallationId={busyInstallationId}
-                onSetEnabled={(installation, enabled) =>
-                  void setCapabilityEnabled(installation, enabled)
-                }
-                onChangeVersion={(installation, version, operation) =>
-                  void changeCapabilityVersion(installation, version, operation)
-                }
-                onDelete={(installation) => void deleteCapability(installation)}
+              <AgentProfileDirectory
+                catalog={catalog}
+                capabilities={capabilitySnapshot}
+                loading={loading}
+                query={query}
+                onQueryChange={(value) => setQuery(value, { replace: true })}
               />
-              {capabilitySnapshot.definitions.every(
-                (definition) => definition.kind !== "agent",
-              ) ? (
-                <EmptyState
-                  className="capabilities-agent-empty"
-                  icon={<Bot size={20} aria-hidden="true" />}
-                  title={t("capabilities.agents.empty")}
-                />
-              ) : null}
             </div>
           ) : null}
 
@@ -672,4 +652,42 @@ function capabilityBuilderPlatform(
 ): "darwin" | "win32" | "linux" {
   if (platform === "win32" || platform === "linux") return platform;
   return "darwin";
+}
+
+function publishImportFailure(
+  toast: ReturnType<typeof useToast>,
+  error: unknown,
+): void {
+  const diagnostic = safeImportContractDiagnostic(error);
+  if (diagnostic) {
+    toast.error("capabilities.importFailedWithDiagnostic", {
+      values: { diagnostic },
+    });
+    return;
+  }
+  toast.error("capabilities.importFailed");
+}
+
+function safeImportContractDiagnostic(error: unknown): string | undefined {
+  const message = error instanceof Error ? error.message : "";
+  const diagnostic = message.startsWith("Tool Catalog contract failed: ")
+    ? message.slice("Tool Catalog contract failed: ".length).trim()
+    : message.trim();
+  if (!isSafeContractDiagnostic(diagnostic)) return undefined;
+  return diagnostic.slice(0, 500);
+}
+
+function isSafeContractDiagnostic(message: string): boolean {
+  if (!message) return false;
+  if (/[A-Z_]*(?:SECRET|TOKEN|PASSWORD|CREDENTIAL|API_KEY)[A-Z_]*/i.test(message)) {
+    return false;
+  }
+  if (
+    /(?:^|[\s"'`(])(?:\/Users\/[^\s"'`)]+|\/home\/[^\s"'`)]+|\/var\/folders\/[^\s"'`)]+|[A-Za-z]:\\[^\s"'`]+)/i.test(
+      message,
+    )
+  ) {
+    return false;
+  }
+  return /^(?:Tool|Skill) [A-Za-z0-9._:-]+ input schema\./.test(message);
 }

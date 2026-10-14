@@ -60,6 +60,11 @@ export type ArchiveSourceEntry = {
   type: 'file' | 'directory'
 }
 
+export type ArchiveByteEntry = {
+  path: string
+  bytes: Uint8Array
+}
+
 export class ArchiveError extends Error {
   readonly name = 'ArchiveError'
 
@@ -129,6 +134,48 @@ export class ArchiveAdapter {
     }
   }
 
+  async readEntries(
+    input: ArchiveReadInput & { signal: AbortSignal }
+  ): Promise<ArchiveByteEntry[]> {
+    assertNotAborted(input.signal)
+    const limits = resolveLimits(input.limits)
+    const listing = await this.list(input)
+    try {
+      if (input.format === 'gz') {
+        const bytes = await gunzipBuffer(
+          input.content,
+          Math.min(limits.maxEntryBytes, limits.maxExpandedBytes)
+        )
+        assertNotAborted(input.signal)
+        return [
+          {
+            path: listing.entries[0]!.path,
+            bytes: Uint8Array.from(bytes)
+          }
+        ]
+      }
+      const entries =
+        input.format === 'zip'
+          ? await readZipEntries(input, limits)
+          : await readTarEntries(input, limits)
+      const byPath = new Map(entries.map((entry) => [entry.path, entry]))
+      return listing.entries
+        .filter(({ type }) => type === 'file')
+        .map(({ path }) => {
+          const entry = byPath.get(path)
+          if (!entry) {
+            throw new ArchiveError(
+              'file_parse_failed',
+              'Archive entry body is unavailable'
+            )
+          }
+          return entry
+        })
+    } catch (error) {
+      throw normalizeArchiveError(error)
+    }
+  }
+
   async create(input: {
     format: ArchiveFormat
     archiveName: string
@@ -192,6 +239,107 @@ export class ArchiveAdapter {
     } finally {
       await rm(stagingPath, { recursive: true, force: true })
     }
+  }
+}
+
+async function readZipEntries(
+  input: ArchiveReadInput & { signal: AbortSignal },
+  limits: ArchiveSafetyLimits
+): Promise<ArchiveByteEntry[]> {
+  const entries: ArchiveByteEntry[] = []
+  await visitZipEntries(input.content, async (entry, archive) => {
+    assertNotAborted(input.signal)
+    const metadata = toZipArchiveEntry(entry, limits)
+    if (metadata.type === 'directory') return
+    const source = await openZipEntryStream(archive, entry)
+    entries.push({
+      path: metadata.path,
+      bytes: await readBoundedStream(
+        source,
+        metadata.size,
+        limits.maxEntryBytes,
+        input.signal
+      )
+    })
+  })
+  return entries
+}
+
+async function readTarEntries(
+  input: ArchiveReadInput & { signal: AbortSignal },
+  limits: ArchiveSafetyLimits
+): Promise<ArchiveByteEntry[]> {
+  const entries: ArchiveByteEntry[] = []
+  const pending: Promise<void>[] = []
+  const source = Readable.from(Buffer.from(input.content))
+  let parser: Parser
+  parser = listTar({
+    gzip: input.format === 'tgz',
+    strict: true,
+    onentry: (entry) => {
+      try {
+        assertNotAborted(input.signal)
+        const type = tarEntryType(entry.type)
+        const path = safeArchivePath(entry.path, limits)
+        if (type === 'directory') {
+          entry.resume()
+          return
+        }
+        pending.push(
+          readBoundedStream(
+            entry,
+            entry.size,
+            limits.maxEntryBytes,
+            input.signal
+          ).then((bytes) => {
+            entries.push({ path, bytes })
+          })
+        )
+      } catch (error) {
+        entry.resume()
+        parser.abort(normalizeArchiveError(error))
+      }
+    }
+  }) as Parser
+  await pipeline(source, parser)
+  await Promise.all(pending)
+  return entries
+}
+
+async function readBoundedStream(
+  stream: AsyncIterable<Uint8Array>,
+  declaredBytes: number,
+  maxBytes: number,
+  signal: AbortSignal
+): Promise<Uint8Array> {
+  const chunks: Buffer[] = []
+  let total = 0
+  for await (const chunk of stream) {
+    assertNotAborted(signal)
+    const bytes = Buffer.from(chunk)
+    total += bytes.byteLength
+    if (total > declaredBytes || total > maxBytes) {
+      throw new ArchiveError(
+        'archive_expanded_size_exceeded',
+        'Archive entry is too large'
+      )
+    }
+    chunks.push(bytes)
+  }
+  if (total !== declaredBytes) {
+    throw new ArchiveError(
+      'file_parse_failed',
+      'Archive entry size does not match its metadata'
+    )
+  }
+  return Uint8Array.from(Buffer.concat(chunks))
+}
+
+function assertNotAborted(signal: AbortSignal): void {
+  if (signal.aborted) {
+    const error = new Error('Archive read was cancelled')
+    error.name = 'AbortError'
+    throw error
   }
 }
 

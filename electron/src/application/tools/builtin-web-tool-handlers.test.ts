@@ -299,9 +299,12 @@ describe('builtin web Tool handlers', () => {
     arguments_: JsonObject,
     request: typeof fetch
   ): Promise<JsonObject> {
-    const handler = createWebToolHandlers(new WebProviderRuntime({ fetch: request })).find(
-      (candidate) => candidate.name === 'web.fetch'
-    )
+    const handler = createWebToolHandlers(
+      new WebProviderRuntime({
+        fetch: request,
+        resolveHost: async () => [{ address: '93.184.216.34', family: 4 }]
+      })
+    ).find((candidate) => candidate.name === 'web.fetch')
     if (!handler) throw new Error('Missing handler')
     return handler.execute({
       arguments: arguments_,

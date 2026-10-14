@@ -32,7 +32,6 @@ import { useLocalization } from "../localization/LocalizationProvider";
 import type { ConversationAttachmentDescriptor } from "../../domain/conversation-input";
 import {
   IconButton,
-  Button,
   Menu,
   MenuContent,
   MenuItem,
@@ -59,9 +58,6 @@ type ComposerInsertions = {
 type ComposerProps = {
   approvalProfileId?: import("../../domain/approval-profile").ApprovalProfileId;
   onApprovalProfileChange?: (value: import("../../domain/approval-profile").ApprovalProfileId) => void;
-  contextMode?: "auto" | "fresh" | "continuation";
-  onContextModeChange?: (value: "auto" | "fresh" | "continuation") => void;
-  showContextMode?: boolean;
   value: string;
   permissionRunIds?: readonly string[];
   placeholder: string;
@@ -101,9 +97,6 @@ type ComposerProps = {
 export function Composer({
   approvalProfileId = "protected",
   onApprovalProfileChange,
-  contextMode = "auto",
-  onContextModeChange,
-  showContextMode = false,
   value,
   permissionRunIds = [],
   placeholder,
@@ -517,27 +510,6 @@ export function Composer({
               disabled={disabled}
               onChange={(nextValue) => onApprovalProfileChange?.(nextValue)}
             />
-            {showContextMode ? <div
-              className="composer-context-mode"
-              role="radiogroup"
-              aria-label={t("composer.contextMode.label")}
-            >
-              {(["auto", "fresh", "continuation"] as const).map((mode) => (
-                <Button
-                  key={mode}
-                  type="button"
-                  role="radio"
-                  aria-checked={contextMode === mode}
-                  className={contextMode === mode ? "is-active" : ""}
-                  variant="ghost"
-                  size="compact"
-                  disabled={disabled}
-                  onClick={() => onContextModeChange?.(mode)}
-                >
-                  {t(`composer.contextMode.${mode}`)}
-                </Button>
-              ))}
-            </div> : null}
           </div>
           <div className="composer-actions-right">
             {modelControl ?? (

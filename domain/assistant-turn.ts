@@ -41,6 +41,8 @@ export type ToolCallProjection = {
   toolExecutionId?: string
   toolName: string
   category: ToolCallCategory
+  attempt?: number
+  retryOfCallId?: string
   status:
     | 'requested'
     | 'running'
@@ -52,8 +54,23 @@ export type ToolCallProjection = {
   resultSummary?: string
   errorCode?: string
   error?: string
+  recoveryHint?: string
+  diagnosticId?: string
   artifactIds?: string[]
+  attempts?: ToolCallAttemptProjection[]
   requestedAt: number
+  startedAt?: number
+  completedAt?: number
+}
+
+export type ToolCallAttemptProjection = {
+  attempt: number
+  status: 'failed'
+  toolExecutionId?: string
+  errorCode?: string
+  error?: string
+  recoveryHint?: string
+  diagnosticId?: string
   startedAt?: number
   completedAt?: number
 }
@@ -92,6 +109,7 @@ export type AssistantRecoveryProjection = {
   reason: string
   attempt?: number
   nextRetryAt?: number
+  remainingAttempts?: number
   actions?: Array<'resume' | 'branch' | 'cancel'>
 }
 
@@ -129,6 +147,8 @@ export type AssistantRunEvent =
         callId: string
         toolName: string
         category: ToolCallCategory
+        attempt?: number
+        retryOfCallId?: string
         argumentsSummary: string
         delegation?: {
           tasks: Array<{ taskId: string; objective: string }>
@@ -181,13 +201,20 @@ export type AssistantRunEvent =
         category?: ToolCallCategory
         errorCode: string
         message: string
+        recoveryHint?: string
+        diagnosticId?: string
       }
     >
   | AssistantEventBase<'artifact.ready', Record<string, never>>
   | AssistantEventBase<'heartbeat', Record<string, never>>
   | AssistantEventBase<
       'run.retrying',
-      { attempt: number; reason: string; nextRetryAt?: number }
+      {
+        attempt: number
+        reason: string
+        nextRetryAt?: number
+        remainingAttempts?: number
+      }
     >
   | AssistantEventBase<
       'run.waiting_input',
@@ -217,7 +244,15 @@ export type AssistantRunEvent =
     >
   | AssistantEventBase<
       'run.failed',
-      { message: string; errorCode?: string; durationMs?: number; recoveredAnswer?: string }
+      {
+        message: string
+        errorCode?: string
+        durationMs?: number
+        recoveredAnswer?: string
+        retryCount?: number
+        retryAfterMs?: number
+        remainingAttempts?: number
+      }
     >
   | AssistantEventBase<
       'run.cancelled',
@@ -338,7 +373,10 @@ function applyEvent(
           attempt: event.data.attempt,
           ...(event.data.nextRetryAt === undefined
             ? {}
-            : { nextRetryAt: event.data.nextRetryAt })
+            : { nextRetryAt: event.data.nextRetryAt }),
+          ...(event.data.remainingAttempts === undefined
+            ? {}
+            : { remainingAttempts: event.data.remainingAttempts })
         }
       }
     case 'run.waiting_input':
@@ -454,14 +492,7 @@ function applyEvent(
     case 'tool.call.started':
       return {
         ...resumeElapsedTime(
-          clearToolCallFailure(
-            updateToolCall(current, event.data.callId, {
-              toolExecutionId: event.data.toolExecutionId,
-              status: 'running',
-              startedAt: event.timestamp
-            }),
-            event.data.callId
-          )
+          startToolCall(current, event)
         ),
         status: 'running'
       }
@@ -519,7 +550,8 @@ function applyEvent(
       return {
         ...terminal(current, 'failed', event.timestamp),
         answer: event.data.recoveredAnswer ?? current.answer,
-        error: event.data.message
+        error: event.data.message,
+        ...terminalFailureRecovery(event)
       }
     case 'run.cancelled':
       return {
@@ -530,17 +562,68 @@ function applyEvent(
   }
 }
 
+function terminalFailureRecovery(
+  event: Extract<AssistantRunEvent, { type: 'run.failed' }>
+): { recovery?: AssistantRecoveryProjection } {
+  const reason = event.data.errorCode
+  if (
+    reason !== 'provider_rate_limited' &&
+    reason !== 'provider_timeout' &&
+    reason !== 'provider_unavailable'
+  ) {
+    return {}
+  }
+  const retryAfterMs = event.data.retryAfterMs
+  const retryCount = event.data.retryCount
+  const remainingAttempts = event.data.remainingAttempts
+  return {
+    recovery: {
+      reason,
+      ...(Number.isInteger(retryCount) && retryCount! > 0
+        ? { attempt: retryCount }
+        : {}),
+      ...(Number.isInteger(retryAfterMs) && retryAfterMs! >= 0
+        ? { nextRetryAt: event.timestamp + retryAfterMs! }
+        : {}),
+      ...(Number.isInteger(remainingAttempts) && remainingAttempts! >= 0
+        ? { remainingAttempts }
+        : {})
+    }
+  }
+}
+
 function failToolCall(
   current: AssistantTurnProjection,
   event: Extract<AssistantRunEvent, { type: 'tool.call.failed' }>
 ): AssistantTurnProjection {
-  if (current.toolCalls.some(({ callId }) => callId === event.data.callId)) {
+  const existing = current.toolCalls.find(
+    ({ callId }) => callId === event.data.callId
+  )
+  if (existing) {
+    const attempt = activeToolAttempt(existing)
     return updateToolCall(current, event.data.callId, {
       toolExecutionId: event.data.toolExecutionId,
       status: 'failed',
+      attempt,
       completedAt: event.timestamp,
       errorCode: event.data.errorCode,
-      error: event.data.message
+      error: event.data.message,
+      recoveryHint: event.data.recoveryHint,
+      diagnosticId: event.data.diagnosticId,
+      attempts: [
+        ...(existing.attempts ?? []),
+        {
+          attempt,
+          status: 'failed',
+          toolExecutionId: event.data.toolExecutionId,
+          errorCode: event.data.errorCode,
+          error: event.data.message,
+          recoveryHint: event.data.recoveryHint,
+          diagnosticId: event.data.diagnosticId,
+          startedAt: existing.startedAt,
+          completedAt: event.timestamp
+        }
+      ]
     })
   }
   if (!event.data.toolName || !event.data.category) {
@@ -555,15 +638,62 @@ function failToolCall(
         toolExecutionId: event.data.toolExecutionId,
         toolName: event.data.toolName,
         category: event.data.category,
+        attempt: 1,
         status: 'failed',
         argumentsSummary: '',
         errorCode: event.data.errorCode,
         error: event.data.message,
+        recoveryHint: event.data.recoveryHint,
+        diagnosticId: event.data.diagnosticId,
+        attempts: [
+          {
+            attempt: 1,
+            status: 'failed',
+            toolExecutionId: event.data.toolExecutionId,
+            errorCode: event.data.errorCode,
+            error: event.data.message,
+            recoveryHint: event.data.recoveryHint,
+            diagnosticId: event.data.diagnosticId,
+            completedAt: event.timestamp
+          }
+        ],
         requestedAt: event.timestamp,
         completedAt: event.timestamp
       }
     ]
   }
+}
+
+function startToolCall(
+  current: AssistantTurnProjection,
+  event: Extract<AssistantRunEvent, { type: 'tool.call.started' }>
+): AssistantTurnProjection {
+  const existing = current.toolCalls.find(
+    ({ callId }) => callId === event.data.callId
+  )
+  return clearToolCallFailure(
+    updateToolCall(current, event.data.callId, {
+      toolExecutionId: event.data.toolExecutionId,
+      status: 'running',
+      attempt: nextRunningAttempt(existing),
+      startedAt: event.timestamp
+    }),
+    event.data.callId
+  )
+}
+
+function activeToolAttempt(toolCall: ToolCallProjection): number {
+  return toolCall.attempt ?? toolCall.attempts?.length ?? 1
+}
+
+function nextRunningAttempt(
+  toolCall: ToolCallProjection | undefined
+): number {
+  if (!toolCall) return 1
+  if (toolCall.status === 'failed') {
+    return Math.max(toolCall.attempt ?? 1, toolCall.attempts?.length ?? 0) + 1
+  }
+  return toolCall.attempt ?? 1
 }
 
 function updateToolCall(
@@ -593,6 +723,8 @@ function clearToolCallFailure(
       const {
         error: _error,
         errorCode: _errorCode,
+        recoveryHint: _recoveryHint,
+        diagnosticId: _diagnosticId,
         ...withoutFailure
       } = toolCall
       return withoutFailure

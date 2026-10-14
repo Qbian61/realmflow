@@ -55,6 +55,7 @@ const runtimeRun: AgentRuntimeRun = {
       maxOutputTokens: 32_000,
       maxFileReadTokens: 25_000,
       maxRepeatedEquivalentCalls: 3,
+      maxRepeatedDeterministicFailures: 2,
       maxConsecutiveFailures: 5
     },
     budgetLedger: {
@@ -66,6 +67,7 @@ const runtimeRun: AgentRuntimeRun = {
       sideEffects: 0,
       consecutiveFailures: 0,
       repeatedCallFingerprints: {},
+      deterministicFailureFingerprints: {},
       activeRuntimeMs: 0,
       remainingContinuationAttempts: 2
     },

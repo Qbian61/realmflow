@@ -2,6 +2,7 @@ import {
   AlertCircle,
   ArrowDownWideNarrow,
   ArrowUpNarrowWide,
+  Check,
   CheckCircle2,
   Clock3,
   FileCode2,
@@ -11,30 +12,44 @@ import {
   Search,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   BusinessApi,
+  KnowledgeIndexViewDto,
   RepositoryBranchDto,
   RepositorySnapshotViewDto,
 } from "../../../shared/business";
+import type { SpaceResource } from "../../domain/space-resource";
 import {
   Dialog,
   DialogBody,
   DialogHeader,
   IconButton,
   ListPagination,
+  Popover,
+  PopoverContent,
   Spinner,
   useListPagination,
   Select,
 } from "../../components/ui";
 import { useLocalization } from "../../localization/LocalizationProvider";
+import type { TranslationKey } from "../../localization/translate";
 import { useToast } from "../toast/ToastProvider";
+import { KnowledgeResourceStatusSummary } from "./KnowledgeResourceStatusSummary";
+import { KnowledgeIndexJobDetails } from "./KnowledgeIndexJobDialog";
 
 type RepositorySnapshotDialogProps = {
   name: string;
   view: RepositorySnapshotViewDto;
+  resource?: SpaceResource;
   business: BusinessApi;
   sourceRevision: number;
+  indexJob?: {
+    view?: KnowledgeIndexViewDto;
+    loading: boolean;
+    error?: boolean;
+  };
+  onRetryIndexJob?: () => void;
   onClose: () => void;
 };
 
@@ -43,15 +58,42 @@ type FileIndexStatusFilter =
   | "pending"
   | "indexing"
   | "indexed"
-  | "failed";
+  | "failed"
+  | "skipped";
 
 type FileSizeSort = "size-asc" | "size-desc";
+
+type RepositorySkippedFileReason = NonNullable<
+  NonNullable<RepositorySnapshotViewDto["snapshot"]>["skippedFiles"]
+>[number]["reason"];
+
+type RepositorySnapshotFile = NonNullable<
+  RepositorySnapshotViewDto["snapshot"]
+>["files"][number];
+
+type RepositorySnapshotSkippedFile = NonNullable<
+  NonNullable<RepositorySnapshotViewDto["snapshot"]>["skippedFiles"]
+>[number];
+
+type RepositoryFileRow =
+  | ({ kind: "file" } & RepositorySnapshotFile)
+  | ({ kind: "skipped" } & RepositorySnapshotSkippedFile);
+
+type RepositoryFileRowStatus = Exclude<FileIndexStatusFilter, "all">;
+
+type RepositoryStatusFilterOption = {
+  value: FileIndexStatusFilter;
+  label: string;
+};
 
 export function RepositorySnapshotDialog({
   name,
   view,
+  resource,
   business,
   sourceRevision,
+  indexJob,
+  onRetryIndexJob,
   onClose,
 }: RepositorySnapshotDialogProps): JSX.Element {
   const { t } = useLocalization();
@@ -66,6 +108,35 @@ export function RepositorySnapshotDialog({
   const [updatingBranch, setUpdatingBranch] = useState(false);
   const [retryingFile, setRetryingFile] = useState("");
   const [error, setError] = useState("");
+  const statusFilterOptions = useMemo<RepositoryStatusFilterOption[]>(
+    () => [
+      {
+        value: "all",
+        label: t("resources.repositoryPreview.statusAll"),
+      },
+      {
+        value: "indexed",
+        label: t("resources.repositoryPreview.indexed"),
+      },
+      {
+        value: "failed",
+        label: t("resources.repositoryPreview.failed"),
+      },
+      {
+        value: "indexing",
+        label: t("resources.repositoryPreview.indexing"),
+      },
+      {
+        value: "pending",
+        label: t("resources.repositoryPreview.pending"),
+      },
+      {
+        value: "skipped",
+        label: t("resources.repositoryPreview.skipped"),
+      },
+    ],
+    [t],
+  );
 
   useEffect(() => {
     if (typeof business.listRepositoryBranches !== "function") {
@@ -97,18 +168,29 @@ export function RepositorySnapshotDialog({
 
   const files = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
-    return [...(currentView.snapshot?.files ?? [])]
-      .filter(
-        (file) =>
+    const rows: RepositoryFileRow[] = [
+      ...(currentView.snapshot?.files ?? []).map((file) => ({
+        ...file,
+        kind: "file" as const,
+      })),
+      ...(currentView.snapshot?.skippedFiles ?? []).map((file) => ({
+        ...file,
+        kind: "skipped" as const,
+      })),
+    ];
+    return rows
+      .filter((file) => {
+        const status = repositoryFileRowStatus(file);
+        return (
           file.relativePath.toLocaleLowerCase().includes(normalized) &&
-          (statusFilter === "all" ||
-            (file.indexStatus?.status ?? "pending") === statusFilter),
-      )
+          (statusFilter === "all" || status === statusFilter)
+        );
+      })
       .sort((left, right) => {
         const sizeDifference =
           sizeSort === "size-asc"
-            ? left.byteSize - right.byteSize
-            : right.byteSize - left.byteSize;
+            ? fileRowByteSize(left) - fileRowByteSize(right)
+            : fileRowByteSize(right) - fileRowByteSize(left);
         return (
           sizeDifference ||
           left.relativePath.localeCompare(right.relativePath, undefined, {
@@ -117,8 +199,12 @@ export function RepositorySnapshotDialog({
         );
       });
   }, [currentView.snapshot, query, sizeSort, statusFilter]);
+  const skippedFiles = useMemo(
+    () => currentView.snapshot?.skippedFiles ?? [],
+    [currentView.snapshot],
+  );
   const visibleBytes = useMemo(
-    () => files.reduce((total, file) => total + file.byteSize, 0),
+    () => files.reduce((total, file) => total + fileRowByteSize(file), 0),
     [files],
   );
   const filePagination = useListPagination(files);
@@ -126,6 +212,38 @@ export function RepositorySnapshotDialog({
   useEffect(() => {
     filePagination.resetPage();
   }, [query, sizeSort, statusFilter]);
+
+  const shouldRefreshIndexStatus = useMemo(
+    () => hasActiveRepositoryIndexStatus(currentView),
+    [currentView],
+  );
+
+  useEffect(() => {
+    if (!shouldRefreshIndexStatus) return;
+    let disposed = false;
+    let timeoutId: number | undefined;
+
+    const refresh = async (): Promise<void> => {
+      try {
+        const nextView = await business.getRepositorySnapshot({
+          sourceId: currentView.repository.sourceId,
+        });
+        if (!disposed) setCurrentView(nextView);
+      } catch {
+        // Keep the current snapshot visible; the next tick can recover.
+      } finally {
+        if (!disposed) {
+          timeoutId = window.setTimeout(() => void refresh(), 2_000);
+        }
+      }
+    };
+
+    timeoutId = window.setTimeout(() => void refresh(), 2_000);
+    return () => {
+      disposed = true;
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+    };
+  }, [business, currentView.repository.sourceId, shouldRefreshIndexStatus]);
 
   const updateBranch = async (branch: string): Promise<void> => {
     if (!branch || branch === currentView.repository.selectedBranch) return;
@@ -205,6 +323,23 @@ export function RepositorySnapshotDialog({
         </IconButton>
       </DialogHeader>
       <DialogBody className="repository-snapshot-body">
+        {resource ? (
+          <KnowledgeResourceStatusSummary
+            resource={resource}
+            className="repository-snapshot-status-summary"
+          />
+        ) : null}
+        {indexJob ? (
+          <KnowledgeIndexJobDetails
+            name={name}
+            view={indexJob.view}
+            loading={indexJob.loading}
+            error={indexJob.error}
+            onRetry={onRetryIndexJob}
+            className="repository-snapshot-index-job"
+            showHeading
+          />
+        ) : null}
         {currentView.snapshot ? (
           <>
             <div className="repository-snapshot-meta">
@@ -230,6 +365,13 @@ export function RepositorySnapshotDialog({
                 })}
               </span>
               <span>{formatBytes(visibleBytes)}</span>
+              {skippedFiles.length > 0 ? (
+                <span>
+                  {t("resources.repositoryPreview.skippedCount", {
+                    count: skippedFiles.length,
+                  })}
+                </span>
+              ) : null}
             </div>
             {error ? <p role="alert">{error}</p> : null}
             <div className="repository-snapshot-files" role="table">
@@ -286,43 +428,16 @@ export function RepositorySnapshotDialog({
                   role="columnheader"
                 >
                   <span>{t("resources.repositoryPreview.indexStatus")}</span>
-                  <label
-                    className={`repository-header-filter ${
-                      statusFilter === "all" ? "" : "active"
-                    }`}
-                    title={t("resources.repositoryPreview.statusFilter")}
-                  >
-                    <ListFilter size={14} />
-                    <Select name="resources-repository-preview-status-filter" autoComplete="off"
-                      aria-label={t("resources.repositoryPreview.statusFilter")}
-                      value={statusFilter}
-                      onChange={(event) =>
-                        setStatusFilter(
-                          event.target.value as FileIndexStatusFilter,
-                        )
-                      }
-                    >
-                      <option value="all">
-                        {t("resources.repositoryPreview.statusAll")}
-                      </option>
-                      <option value="indexed">
-                        {t("resources.repositoryPreview.indexed")}
-                      </option>
-                      <option value="failed">
-                        {t("resources.repositoryPreview.failed")}
-                      </option>
-                      <option value="indexing">
-                        {t("resources.repositoryPreview.indexing")}
-                      </option>
-                      <option value="pending">
-                        {t("resources.repositoryPreview.pending")}
-                      </option>
-                    </Select>
-                  </label>
+                  <RepositoryStatusFilter
+                    label={t("resources.repositoryPreview.statusFilter")}
+                    options={statusFilterOptions}
+                    value={statusFilter}
+                    onChange={setStatusFilter}
+                  />
                 </span>
               </div>
               {filePagination.pageItems.map((file) => (
-                <div role="row" key={file.relativePath}>
+                <div role="row" key={`${file.kind}:${file.relativePath}`}>
                   <span role="cell">
                     <FileCode2 size={14} />
                     <span
@@ -332,17 +447,34 @@ export function RepositorySnapshotDialog({
                       {file.relativePath}
                     </span>
                   </span>
-                  <span role="cell">{formatBytes(file.byteSize)}</span>
+                  <span role="cell">
+                    {file.byteSize === undefined
+                      ? ""
+                      : formatBytes(file.byteSize)}
+                  </span>
                   <span role="cell">
                     <FileIndexStatus
-                      status={file.indexStatus?.status ?? "pending"}
-                      loading={retryingFile === file.relativePath}
-                      onRetry={() => void retryFile(file.relativePath)}
+                      status={repositoryFileRowStatus(file)}
+                      loading={
+                        file.kind === "file" &&
+                        retryingFile === file.relativePath
+                      }
+                      onRetry={
+                        file.kind === "file"
+                          ? () => void retryFile(file.relativePath)
+                          : undefined
+                      }
+                      skippedReason={
+                        file.kind === "skipped"
+                          ? skippedReasonLabel(t, file.reason)
+                          : undefined
+                      }
                       labels={{
                         indexed: t("resources.repositoryPreview.indexed"),
                         failed: t("resources.repositoryPreview.failed"),
                         indexing: t("resources.repositoryPreview.indexing"),
                         pending: t("resources.repositoryPreview.pending"),
+                        skipped: t("resources.repositoryPreview.skipped"),
                         retry: t("resources.repositoryPreview.retry"),
                       }}
                     />
@@ -373,19 +505,131 @@ export function RepositorySnapshotDialog({
   );
 }
 
+function RepositoryStatusFilter({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  options: RepositoryStatusFilterOption[];
+  value: FileIndexStatusFilter;
+  onChange: (value: FileIndexStatusFilter) => void;
+}): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        className={`repository-header-filter ${
+          value === "all" ? "" : "active"
+        }`}
+        title={label}
+        aria-label={label}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        onClick={() => setOpen((current) => !current)}
+      >
+        <ListFilter size={14} aria-hidden="true" />
+      </button>
+      <Popover
+        open={open}
+        trigger={triggerRef.current}
+        placement="bottom-end"
+        onOpenChange={setOpen}
+      >
+        <PopoverContent
+          className="repository-header-filter-menu ui-menu"
+          role="menu"
+          aria-label={label}
+        >
+          {options.map((option) => {
+            const selected = option.value === value;
+            return (
+              <button
+                className="ui-menu-item repository-header-filter-menu-item"
+                data-checked={selected || undefined}
+                key={option.value}
+                role="menuitemradio"
+                type="button"
+                aria-checked={selected}
+                onClick={() => {
+                  onChange(option.value);
+                  setOpen(false);
+                }}
+              >
+                <span>{option.label}</span>
+                {selected ? <Check size={13} aria-hidden="true" /> : null}
+              </button>
+            );
+          })}
+        </PopoverContent>
+      </Popover>
+    </>
+  );
+}
+
+function skippedReasonLabel(
+  t: ReturnType<typeof useLocalization>["t"],
+  reason: RepositorySkippedFileReason,
+): string {
+  return t(repositorySkippedReasonKeys[reason]);
+}
+
+const repositorySkippedReasonKeys = {
+  file_too_large: "resources.repositoryPreview.skipReason.fileTooLarge",
+  binary: "resources.repositoryPreview.skipReason.binary",
+  invalid_utf8: "resources.repositoryPreview.skipReason.invalidUtf8",
+  repository_text_limit_exceeded:
+    "resources.repositoryPreview.skipReason.repositoryTextLimitExceeded",
+  file_count_limit_exceeded:
+    "resources.repositoryPreview.skipReason.fileCountLimitExceeded",
+} satisfies Record<RepositorySkippedFileReason, TranslationKey>;
+
+function repositoryFileRowStatus(
+  file: RepositoryFileRow,
+): RepositoryFileRowStatus {
+  if (file.kind === "skipped") return "skipped";
+  return file.indexStatus?.status ?? "pending";
+}
+
+function hasActiveRepositoryIndexStatus(
+  view: RepositorySnapshotViewDto,
+): boolean {
+  if (
+    view.indexJobStatus === "pending" ||
+    view.indexJobStatus === "running" ||
+    view.indexJobStatus === "qdrant_written"
+  ) {
+    return true;
+  }
+  return (
+    view.snapshot?.files.some((file) => {
+      const status = file.indexStatus?.status ?? "pending";
+      return status === "indexing" || status === "pending";
+    }) ?? false
+  );
+}
+
+function fileRowByteSize(file: RepositoryFileRow): number {
+  return file.byteSize ?? 0;
+}
+
 function FileIndexStatus({
   status,
   loading,
   onRetry,
+  skippedReason,
   labels,
 }: {
-  status: "pending" | "indexing" | "indexed" | "failed";
+  status: RepositoryFileRowStatus;
   loading: boolean;
-  onRetry: () => void;
-  labels: Record<
-    "pending" | "indexing" | "indexed" | "failed" | "retry",
-    string
-  >;
+  onRetry?: () => void;
+  skippedReason?: string;
+  labels: Record<RepositoryFileRowStatus | "retry", string>;
 }): JSX.Element {
   if (status === "failed") {
     return (
@@ -425,6 +669,18 @@ function FileIndexStatus({
         size={15}
         label={labels.indexing}
       />
+    );
+  }
+  if (status === "skipped") {
+    return (
+      <span
+        className="repository-file-status skipped"
+        title={skippedReason}
+        aria-label={`${labels.skipped}: ${skippedReason ?? labels.skipped}`}
+      >
+        <AlertCircle size={15} aria-hidden="true" />
+        <span>{skippedReason ?? labels.skipped}</span>
+      </span>
     );
   }
   return (

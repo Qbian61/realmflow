@@ -11,6 +11,7 @@ import {
   type McpClientFactory,
   type McpRemoteTool
 } from './mcp-tool-adapter'
+import { assertDescribedStrictObjectSchema } from './tool-contract-schema-metadata'
 
 export type SyntheticMcpCatalog = {
   package: {
@@ -172,6 +173,11 @@ function normalizeRemoteTools(tools: McpRemoteTool[]): McpRemoteTool[] {
         throw new Error('MCP tools/list contains duplicate names')
       }
       names.add(name)
+      const inputSchema = cloneJsonObject(tool.inputSchema)
+      assertDescribedStrictObjectSchema(
+        inputSchema,
+        `MCP Tool ${name} input`,
+      )
       return {
         name,
         ...(tool.description !== undefined
@@ -184,7 +190,7 @@ function normalizeRemoteTools(tools: McpRemoteTool[]): McpRemoteTool[] {
               )
             }
           : {}),
-        inputSchema: cloneJsonObject(tool.inputSchema)
+        inputSchema
       }
     })
     .sort((left, right) => left.name.localeCompare(right.name))

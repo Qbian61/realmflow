@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
+import { ContentExtractionError } from '../../../../domain/content-extraction'
 import { DEFAULT_VECTOR_INDEX_PROFILE } from '../../../../domain/vector-index-profile'
 import { KnowledgeIndexWorker } from './knowledge-index-worker'
 
@@ -131,6 +132,39 @@ function dependencies(current = true, symbol?: string) {
 }
 
 describe('KnowledgeIndexWorker', () => {
+  it('persists a public extraction error when snapshot materialization fails', async () => {
+    const deps = dependencies()
+    deps.reader.readFrozen.mockRejectedValue(
+      new ContentExtractionError(
+        'extraction_encrypted',
+        'Document is encrypted'
+      )
+    )
+
+    await expect(
+      new KnowledgeIndexWorker({
+        ...deps,
+        profile: DEFAULT_VECTOR_INDEX_PROFILE,
+        now: () => 20
+      }).runNext()
+    ).resolves.toBe('failed')
+
+    expect(deps.repository.transitionGeneration).toHaveBeenCalledWith({
+      id: 'generation-1',
+      expectedStatus: 'staging',
+      nextStatus: 'failed',
+      at: 20,
+      errorCode: 'extraction_encrypted'
+    })
+    expect(deps.repository.transitionJob).toHaveBeenCalledWith({
+      id: 'job-1',
+      expectedStatus: 'running',
+      nextStatus: 'failed',
+      at: 20,
+      errorCode: 'extraction_encrypted'
+    })
+  })
+
   it('marks pending repository files as indexing before processing content', async () => {
     const deps = dependencies()
     deps.repository.claimNext.mockResolvedValue({
@@ -165,6 +199,12 @@ describe('KnowledgeIndexWorker', () => {
       }).runNext()
     ).resolves.toBe('completed')
 
+    expect(deps.repository.replaceDocumentStates).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceId: 'source-1',
+        retryFailed: true
+      })
+    )
     expect(deps.repository.transitionDocumentState).toHaveBeenCalledWith({
       sourceId: 'source-1',
       profileId: 'realmflow-vector-index-v1',
@@ -360,6 +400,284 @@ describe('KnowledgeIndexWorker', () => {
       )
     ).toEqual([32, 32, 32, 32, 1])
     expect(deps.repository.commitGeneration).toHaveBeenCalled()
+  })
+
+  it('batches a full rebuild when the current generation is empty', async () => {
+    const deps = dependencies()
+    const documents = Array.from({ length: 33 }, (_, index) =>
+      repositoryDocument(
+        `src/file-${String(index).padStart(3, '0')}.ts`,
+        `export const value${index} = ${index}`
+      )
+    )
+    deps.repository.getCurrentGenerationManifest.mockResolvedValue({
+      generationId: 'empty-current-generation',
+      documents: []
+    })
+    deps.repository.claimNext.mockResolvedValue({
+      ...job(),
+      sourceKind: 'repository',
+      targetVersion: 'repository:v1'
+    })
+    deps.reader.readFrozen.mockResolvedValue({
+      ...snapshot(),
+      sourceKind: 'repository',
+      sourceVersion: 'repository:v1',
+      documents
+    })
+    deps.repository.replaceDocumentStates.mockResolvedValue(
+      documents.map((document) => ({
+        sourceId: 'source-1',
+        profileId: 'realmflow-vector-index-v1',
+        documentKey: document.documentKey,
+        sourceVersion: 'repository:v1',
+        checksum: document.checksum,
+        status: 'pending' as const,
+        generationId: null,
+        errorCode: null,
+        updatedAt: 20
+      }))
+    )
+    deps.sidecar.chunkKnowledgeDocuments.mockImplementation(
+      async (batch: Array<{ documentKey: string; content: string }>) => ({
+        chunkerVersion: 'realmflow-token-aware-v1',
+        embeddingModel: 'Alibaba-NLP/gte-multilingual-base',
+        embeddingRevision:
+          '9bbca17d9273fd0d03d5725c7a4b0f6b45142062',
+        documents: batch.map((document) => ({
+          documentKey: document.documentKey,
+          chunks: [
+            {
+              ordinal: 0,
+              content: document.content,
+              tokenCount: 6,
+              startOffset: 0,
+              endOffset: document.content.length,
+              startLine: 1,
+              endLine: 1,
+              checksum: digest(document.content)
+            }
+          ]
+        }))
+      })
+    )
+
+    await expect(
+      new KnowledgeIndexWorker({
+        ...deps,
+        profile: DEFAULT_VECTOR_INDEX_PROFILE,
+        now: () => 20
+      }).runNext()
+    ).resolves.toBe('completed')
+
+    expect(deps.repository.saveGenerationManifest).toHaveBeenCalledTimes(2)
+    expect(deps.repository.saveSearchPoints).toHaveBeenCalledTimes(2)
+    expect(deps.qdrant.upsertPoints).toHaveBeenCalledTimes(2)
+    const secondChunkOrder =
+      deps.sidecar.chunkKnowledgeDocuments.mock.invocationCallOrder[1]!
+    const firstUpsertOrder = deps.qdrant.upsertPoints.mock.invocationCallOrder[0]!
+    expect(firstUpsertOrder).toBeLessThan(secondChunkOrder)
+    const indexedBeforeSecondChunk =
+      deps.repository.transitionDocumentState.mock.calls
+        .map(([input], index) => ({
+          input,
+          order:
+            deps.repository.transitionDocumentState.mock.invocationCallOrder[
+              index
+            ]!
+        }))
+        .filter(
+          ({ input, order }) =>
+            input.status === 'indexed' && order < secondChunkOrder
+        )
+        .map(({ input }) => input.documentKey)
+    expect(indexedBeforeSecondChunk).toEqual(
+      documents.slice(0, 32).map(({ documentKey }) => documentKey)
+    )
+  })
+
+  it('keeps later repository batches pending while the first batch runs', async () => {
+    let releaseFirstBatch!: () => void
+    const firstBatchWaiting = new Promise<void>((resolve) => {
+      releaseFirstBatch = resolve
+    })
+    const deps = dependencies()
+    const documents = Array.from({ length: 33 }, (_, index) =>
+      repositoryDocument(
+        `src/file-${String(index).padStart(3, '0')}.ts`,
+        `export const value${index} = ${index}`
+      )
+    )
+    deps.repository.claimNext.mockResolvedValue({
+      ...job(),
+      sourceKind: 'repository',
+      targetVersion: 'repository:v1'
+    })
+    deps.reader.readFrozen.mockResolvedValue({
+      ...snapshot(),
+      sourceKind: 'repository',
+      sourceVersion: 'repository:v1',
+      documents
+    })
+    deps.repository.replaceDocumentStates.mockResolvedValue(
+      documents.map((document) => ({
+        sourceId: 'source-1',
+        profileId: 'realmflow-vector-index-v1',
+        documentKey: document.documentKey,
+        sourceVersion: 'repository:v1',
+        checksum: document.checksum,
+        status: 'pending' as const,
+        generationId: null,
+        errorCode: null,
+        updatedAt: 20
+      }))
+    )
+    deps.sidecar.chunkKnowledgeDocuments.mockImplementation(
+      async (batch: Array<{ documentKey: string; content: string }>) => {
+        if (deps.sidecar.chunkKnowledgeDocuments.mock.calls.length === 1) {
+          await firstBatchWaiting
+        }
+        return {
+          chunkerVersion: 'realmflow-token-aware-v1',
+          embeddingModel: 'Alibaba-NLP/gte-multilingual-base',
+          embeddingRevision:
+            '9bbca17d9273fd0d03d5725c7a4b0f6b45142062',
+          documents: batch.map((document) => ({
+            documentKey: document.documentKey,
+            chunks: [
+              {
+                ordinal: 0,
+                content: document.content,
+                tokenCount: 6,
+                startOffset: 0,
+                endOffset: document.content.length,
+                startLine: 1,
+                endLine: 1,
+                checksum: digest(document.content)
+              }
+            ]
+          }))
+        }
+      }
+    )
+    const worker = new KnowledgeIndexWorker({
+      ...deps,
+      profile: DEFAULT_VECTOR_INDEX_PROFILE,
+      now: () => 20
+    })
+
+    const running = worker.runNext()
+    while (!deps.sidecar.chunkKnowledgeDocuments.mock.calls.length) {
+      await Promise.resolve()
+    }
+    const indexingWhileFirstBatchRuns =
+      deps.repository.transitionDocumentState.mock.calls
+        .map(([input]) => input)
+        .filter(({ status }) => status === 'indexing')
+        .map(({ documentKey }) => documentKey)
+    releaseFirstBatch()
+    await expect(running).resolves.toBe('completed')
+
+    expect(indexingWhileFirstBatchRuns).toEqual(
+      documents.slice(0, 32).map(({ documentKey }) => documentKey)
+    )
+  })
+
+  it('fails started repository batches but leaves later batches pending', async () => {
+    const deps = dependencies()
+    const documents = Array.from({ length: 65 }, (_, index) =>
+      repositoryDocument(
+        `src/file-${String(index).padStart(3, '0')}.ts`,
+        `export const value${index} = ${index}`
+      )
+    )
+    deps.repository.claimNext.mockResolvedValue({
+      ...job(),
+      sourceKind: 'repository',
+      targetVersion: 'repository:v1'
+    })
+    deps.reader.readFrozen.mockResolvedValue({
+      ...snapshot(),
+      sourceKind: 'repository',
+      sourceVersion: 'repository:v1',
+      documents
+    })
+    deps.repository.replaceDocumentStates.mockResolvedValue(
+      documents.map((document) => ({
+        sourceId: 'source-1',
+        profileId: 'realmflow-vector-index-v1',
+        documentKey: document.documentKey,
+        sourceVersion: 'repository:v1',
+        checksum: document.checksum,
+        status: 'pending' as const,
+        generationId: null,
+        errorCode: null,
+        updatedAt: 20
+      }))
+    )
+    deps.sidecar.chunkKnowledgeDocuments.mockImplementation(
+      async (batch: Array<{ documentKey: string; content: string }>) => ({
+        chunkerVersion: 'realmflow-token-aware-v1',
+        embeddingModel: 'Alibaba-NLP/gte-multilingual-base',
+        embeddingRevision:
+          '9bbca17d9273fd0d03d5725c7a4b0f6b45142062',
+        documents: batch.map((document) => ({
+          documentKey: document.documentKey,
+          chunks: [
+            {
+              ordinal: 0,
+              content: document.content,
+              tokenCount: 6,
+              startOffset: 0,
+              endOffset: document.content.length,
+              startLine: 1,
+              endLine: 1,
+              checksum: digest(document.content)
+            }
+          ]
+        }))
+      })
+    )
+    deps.qdrant.upsertPoints.mockResolvedValueOnce(undefined)
+    deps.qdrant.upsertPoints.mockRejectedValueOnce(new Error('qdrant failed'))
+
+    await expect(
+      new KnowledgeIndexWorker({
+        ...deps,
+        profile: DEFAULT_VECTOR_INDEX_PROFILE,
+        now: () => 20
+      }).runNext()
+    ).resolves.toBe('failed')
+
+    expect(deps.repository.transitionDocumentState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        documentKey: documents[0]!.documentKey,
+        expectedStatus: 'indexing',
+        status: 'indexed',
+        generationId: 'generation-1'
+      })
+    )
+    expect(deps.repository.transitionDocumentState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        documentKey: documents[0]!.documentKey,
+        expectedStatus: 'indexed',
+        status: 'failed',
+        errorCode: 'indexing_failed'
+      })
+    )
+    expect(deps.repository.transitionDocumentState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        documentKey: documents[32]!.documentKey,
+        expectedStatus: 'indexing',
+        status: 'failed',
+        errorCode: 'indexing_failed'
+      })
+    )
+    expect(deps.repository.transitionDocumentState).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        documentKey: documents[64]!.documentKey
+      })
+    )
   })
 
   it('isolates a failed repository document and commits the remaining files', async () => {
@@ -869,6 +1187,12 @@ describe('KnowledgeIndexWorker', () => {
       }).runNext()
     ).resolves.toBe('completed')
 
+    expect(deps.repository.replaceDocumentStates).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceId: 'source-1',
+        retryFailed: false
+      })
+    )
     expect(deps.sidecar.chunkKnowledgeDocuments).toHaveBeenCalledWith(
       [{ documentKey: 'src/changed.ts', content: 'after' }],
       expect.any(AbortSignal)
