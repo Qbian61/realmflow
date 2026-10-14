@@ -25,24 +25,51 @@
         "properties": {
           "kind": {
             "type": "string",
-            "const": "current_run"
+            "const": "current_run",
+            "description": "Discriminator selecting the schema variant for this object.",
+            "examples": [
+              "current_run"
+            ]
           }
-        }
+        },
+        "description": "Current run target object for browser or UI automation.",
+        "examples": [
+          {
+            "kind": "current_run"
+          }
+        ]
       },
       "text": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 16000
+        "maxLength": 16000,
+        "description": "Text content used by the requested operation.",
+        "examples": [
+          "Example text."
+        ]
       },
       "timeoutMs": {
         "type": "integer",
         "minimum": 1,
-        "maximum": 30000
+        "maximum": 30000,
+        "description": "Maximum time in milliseconds before the operation times out.",
+        "examples": [
+          1000
+        ]
       }
     },
     "required": [
       "target",
       "text"
+    ],
+    "examples": [
+      {
+        "target": {
+          "kind": "current_run"
+        },
+        "text": "Example text.",
+        "timeoutMs": 1000
+      }
     ]
   },
   "outputSchema": {

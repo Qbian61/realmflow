@@ -18,19 +18,35 @@
     "properties": {
       "sessionId": {
         "type": "string",
-        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$",
+        "description": "Stable local editing or browser session ID returned by an inspect/create tool.",
+        "examples": [
+          "12345678-1234-4234-9234-123456789abc"
+        ]
       },
       "expectedRevision": {
         "type": "integer",
-        "minimum": 0
+        "minimum": 0,
+        "description": "Expected revision used for optimistic concurrency control. Copy this value from the latest RealmFlow UI/API state; do not invent it.",
+        "examples": [
+          1
+        ]
       },
       "shapeId": {
         "type": "string",
-        "pattern": "^shape-[0-9]+-[0-9]+$"
+        "pattern": "^shape-[0-9]+-[0-9]+$",
+        "description": "Stable presentation shape ID.",
+        "examples": [
+          "shape-1-1"
+        ]
       },
       "title": {
         "type": "string",
-        "maxLength": 255
+        "maxLength": 255,
+        "description": "User-visible title.",
+        "examples": [
+          "Quarterly update"
+        ]
       },
       "categories": {
         "type": "array",
@@ -40,8 +56,19 @@
           "type": [
             "string",
             "number"
+          ],
+          "examples": [
+            [
+              "Q1"
+            ]
           ]
-        }
+        },
+        "description": "Ordered category labels used by the chart data series.",
+        "examples": [
+          [
+            "Q1"
+          ]
+        ]
       },
       "series": {
         "type": "array",
@@ -58,18 +85,58 @@
             "name": {
               "type": "string",
               "minLength": 1,
-              "maxLength": 255
+              "maxLength": 255,
+              "description": "Display name or identifier used by the requested operation.",
+              "examples": [
+                "example"
+              ]
             },
             "values": {
               "type": "array",
               "minItems": 1,
               "maxItems": 1000,
               "items": {
-                "type": "number"
-              }
+                "type": "number",
+                "examples": [
+                  [
+                    [
+                      "Example value"
+                    ]
+                  ]
+                ]
+              },
+              "description": "Two-dimensional value matrix written into the target range.",
+              "examples": [
+                [
+                  [
+                    "Example value"
+                  ]
+                ]
+              ]
             }
-          }
-        }
+          },
+          "examples": [
+            [
+              {
+                "name": "Revenue",
+                "values": [
+                  100
+                ]
+              }
+            ]
+          ]
+        },
+        "description": "Ordered chart data series.",
+        "examples": [
+          [
+            {
+              "name": "Revenue",
+              "values": [
+                100
+              ]
+            }
+          ]
+        ]
       }
     },
     "required": [
@@ -79,6 +146,25 @@
       "title",
       "categories",
       "series"
+    ],
+    "examples": [
+      {
+        "sessionId": "12345678-1234-4234-9234-123456789abc",
+        "expectedRevision": 1,
+        "shapeId": "shape-1-1",
+        "title": "Quarterly update",
+        "categories": [
+          "Q1"
+        ],
+        "series": [
+          {
+            "name": "Revenue",
+            "values": [
+              100
+            ]
+          }
+        ]
+      }
     ]
   },
   "outputSchema": {

@@ -9,6 +9,10 @@ import {
   reserveQdrantHttpPort,
   writeQdrantConfig
 } from './qdrant-config'
+import {
+  createQdrantManagedProcessController,
+  type QdrantManagedProcessOverrides
+} from './qdrant-managed-process'
 import { waitForExitBeforeTimeout } from '../process/wait-for-exit'
 
 export type QdrantRuntimeState =
@@ -33,22 +37,19 @@ export type QdrantLaunchDescriptor = QdrantConnection &
 export interface QdrantChildProcess extends EventEmitter {
   readonly stdout: EventEmitter
   readonly stderr: EventEmitter
+  readonly pid?: number
   exitCode: number | null
   kill(signal?: NodeJS.Signals | number): boolean
 }
 
 export interface QdrantProcessPort {
   prepare(): Promise<QdrantLaunchDescriptor>
-  spawn(input: {
-    executable: string
-    args: string[]
-    cwd: string
-  }): QdrantChildProcess
+  spawn(input: QdrantLaunchDescriptor): QdrantChildProcess
   checkHealth(connection: QdrantConnection): Promise<void>
   delay(milliseconds: number): Promise<void>
 }
 
-type NodeQdrantProcessPortOptions = {
+type NodeQdrantProcessPortOptions = QdrantManagedProcessOverrides & {
   binaryPath: string
   userDataPath: string
   environment?: NodeJS.ProcessEnv
@@ -209,11 +210,7 @@ export class QdrantProcessManager {
     descriptor: QdrantLaunchDescriptor
   ): Promise<QdrantConnection> {
     this.startupFailure = undefined
-    const child = this.port.spawn({
-      executable: descriptor.executable,
-      args: descriptor.args,
-      cwd: descriptor.cwd
-    })
+    const child = this.port.spawn(descriptor)
     this.child = child
     consumeQdrantOutput(child.stdout, 'stdout', descriptor, this.log)
     consumeQdrantOutput(child.stderr, 'stderr', descriptor, this.log)
@@ -332,14 +329,24 @@ export function createNodeQdrantProcessPort(
       spawnChildProcess(executable, [...args], spawnOptions))
   const fetchImpl = options.fetchImpl ?? fetch
   const runtimeDirectory = join(options.userDataPath, 'qdrant')
+  const managedProcess = createQdrantManagedProcessController({
+    runtimeDirectory,
+    executable: options.binaryPath,
+    fetchImpl,
+    processKill: options.processKill,
+    isProcessRunning: options.isProcessRunning,
+    processMatchesRecord: options.processMatchesRecord,
+    recoveryDelay: options.recoveryDelay
+  })
 
   return {
     async prepare() {
+      await managedProcess.recover()
       const [port, apiKey] = await Promise.all([
         reservePort(),
         Promise.resolve(createApiKey())
       ])
-      const configPath = await writeQdrantConfig({
+      const writtenConfigPath = await writeQdrantConfig({
         directory: runtimeDirectory,
         port,
         apiKey,
@@ -348,32 +355,46 @@ export function createNodeQdrantProcessPort(
       })
       return {
         executable: options.binaryPath,
-        args: ['--config-path', configPath],
+        args: ['--config-path', writtenConfigPath],
         cwd: runtimeDirectory,
         endpoint: `http://127.0.0.1:${port}`,
         apiKey
       }
     },
     spawn(input) {
-      return spawnProcess(input.executable, input.args, {
+      const child = spawnProcess(input.executable, input.args, {
         cwd: input.cwd,
         env: selectProcessEnvironment(environment),
         stdio: 'pipe'
       })
+      try {
+        managedProcess.track(child, input)
+      } catch (error) {
+        if (child.exitCode === null) child.kill('SIGTERM')
+        throw error
+      }
+      return child
     },
     async checkHealth(connection) {
-      const response = await fetchImpl(`${connection.endpoint}/healthz`, {
-        method: 'GET',
-        headers: { 'api-key': connection.apiKey },
-        signal: AbortSignal.timeout(2_000)
-      })
-      if (!response.ok) {
-        throw new Error(`Qdrant health check failed with ${response.status}`)
-      }
+      await checkQdrantHealth(fetchImpl, connection)
     },
     delay(milliseconds) {
       return new Promise((resolve) => setTimeout(resolve, milliseconds))
     }
+  }
+}
+
+async function checkQdrantHealth(
+  fetchImpl: typeof fetch,
+  connection: QdrantConnection
+): Promise<void> {
+  const response = await fetchImpl(`${connection.endpoint}/healthz`, {
+    method: 'GET',
+    headers: { 'api-key': connection.apiKey },
+    signal: AbortSignal.timeout(2_000)
+  })
+  if (!response.ok) {
+    throw new Error(`Qdrant health check failed with ${response.status}`)
   }
 }
 

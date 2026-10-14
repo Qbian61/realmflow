@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.knowledge.note.edit",
+  "version": "1.0.3",
+  "name": "Edit knowledge note",
+  "description": "Update an existing knowledge note with optimistic revision protection.",
+  "tags": [
+    "knowledge"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "knowledge.note.edit",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "noteId",
+      "expectedRevision",
+      "title",
+      "content"
+    ],
+    "properties": {
+      "noteId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200,
+        "description": "Stable knowledge note ID to edit.",
+        "examples": [
+          "example"
+        ]
+      },
+      "expectedRevision": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "Expected revision used for optimistic concurrency control. Copy this value from the latest RealmFlow UI/API state; do not invent it.",
+        "examples": [
+          1
+        ]
+      },
+      "title": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200,
+        "description": "User-visible title.",
+        "examples": [
+          "Quarterly update"
+        ]
+      },
+      "content": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 20000,
+        "description": "UTF-8 text content to write into the authorized local file.",
+        "examples": [
+          "Example content."
+        ]
+      }
+    },
+    "examples": [
+      {
+        "noteId": "example",
+        "expectedRevision": 1,
+        "title": "Quarterly update",
+        "content": "Example content."
+      }
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "knowledge.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "edit knowledge note"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

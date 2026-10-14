@@ -1,0 +1,118 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.pdf.save_as",
+  "version": "1.0.1",
+  "name": "Save PDF as",
+  "description": "Save the current PDF editing session to an authorized new PDF path without overwriting the source file.",
+  "tags": [
+    "pdf"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "pdf.save_as",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "sessionId": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$",
+        "description": "Stable local editing or browser session ID returned by an inspect/create tool.",
+        "examples": [
+          "12345678-1234-4234-9234-123456789abc"
+        ]
+      },
+      "expectedRevision": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "Expected revision used for optimistic concurrency control. Copy this value from the latest RealmFlow UI/API state; do not invent it.",
+        "examples": [
+          1
+        ]
+      },
+      "outputPath": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Authorized new output path as a relative path under the authorized root; it must not overwrite existing content. Do not invent or pass absolute local paths.",
+        "examples": [
+          "exports/result.pdf"
+        ]
+      },
+      "expectedAbsent": {
+        "type": "boolean",
+        "const": true,
+        "description": "Must be true to confirm the target path does not already exist.",
+        "examples": [
+          true
+        ]
+      },
+      "requireRenderSmokeTest": {
+        "type": "boolean",
+        "description": "Whether RealmFlow must render the first generated PDF page locally before accepting the file.",
+        "examples": [
+          true
+        ]
+      },
+      "scopeRoot": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Optional authorized root override. Omit or pass \".\" to use the current authorized root.",
+        "examples": [
+          "."
+        ]
+      }
+    },
+    "required": [
+      "sessionId",
+      "expectedRevision",
+      "outputPath",
+      "expectedAbsent"
+    ],
+    "examples": [
+      {
+        "sessionId": "12345678-1234-4234-9234-123456789abc",
+        "expectedRevision": 1,
+        "outputPath": "exports/result.pdf",
+        "expectedAbsent": true,
+        "requireRenderSmokeTest": true,
+        "scopeRoot": "."
+      }
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "filesystem.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "save pdf as"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

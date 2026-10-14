@@ -21,18 +21,37 @@
     "properties": {
       "scopeRoot": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Optional authorized root override. Omit or pass \".\" to use the current authorized root.",
+        "examples": [
+          "."
+        ]
       },
       "path": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Authorized local path as a relative path under the authorized root. Do not invent or pass absolute local paths.",
+        "examples": [
+          "docs/example.md"
+        ]
       },
       "maxCount": {
         "type": "integer",
         "minimum": 1,
-        "maximum": 500
+        "maximum": 500,
+        "description": "Maximum number of history entries returned.",
+        "examples": [
+          20
+        ]
       }
-    }
+    },
+    "examples": [
+      {
+        "scopeRoot": ".",
+        "path": "docs/example.md",
+        "maxCount": 20
+      }
+    ]
   },
   "outputSchema": {
     "type": "object",

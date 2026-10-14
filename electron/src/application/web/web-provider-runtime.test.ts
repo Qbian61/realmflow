@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_WEB_PROVIDER_CONFIGURATION as defaults } from '../../../../shared/web-provider'
 import type { WebProviderConfiguration } from '../../../../shared/web-provider'
 import { WebProviderRuntime, type WebProviderRuntimeDependencies } from './web-provider-runtime'
+import { readWebResponse } from './web-response'
 
 const configuration: WebProviderConfiguration = {
   ...defaults, revision: 1, searchProvider: 'searxng',
@@ -160,5 +161,114 @@ describe('Web Provider runtime', () => {
     await expect(service.fetch({ url: 'https://example.com' }, defaults, signal()))
       .rejects.toMatchObject({ code: 'web_redirect_origin_changed' })
     expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('blocks public hostnames that resolve to private network addresses before fetching', async () => {
+    const fetch = vi.fn(async () => new Response('should not fetch'))
+    const service = await runtime({
+      fetch,
+      resolveHost: async () => [{ address: '127.0.0.1', family: 4 }]
+    })
+
+    await expect(
+      service.fetch({ url: 'https://rebind.example/private' }, defaults, signal())
+    ).rejects.toMatchObject({ code: 'web_private_network_blocked' })
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    'http://[::127.0.0.1]/private',
+    'http://[64:ff9b::a9fe:a9fe]/metadata',
+    'http://[2002:0a00:0001::]/private'
+  ])('blocks IPv6 literal aliases for private targets before fetching %s', async (url) => {
+    const fetch = vi.fn(async () => new Response('should not fetch'))
+    const service = await runtime({ fetch })
+
+    await expect(service.fetch({ url }, defaults, signal()))
+      .rejects.toMatchObject({ code: 'web_private_network_blocked' })
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('blocks resolved IPv6 aliases for metadata addresses before fetching', async () => {
+    const fetch = vi.fn(async () => new Response('should not fetch'))
+    const service = await runtime({
+      fetch,
+      resolveHost: async () => [{ address: '64:ff9b::a9fe:a9fe', family: 6 }]
+    })
+
+    await expect(
+      service.fetch({ url: 'https://metadata-alias.example' }, defaults, signal())
+    ).rejects.toMatchObject({ code: 'web_private_network_blocked' })
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('revalidates DNS after same-origin redirects before the next request', async () => {
+    const fetch = vi.fn(async () => new Response(null, {
+      status: 302,
+      headers: { location: '/next' }
+    }))
+    let lookups = 0
+    const service = await runtime({
+      fetch,
+      resolveHost: async () =>
+        lookups++ === 0
+          ? [{ address: '93.184.216.34', family: 4 }]
+          : [{ address: '10.0.0.8', family: 4 }]
+    })
+
+    await expect(
+      service.fetch({ url: 'https://example.com/start' }, defaults, signal())
+    ).rejects.toMatchObject({ code: 'web_private_network_blocked' })
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('classifies private-network redirects before following them', async () => {
+    const fetch = vi.fn(async () => new Response(null, {
+      status: 302,
+      headers: { location: 'http://127.0.0.1/private' }
+    }))
+    const service = await runtime({
+      fetch,
+      resolveHost: async () => [{ address: '93.184.216.34', family: 4 }]
+    })
+
+    await expect(
+      service.fetch({ url: 'https://example.com/start' }, defaults, signal())
+    ).rejects.toMatchObject({ code: 'web_private_network_blocked' })
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('drops sensitive request headers before following same-origin redirects', async () => {
+    const seenHeaders: Headers[] = []
+    const fetch = vi.fn(async (_url, init) => {
+      seenHeaders.push(new Headers(init?.headers))
+      return seenHeaders.length === 1
+        ? new Response(null, { status: 302, headers: { location: '/next' } })
+        : new Response('ok')
+    })
+
+    await readWebResponse({
+      request: fetch,
+      url: new URL('https://example.com/start'),
+      signal: signal(),
+      timeoutMs: 1000,
+      maxBytes: 1024,
+      maxRedirects: 1,
+      publicOnly: true,
+      resolveHost: async () => [{ address: '93.184.216.34', family: 4 }],
+      headers: {
+        accept: 'text/html',
+        authorization: 'Bearer secret-token',
+        cookie: 'session=secret',
+        'x-subscription-token': 'provider-secret'
+      }
+    })
+
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(seenHeaders[0]?.get('authorization')).toBe('Bearer secret-token')
+    expect(seenHeaders[1]?.get('authorization')).toBeNull()
+    expect(seenHeaders[1]?.get('cookie')).toBeNull()
+    expect(seenHeaders[1]?.get('x-subscription-token')).toBeNull()
+    expect(seenHeaders[1]?.get('accept')).toBe('text/html')
   })
 })

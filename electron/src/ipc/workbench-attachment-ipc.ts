@@ -7,7 +7,8 @@ import {
   parseAttachmentId,
   parseAttachmentOwnerQuery,
   parseDeleteWorkbenchAttachmentCommand,
-  parsePickWorkbenchAttachmentCommand
+  parsePickWorkbenchAttachmentCommand,
+  parseReadWorkbenchAttachmentContentQuery
 } from '../../../shared/workbench-attachments'
 import type { ManageWorkbenchAttachments } from '../application/workbench-hub/manage-workbench-attachments'
 
@@ -17,7 +18,13 @@ export function registerWorkbenchAttachmentIpc({
 }: {
   service: Pick<
     ManageWorkbenchAttachments,
-    'list' | 'pickAndAttach' | 'readImage' | 'open' | 'reveal' | 'delete'
+    | 'list'
+    | 'pickAndAttach'
+    | 'readImage'
+    | 'readExtracted'
+    | 'open'
+    | 'reveal'
+    | 'delete'
   >
   ipcMain: Pick<IpcMain, 'handle'>
 }): void {
@@ -31,6 +38,13 @@ export function registerWorkbenchAttachmentIpc({
   ipcMain.handle(
     IPC_QUERY_CHANNELS.workbenchAttachmentReadImage,
     async (_event, value) => service.readImage(parseAttachmentId(value))
+  )
+  ipcMain.handle(
+    IPC_QUERY_CHANNELS.workbenchAttachmentReadExtracted,
+    async (_event, value) =>
+      service.readExtracted(
+        parseReadWorkbenchAttachmentContentQuery(value)
+      )
   )
   ipcMain.handle(
     IPC_COMMAND_CHANNELS.workbenchAttachmentPick,

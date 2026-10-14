@@ -11,6 +11,26 @@ import {
 } from './legacy-office-import-service'
 
 describe('LegacyOfficeImportService', () => {
+  it('converts immutable bytes without writing or opening a session', async () => {
+    const storage = memoryStorage()
+    const dependencies = createDependencies(storage, 'docx')
+    const service = new LegacyOfficeImportService(dependencies)
+
+    await expect(
+      service.convertBytes({
+        bytes: LEGACY_BYTES,
+        sourceFormat: 'doc',
+        signal: signal()
+      })
+    ).resolves.toEqual({
+      bytes: Uint8Array.from(MODERN_BYTES),
+      outputFormat: 'docx'
+    })
+    expect(storage.read).not.toHaveBeenCalled()
+    expect(storage.commitNew).not.toHaveBeenCalled()
+    expect(dependencies.sessions.word.open).not.toHaveBeenCalled()
+  })
+
   it.each([
     ['doc', 'docx', 'word'],
     ['xls', 'xlsx', 'spreadsheet'],

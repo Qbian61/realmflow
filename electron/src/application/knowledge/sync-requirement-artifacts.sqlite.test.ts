@@ -32,7 +32,12 @@ describe('artifact knowledge enqueue SQLite integration', () => {
     const ids = ['job-artifact', 'generation-artifact']
     const coordinator = new KnowledgeIndexCoordinator({
       repository,
-      reader: { readCurrent: async () => { throw new Error('unused') } },
+      reader: {
+        readCurrentIdentity: async () => {
+          throw new Error('unused')
+        },
+        hasCurrentDocument: async () => false
+      },
       createId: () => ids.shift()!,
       now: () => 10
     })
@@ -57,7 +62,27 @@ describe('artifact knowledge enqueue SQLite integration', () => {
             formal: true
           }
         ],
-        readContent: async () => content
+        readSource: async () => ({
+          bytes: new TextEncoder().encode(content),
+          fileName: 'artifacts/design.md',
+          mimeType: 'text/markdown'
+        })
+      },
+      contentExtractor: {
+        extract: async () => ({
+          sourceChecksum: digest(content),
+          format: 'md',
+          extractorVersion: 'text-v1',
+          units: [
+            {
+              key: 'content',
+              title: 'design.md',
+              text: content,
+              checksum: digest(content),
+              byteSize: Buffer.byteLength(content)
+            }
+          ]
+        })
       },
       coordinator
     })

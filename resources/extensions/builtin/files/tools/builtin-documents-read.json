@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.documents.read",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "name": "Read document",
   "description": "Read structured pages or blocks locally from authorized PDF and DOCX documents.",
   "tags": [
@@ -21,22 +21,46 @@
     "properties": {
       "path": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Authorized local path as a relative path under the authorized root. Do not invent or pass absolute local paths.",
+        "examples": [
+          "docs/example.md"
+        ]
       },
       "scopeRoot": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Optional authorized root override. Omit or pass \".\" to use the current authorized root.",
+        "examples": [
+          "."
+        ]
       },
       "maxCharacters": {
         "type": "integer",
         "minimum": 1000,
-        "maximum": 200000
+        "maximum": 200000,
+        "description": "Maximum document characters returned before chunking is required.",
+        "examples": [
+          4000
+        ]
       },
       "chunkId": {
         "type": "string",
-        "pattern": "^[a-f0-9]{64}:chunk:[1-9][0-9]*$"
+        "pattern": "^[a-f0-9]{64}:chunk:[1-9][0-9]*$",
+        "description": "Opaque chunk identifier returned by a prior bounded read.",
+        "examples": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:chunk:1"
+        ]
       }
-    }
+    },
+    "examples": [
+      {
+        "path": "docs/example.md",
+        "scopeRoot": ".",
+        "maxCharacters": 4000,
+        "chunkId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:chunk:1"
+      }
+    ]
   },
   "outputSchema": {
     "type": "object",

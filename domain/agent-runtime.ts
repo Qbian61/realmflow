@@ -52,6 +52,7 @@ export type AgentExecutionPolicy = {
   maxOutputTokens: number
   maxFileReadTokens: number
   maxRepeatedEquivalentCalls: number
+  maxRepeatedDeterministicFailures: number
   maxConsecutiveFailures: number
 }
 
@@ -64,6 +65,7 @@ export type RunBudgetLedger = {
   sideEffects: number
   consecutiveFailures: number
   repeatedCallFingerprints: Record<string, number>
+  deterministicFailureFingerprints: Record<string, number>
   activeRuntimeMs: number
   remainingContinuationAttempts: number
 }
@@ -80,6 +82,7 @@ export const DEFAULT_AGENT_EXECUTION_POLICY: Readonly<AgentExecutionPolicy> =
     maxOutputTokens: 32_000,
     maxFileReadTokens: 25_000,
     maxRepeatedEquivalentCalls: 3,
+    maxRepeatedDeterministicFailures: 2,
     maxConsecutiveFailures: 5
   })
 
@@ -419,6 +422,7 @@ export function createInitialRunBudgetLedger(
     sideEffects: 0,
     consecutiveFailures: 0,
     repeatedCallFingerprints: {},
+    deterministicFailureFingerprints: {},
     activeRuntimeMs: 0,
     remainingContinuationAttempts: policy.maxContinuationAttempts
   }

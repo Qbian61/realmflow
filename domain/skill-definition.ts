@@ -1,3 +1,4 @@
+import Ajv from 'ajv'
 import type {
   ToolCapability,
   ToolDefinition,
@@ -52,6 +53,7 @@ export type SkillDefinition = {
       }
   inputSchema: JsonObject
   outputSchema: JsonObject
+  examples: JsonObject[]
   requiredTools: Array<{
     toolId: string
     versionRange: string
@@ -96,6 +98,7 @@ const DEFINITION_KEYS = new Set([
   'runtime',
   'inputSchema',
   'outputSchema',
+  'examples',
   'requiredTools',
   'activation',
   'limits',
@@ -113,6 +116,7 @@ const VERSION_RANGE_PATTERNS = [
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:x|\*)$/,
   new RegExp(`^(?:(?:>=|<=|>|<|=)${SEMVER})(?:\\s+(?:>=|<=|>|<|=)${SEMVER})*$`),
 ]
+const schemaValidator = new Ajv({ strict: false, allErrors: true })
 
 export function normalizeSkillDefinition(value: unknown): SkillDefinition {
   try {
@@ -122,6 +126,15 @@ export function normalizeSkillDefinition(value: unknown): SkillDefinition {
       throw new Error('schema version is invalid')
     }
     const requiredTools = normalizeRequiredTools(definition.requiredTools)
+    const inputSchema = normalizeSkillContractSchema(
+      definition.inputSchema,
+      'inputSchema',
+    )
+    const outputSchema = normalizeSkillContractSchema(
+      definition.outputSchema,
+      'outputSchema',
+    )
+    const examples = normalizeSkillExamples(definition.examples, inputSchema)
     return {
       schemaVersion: 1,
       id: requireIdentifier(definition.id, 'ID'),
@@ -139,8 +152,9 @@ export function normalizeSkillDefinition(value: unknown): SkillDefinition {
         'instructions path',
       ),
       runtime: normalizeRuntime(definition.runtime, requiredTools),
-      inputSchema: cloneJsonObject(definition.inputSchema, 'input schema'),
-      outputSchema: cloneJsonObject(definition.outputSchema, 'output schema'),
+      inputSchema,
+      outputSchema,
+      examples,
       requiredTools,
       activation: normalizeActivation(definition.activation),
       limits: normalizeLimits(definition.limits),
@@ -150,6 +164,28 @@ export function normalizeSkillDefinition(value: unknown): SkillDefinition {
     if (message.startsWith('Skill definition')) throw error
     throw new Error(`Skill definition ${message}`)
   }
+}
+
+export function requiredToolDependencyIssues(
+  requiredTools: SkillDefinition['requiredTools'],
+  availableTools: readonly Pick<ToolDefinition, 'id' | 'version'>[],
+): string[] {
+  return requiredTools
+    .filter((dependency) => dependency.required)
+    .filter(
+      (dependency) =>
+        !availableTools.some(
+          (tool) =>
+            tool.id === dependency.toolId &&
+            isToolVersionInRange(tool.version, dependency.versionRange),
+        ),
+    )
+    .map((dependency) =>
+      availableTools.some((tool) => tool.id === dependency.toolId)
+        ? `${dependency.toolId}@${dependency.versionRange}`
+        : dependency.toolId,
+    )
+    .sort()
 }
 
 function normalizeRuntime(
@@ -345,6 +381,83 @@ function normalizeRequiredTools(
       left.toolId.localeCompare(right.toolId) ||
       left.versionRange.localeCompare(right.versionRange),
   )
+}
+
+function normalizeSkillContractSchema(value: unknown, field: string): JsonObject {
+  const schema = cloneJsonObject(value, field)
+  const schemaObject = schema as Record<string, unknown>
+  if (schemaObject.type !== 'object') {
+    throw new Error(`${field}.type is invalid`)
+  }
+  requireSchemaDescription(schemaObject, field)
+  if (schemaObject.additionalProperties !== false) {
+    throw new Error(`${field}.additionalProperties is invalid`)
+  }
+  validateSchemaProperties(schemaObject, field)
+  validateSchemaRequired(schemaObject, field)
+  return schema
+}
+
+function requireSchemaDescription(
+  schema: Record<string, unknown>,
+  fieldPath: string,
+): void {
+  if (typeof schema.description !== 'string' || !schema.description.trim()) {
+    throw new Error(`${fieldPath}.description is required`)
+  }
+}
+
+function validateSchemaProperties(
+  schema: Record<string, unknown>,
+  fieldPath: string,
+): void {
+  if (schema.properties === undefined) return
+  const properties = requireObject(schema.properties, `${fieldPath}.properties`)
+  for (const [name, property] of Object.entries(properties)) {
+    const propertyPath = `${fieldPath}.properties.${name}`
+    const propertySchema = requireObject(property, propertyPath)
+    requireSchemaDescription(propertySchema, propertyPath)
+  }
+}
+
+function validateSchemaRequired(
+  schema: Record<string, unknown>,
+  fieldPath: string,
+): void {
+  if (schema.required === undefined) return
+  if (
+    !Array.isArray(schema.required) ||
+    schema.required.some((item) => typeof item !== 'string' || !item.trim())
+  ) {
+    throw new Error(`${fieldPath}.required is invalid`)
+  }
+  const properties =
+    schema.properties && !Array.isArray(schema.properties) &&
+    typeof schema.properties === 'object'
+      ? schema.properties as Record<string, unknown>
+      : {}
+  for (const name of schema.required) {
+    if (!(name in properties)) {
+      throw new Error(`${fieldPath}.required.${name} is invalid`)
+    }
+  }
+}
+
+function normalizeSkillExamples(
+  value: unknown,
+  inputSchema: JsonObject,
+): JsonObject[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error('examples are invalid')
+  }
+  const validate = schemaValidator.compile(inputSchema)
+  return value.map((example, index) => {
+    const normalized = cloneJsonObject(example, `examples[${index}]`)
+    if (!validate(normalized)) {
+      throw new Error(`examples[${index}] is invalid`)
+    }
+    return normalized
+  })
 }
 
 function normalizeActivation(value: unknown): SkillDefinition['activation'] {

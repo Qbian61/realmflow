@@ -67,6 +67,13 @@ function toSnapshotDto(snapshot: RepositorySnapshot): RepositorySnapshotDto {
         byteSize
       })
     ),
+    skippedFiles: (snapshot.skippedFiles ?? []).map(
+      ({ relativePath, reason, byteSize }) => ({
+        relativePath,
+        reason,
+        ...(byteSize === undefined ? {} : { byteSize })
+      })
+    ),
     scannedAt: snapshot.scannedAt
   }
 }

@@ -146,6 +146,24 @@ describe('Main startup recovery order', () => {
     expect(mainSource).not.toContain('await skillCatalog.recover()')
   })
 
+  it('routes local file ingestion through automatic index dispatch', () => {
+    const mainSource = readFileSync(resolve('electron/src/main.ts'), 'utf8')
+    const helper = mainSource.indexOf(
+      'const runLocalFileIngestion = ('
+    )
+    const handler = mainSource.indexOf('ingestLocalFiles: {')
+    const nextHandler = mainSource.indexOf('refreshLocalFileSource: {', handler)
+    const handlerSource = mainSource.slice(handler, nextHandler)
+
+    expect(helper).toBeGreaterThan(-1)
+    expect(handler).toBeGreaterThan(helper)
+    expect(handlerSource).toContain('runLocalFileIngestion(() =>')
+    expect(handlerSource).toContain('localFileIngestion.ingest(command)')
+    expect(handlerSource).not.toContain(
+      'execute: (command) => localFileIngestion.ingest(command)'
+    )
+  })
+
   it('shares one Agent Tool Loop Gateway across conversations and AI runs', () => {
     const mainSource = readFileSync(resolve('electron/src/main.ts'), 'utf8')
     const coordinatorMatches = mainSource.match(

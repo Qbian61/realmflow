@@ -254,10 +254,11 @@ function artifactKind(path: string): string {
 
 function isArtifactProducingTool(toolName: string): boolean {
   return (
-    /^(?:document|documents?|office)\.(?:create|export|export_pdf|save)/.test(
+    /^(?:document|documents?|office)\.(?:create|deliver_pdf|export|export_pdf|save)/.test(
       toolName
     ) ||
     [
+      'pdf.save_as',
       'image_generate',
       'video_generate',
       'music_generate',

@@ -24,6 +24,9 @@
       "path": "tools/builtin-document-export_pdf.json"
     },
     {
+      "path": "tools/builtin-document-deliver_pdf.json"
+    },
+    {
       "path": "tools/builtin-artifact-verify.json"
     },
     {

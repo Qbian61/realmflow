@@ -21,6 +21,10 @@ import {
   planBuiltinToolEffects,
   type BuiltinToolEffectPlannerDependencies
 } from './tool-effect-planner'
+import {
+  createToolExecutionError,
+  normalizeToolExecutionError
+} from './tool-error-envelope'
 
 export type BuiltinToolHandlerInput = {
   arguments: JsonObject
@@ -147,13 +151,10 @@ export class BuiltinToolAdapter implements ToolAdapter {
     } catch (error) {
       return {
         outcome: 'unavailable',
-        error: {
-          code: error instanceof Error && error.message === 'web_configuration_changed'
-            ? 'web_configuration_changed' : 'binding_invalid',
-          message: error instanceof Error && error.message === 'web_configuration_changed'
-            ? 'Web configuration changed; request authorization again' : 'Builtin Tool binding is invalid',
-          retryable: false
-        }
+        error: createToolExecutionError(error, {
+          fallbackCode: 'binding_invalid',
+          fallbackMessage: 'Builtin Tool binding is invalid'
+        })
       }
     }
   }
@@ -228,11 +229,11 @@ export class BuiltinToolAdapter implements ToolAdapter {
       if (outputBytes > handle.maxOutputBytes) {
         return {
           outcome: 'failed',
-          error: {
+          error: normalizeToolExecutionError({
             code: 'tool_output_limit',
             message: 'Builtin Tool output limit exceeded',
             retryable: false
-          },
+          }),
           metrics: metrics(startedAt, outputBytes)
         }
       }
@@ -245,11 +246,10 @@ export class BuiltinToolAdapter implements ToolAdapter {
       if (signal.aborted || isAbortError(error)) return cancelled(startedAt)
       return {
         outcome: 'failed',
-        error: {
-          code: safeErrorCode(error),
-          message: safeErrorMessage(error),
-          retryable: false
-        },
+        error: createToolExecutionError(error, {
+          fallbackCode: 'builtin_execution_failed',
+          fallbackMessage: 'Builtin Tool execution failed'
+        }),
         metrics: metrics(startedAt, 0)
       }
     }
@@ -276,6 +276,26 @@ export class BuiltinToolAdapter implements ToolAdapter {
           definition.executor.handlerVersion
         )
       )
+    }
+  }
+
+  assertExactDefinitions(definitions: readonly ToolDefinition[]): void {
+    const definedKeys = new Set<string>()
+    for (const definition of definitions) {
+      if (definition.executor.kind !== 'builtin') continue
+      const key = handlerKey(
+        definition.executor.handler,
+        definition.executor.handlerVersion
+      )
+      this.requireHandler(key)
+      definedKeys.add(key)
+    }
+    for (const key of [...this.handlers.keys()].sort()) {
+      if (!definedKeys.has(key)) {
+        throw new Error(
+          `Builtin Tool handler has no catalog definition: ${key}`
+        )
+      }
     }
   }
 
@@ -347,37 +367,13 @@ function metrics(startedAt: number, outputBytes: number) {
 function cancelled(startedAt: number): AdapterExecutionResult {
   return {
     outcome: 'cancelled',
-    error: {
+    error: normalizeToolExecutionError({
       code: 'tool_cancelled',
       message: 'Builtin Tool execution was cancelled',
       retryable: false
-    },
+    }),
     metrics: metrics(startedAt, 0)
   }
-}
-
-function safeErrorCode(error: unknown): string {
-  return (
-    isRecord(error) &&
-    typeof error.code === 'string' &&
-    /^(?:tool|file|image|archive|artifact|document|fixed_layout|office|legacy_office|word|spreadsheet|presentation|pdf|process|web|browser)_[a-z0-9_]+$/.test(
-      error.code
-    )
-  )
-    ? error.code
-    : 'builtin_execution_failed'
-}
-
-function safeErrorMessage(error: unknown): string {
-  if (
-    error instanceof Error &&
-    error.message &&
-    !error.message.includes('/') &&
-    !error.message.includes('\\')
-  ) {
-    return error.message.slice(0, 500)
-  }
-  return 'Builtin Tool execution failed'
 }
 
 function isAbortError(error: unknown): boolean {

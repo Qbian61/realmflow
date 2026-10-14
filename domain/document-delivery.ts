@@ -45,8 +45,26 @@ export type DocumentArtifact = {
   checksum: string
   pageCount?: number
   converter?: 'libreoffice' | 'cupsfilter_text'
-  quality?: 'print' | 'degraded_text'
+  backend?:
+    | 'libreoffice_docx_pdf'
+    | 'cupsfilter_docx_text_pdf'
+    | 'chromium_html_pdf'
+    | 'pdf_lib_session_save_as'
+    | 'libreoffice_legacy_pdf'
+  quality?: 'print' | 'visual_print' | 'edit_preserve' | 'degraded_text'
   warnings?: string[]
+  routeDecision?: {
+    selectedBackend:
+      | 'libreoffice_docx_pdf'
+      | 'cupsfilter_docx_text_pdf'
+      | 'chromium_html_pdf'
+      | 'pdf_lib_session_save_as'
+      | 'libreoffice_legacy_pdf'
+    quality: 'print' | 'visual_print' | 'edit_preserve' | 'degraded_text'
+    degraded: boolean
+    reasons: string[]
+    warnings: string[]
+  }
   verified?: true
 }
 
@@ -314,8 +332,10 @@ function validateArtifact(
   requirePositiveInteger(artifact.byteSize, 'Document delivery byte size')
   requireOptionalPositiveInteger(artifact.pageCount)
   requireOptionalConverter(artifact.converter)
+  requireOptionalBackend(artifact.backend)
   requireOptionalQuality(artifact.quality)
   requireOptionalWarnings(artifact.warnings)
+  requireOptionalRouteDecision(artifact.routeDecision)
   const expectedPath =
     input.kind === 'create'
       ? input.outputPath
@@ -462,10 +482,38 @@ function requireOptionalQuality(value: string | undefined): void {
   if (
     value !== undefined &&
     value !== 'print' &&
+    value !== 'visual_print' &&
+    value !== 'edit_preserve' &&
     value !== 'degraded_text'
   ) {
     throw new Error('Document delivery quality is invalid')
   }
+}
+
+function requireOptionalBackend(value: string | undefined): void {
+  if (
+    value !== undefined &&
+    value !== 'libreoffice_docx_pdf' &&
+    value !== 'cupsfilter_docx_text_pdf' &&
+    value !== 'chromium_html_pdf' &&
+    value !== 'pdf_lib_session_save_as' &&
+    value !== 'libreoffice_legacy_pdf'
+  ) {
+    throw new Error('Document delivery backend is invalid')
+  }
+}
+
+function requireOptionalRouteDecision(
+  value: DocumentArtifact['routeDecision'] | undefined
+): void {
+  if (value === undefined) return
+  requireOptionalBackend(value.selectedBackend)
+  requireOptionalQuality(value.quality)
+  if (typeof value.degraded !== 'boolean') {
+    throw new Error('Document delivery route decision is invalid')
+  }
+  requireOptionalWarnings(value.reasons)
+  requireOptionalWarnings(value.warnings)
 }
 
 function requireOptionalWarnings(value: string[] | undefined): void {

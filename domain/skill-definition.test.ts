@@ -21,14 +21,29 @@ const definition = {
   runtime: { kind: 'instruction' as const },
   inputSchema: {
     type: 'object',
+    description: 'Inputs for planning a requirement.',
     required: ['requirement'],
-    properties: { requirement: { type: 'string' } },
+    additionalProperties: false,
+    properties: {
+      requirement: {
+        type: 'string',
+        description: 'Requirement text to turn into a plan.',
+      },
+    },
   },
   outputSchema: {
     type: 'object',
+    description: 'Planning result.',
     required: ['plan'],
-    properties: { plan: { type: 'string' } },
+    additionalProperties: false,
+    properties: {
+      plan: {
+        type: 'string',
+        description: 'Implementation plan summary.',
+      },
+    },
   },
+  examples: [{ requirement: 'Design a local-first workflow.' }],
   requiredTools: [
     {
       toolId: 'builtin.files.read',

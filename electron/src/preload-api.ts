@@ -65,6 +65,11 @@ export function createRealmFlowApi(
             IPC_QUERY_CHANNELS.workbenchAttachmentReadImage,
             attachmentId
           ),
+        readExtracted: (query) =>
+          invoke(
+            IPC_QUERY_CHANNELS.workbenchAttachmentReadExtracted,
+            query
+          ),
         open: (attachmentId) =>
           invoke(IPC_COMMAND_CHANNELS.workbenchAttachmentOpen, attachmentId),
         reveal: (attachmentId) =>

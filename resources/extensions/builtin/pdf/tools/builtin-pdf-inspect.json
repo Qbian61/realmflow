@@ -21,20 +21,39 @@
     "properties": {
       "path": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Authorized local path as a relative path under the authorized root. Do not invent or pass absolute local paths.",
+        "examples": [
+          "docs/example.md"
+        ]
       },
       "scopeRoot": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Optional authorized root override. Omit or pass \".\" to use the current authorized root.",
+        "examples": [
+          "."
+        ]
       },
       "mode": {
         "type": "string",
         "enum": [
           "read",
           "edit"
+        ],
+        "description": "Operation mode selected for this tool call. Allowed values: read, edit.",
+        "examples": [
+          "read"
         ]
       }
-    }
+    },
+    "examples": [
+      {
+        "path": "docs/example.md",
+        "scopeRoot": ".",
+        "mode": "read"
+      }
+    ]
   },
   "outputSchema": {
     "type": "object",

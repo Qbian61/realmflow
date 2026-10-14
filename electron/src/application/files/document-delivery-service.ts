@@ -13,11 +13,13 @@ import {
   failDocumentDelivery,
   startDocumentDelivery
 } from '../../../../domain/document-delivery'
+import type { PdfGenerationReceipt } from '../../../../domain/pdf-generation'
 import type {
   SidecarClient,
   SidecarDocumentArtifact,
   SidecarDocumentVerification
 } from '../../sidecar/client'
+import type { PdfGenerationService } from './pdf-generation-service'
 import { SecurePathService } from '../../workspace/secure-path-service'
 
 export type DocumentDeliveryStorage = {
@@ -125,6 +127,7 @@ export class DocumentDeliveryService {
       artifacts?: VerifiedBinaryArtifactRegistry
       now?: () => number
       afterFileCommit?: (artifact: DocumentArtifact) => Promise<void>
+      pdfGeneration?: Pick<PdfGenerationService, 'generate'>
     }
   ) {}
 
@@ -199,9 +202,40 @@ export class DocumentDeliveryService {
     sourceChecksum: string
     outputCanonicalPath: string
     outputRelativePath: string
+    operation?: DocumentDeliveryOperationContext
     signal: AbortSignal
   }): Promise<DocumentArtifact> {
     assertNotAborted(input.signal)
+    if (this.dependencies.pdfGeneration && input.operation) {
+      const receipt = await this.dependencies.pdfGeneration.generate(
+        {
+          requestId: input.operation.requestId,
+          scopeRoot: input.operation.scopeRoot,
+          outputPath: input.outputRelativePath,
+          expectedAbsent: true,
+          source: {
+            kind: 'docx',
+            sourcePath: input.sourceRelativePath,
+            sourceChecksum: input.sourceChecksum
+          },
+          qualityPolicy: 'prefer_print_layout',
+          ...(input.operation.requirementId || input.operation.nodeRunId
+            ? {
+                operation: {
+                  ...(input.operation.requirementId
+                    ? { requirementId: input.operation.requirementId }
+                    : {}),
+                  ...(input.operation.nodeRunId
+                    ? { nodeRunId: input.operation.nodeRunId }
+                    : {})
+                }
+              }
+            : {})
+        },
+        input.signal
+      )
+      return documentArtifactFromPdfReceipt(receipt)
+    }
     await this.assertOutputAvailable(input.outputCanonicalPath)
     const source = Buffer.from(
       await this.dependencies.storage.read(input.sourceCanonicalPath)
@@ -378,6 +412,7 @@ export class DocumentDeliveryService {
       artifact = await this.performDelivery({
         input: running.input,
         scopeRoot: input.operation.scopeRoot,
+        operation: input.operation,
         signal: input.signal,
         recoverExisting: wasRunning
       })
@@ -452,6 +487,7 @@ export class DocumentDeliveryService {
   private async performDelivery(input: {
     input: DocumentDeliveryInput
     scopeRoot: string
+    operation: DocumentDeliveryOperationContext
     signal: AbortSignal
     recoverExisting: boolean
   }): Promise<DocumentArtifact> {
@@ -517,6 +553,7 @@ export class DocumentDeliveryService {
         sourceChecksum: delivery.sourceChecksum,
         outputCanonicalPath,
         outputRelativePath: delivery.outputPath,
+        operation: input.operation,
         signal: input.signal
       })
     }
@@ -658,6 +695,35 @@ function artifactFromReceipt(
     throw new DocumentDeliveryServiceError(receipt.errorCode, receipt.message)
   }
   return receipt.artifact
+}
+
+function documentArtifactFromPdfReceipt(
+  receipt: PdfGenerationReceipt
+): DocumentArtifact {
+  return {
+    path: receipt.artifact.path,
+    format: 'pdf',
+    byteSize: receipt.artifact.byteSize,
+    checksum: receipt.artifact.checksum,
+    ...(receipt.artifact.pageCount === undefined
+      ? {}
+      : { pageCount: receipt.artifact.pageCount }),
+    ...(converterForBackend(receipt.artifact.backend)
+      ? { converter: converterForBackend(receipt.artifact.backend) }
+      : {}),
+    backend: receipt.artifact.backend,
+    quality: receipt.artifact.quality,
+    warnings: receipt.artifact.warnings,
+    routeDecision: receipt.route
+  }
+}
+
+function converterForBackend(
+  backend: PdfGenerationReceipt['artifact']['backend']
+): DocumentArtifact['converter'] | undefined {
+  if (backend === 'libreoffice_docx_pdf') return 'libreoffice'
+  if (backend === 'cupsfilter_docx_text_pdf') return 'cupsfilter_text'
+  return undefined
 }
 
 function assertNotAborted(signal: AbortSignal): void {

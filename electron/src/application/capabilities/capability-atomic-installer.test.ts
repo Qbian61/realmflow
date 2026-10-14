@@ -143,6 +143,7 @@ function preparedPackage(): PreparedCapabilityPackage {
     validationReport: {
       compatible: true,
       dependencyStatus: 'resolved',
+      contract: { status: 'passed', diagnostics: [] },
       tests: []
     },
     source: { type: 'directory', displayName: 'files' },

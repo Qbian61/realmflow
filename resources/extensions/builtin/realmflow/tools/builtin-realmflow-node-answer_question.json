@@ -24,29 +24,58 @@
       "id": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 200
+        "maxLength": 200,
+        "description": "Stable RealmFlow entity ID for the requested operation.",
+        "examples": [
+          "item-1"
+        ]
       },
       "nodeRunId": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 200
+        "maxLength": 200,
+        "description": "Stable NodeRun ID that owns the question, todo, or approval.",
+        "examples": [
+          "node-run-1"
+        ]
       },
       "status": {
         "type": "string",
         "enum": [
           "answered",
           "dismissed"
+        ],
+        "description": "Target workflow, todo, requirement, or question status. Allowed values: answered, dismissed.",
+        "examples": [
+          "answered"
         ]
       },
       "answer": {
         "type": "string",
-        "maxLength": 20000
+        "maxLength": 20000,
+        "description": "User-approved answer text for the NodeRun question.",
+        "examples": [
+          "Approved answer for this NodeRun."
+        ]
       },
       "expectedRevision": {
         "type": "integer",
-        "minimum": 0
+        "minimum": 0,
+        "description": "Expected revision used for optimistic concurrency control. Copy this value from the latest RealmFlow UI/API state; do not invent it.",
+        "examples": [
+          1
+        ]
       }
-    }
+    },
+    "examples": [
+      {
+        "id": "item-1",
+        "nodeRunId": "node-run-1",
+        "status": "answered",
+        "answer": "Approved answer for this NodeRun.",
+        "expectedRevision": 1
+      }
+    ]
   },
   "outputSchema": {
     "type": "object",

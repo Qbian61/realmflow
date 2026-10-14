@@ -1,5 +1,4 @@
-import { Plus, X
-} from "lucide-react";
+import { X } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -16,24 +15,18 @@ import type {
 } from "../../shared/business";
 import { MissedRunPolicyField } from "../features/schedules/MissedRunPolicyField";
 import { useScheduleRunRefresh } from "../features/schedules/use-schedule-run-refresh";
-import { RecentScheduleRuns } from "../features/schedules/SchedulePageSections";
-import { ScheduleRecommendations } from "../features/schedules/ScheduleRecommendations";
 import { ScheduledTaskList } from "../features/schedules/ScheduledTaskList";
-import { WorkspaceHeaderPortal } from "../features/navigation/WorkspaceLayout";
 import { useWorkspacePageActive } from "../features/navigation/WorkspaceRouteCache";
 import { useToast } from "../features/toast/ToastProvider";
 import { useLocalization } from "../localization/LocalizationProvider";
-import { useUrlQueryState } from "../navigation/url-query-state";
 import { toSkillCatalogOptions } from "../features/capabilities/catalog-skill-options";
 import {
   createScheduleCommandId,
   enabledScheduleModels,
   availableScheduleConnectors,
-  scheduleRecommendations,
   type ModelPool,
   type ScheduleDraft,
 } from "./schedule-page-model";
-import { scheduleTabCodec } from "./page-query-state";
 import {
   Button,
   ConfirmDialog,
@@ -44,18 +37,20 @@ import {
   InlineAlert,
   Field,
   IconButton,
-  PageBody,
-  Tab,
-  TabList,
-  Tabs,
-  Toolbar,
   Select,
 } from "../components/ui";
 
-export default function SchedulePage(): JSX.Element {
+type SchedulePageProps = {
+  active?: boolean;
+};
+
+export default function SchedulePage({
+  active,
+}: SchedulePageProps = {}): JSX.Element {
   const { locale, t } = useLocalization();
   const toast = useToast();
-  const pageActive = useWorkspacePageActive();
+  const routeActive = useWorkspacePageActive();
+  const pageActive = routeActive && (active ?? true);
   const business = window.realmflow?.business;
   const toolCatalog = window.realmflow?.toolCatalog;
   const [schedules, setSchedules] = useState<ScheduleDto[]>([]);
@@ -67,13 +62,13 @@ export default function SchedulePage(): JSX.Element {
   });
   const [skills, setSkills] = useState<SkillCatalogDto[]>([]);
   const [connectors, setConnectors] = useState<ConnectorDto[]>([]);
+  const [selectedScheduleId, setSelectedScheduleId] = useState<string>();
   const [draft, setDraft] = useState<ScheduleDraft>();
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string>();
   const [pendingDelete, setPendingDelete] = useState<ScheduleDto>();
   const [deleteError, setDeleteError] = useState("");
   const [error, setError] = useState("");
-  const [activeTab, setActiveTab] = useUrlQueryState("tab", scheduleTabCodec);
 
   const load = useCallback(async (): Promise<void> => {
     if (!business || !toolCatalog) {
@@ -98,6 +93,11 @@ export default function SchedulePage(): JSX.Element {
         business.listConnectors(),
       ]);
       setSchedules(nextSchedules);
+      setSelectedScheduleId((current) =>
+        nextSchedules.some(({ id }) => id === current)
+          ? current
+          : nextSchedules[0]?.id,
+      );
       setRuns(nextRuns);
       setSpaces(nextSpaces);
       setModels(nextModels);
@@ -142,19 +142,13 @@ export default function SchedulePage(): JSX.Element {
 
   const availableConnectors = useMemo(() => availableScheduleConnectors(connectors), [connectors]);
 
-  const recommendations = scheduleRecommendations.map((item) => ({
-    ...item,
-    name: t(`schedule.recommendation.${item.id}.name`),
-    description: t(`schedule.recommendation.${item.id}.description`),
-  }));
-
-  function openCreate(preset?: (typeof recommendations)[number]): void {
+  function openCreate(): void {
     const skill = enabledSkills[0];
     setDraft({
       approvalProfileId: "protected",
-      name: preset?.name ?? "",
-      description: preset?.description ?? "",
-      cronExpression: preset?.cronExpression ?? "0 9 * * 1-5",
+      name: "",
+      description: "",
+      cronExpression: "0 9 * * 1-5",
       timeZone: "Asia/Shanghai",
       missedRunPolicy: "skip",
       workspaceId: spaces[0]?.id ?? "",
@@ -279,7 +273,6 @@ export default function SchedulePage(): JSX.Element {
         return;
       }
       setDraft(undefined);
-      setActiveTab("schedules");
       await load();
     } catch {
       toast.error("schedule.saveFailed");
@@ -373,94 +366,28 @@ export default function SchedulePage(): JSX.Element {
   return (
     <div className="schedule-page">
       <h1 className="sr-only">{t("navigation.schedules")}</h1>
-      <WorkspaceHeaderPortal>
-        <Toolbar
-          variant="workspace-header"
-          className="schedule-page-header"
-          aria-label={t("schedule.tabs")}
-        >
-          <Tabs
-            value={activeTab}
-            onValueChange={(value) =>
-              setActiveTab(value as "templates" | "schedules")
-            }
-          >
-            <TabList
-              className="schedule-page-tabs"
-              aria-label={t("schedule.tabs")}
-            >
-              <Tab
-                id="schedule-templates-tab"
-                aria-controls="schedule-templates-panel"
-                value="templates"
-              >
-                {t("schedule.tab.templates")}
-              </Tab>
-              <Tab
-                id="schedule-active-tab"
-                aria-controls="schedule-active-panel"
-                value="schedules"
-              >
-                {t("schedule.tab.active", { count: schedules.length })}
-              </Tab>
-            </TabList>
-          </Tabs>
-          <Button
-            variant="primary"
-            size="default"
-            leadingIcon={<Plus size={15} aria-hidden="true" />}
-            onClick={() => openCreate()}
-          >
-            {t("schedule.create")}
-          </Button>
-        </Toolbar>
-      </WorkspaceHeaderPortal>
-
-      <PageBody mode="wide" className="schedule-content">
-        {error ? (
-          <InlineAlert className="schedule-error" tone="danger" title={error} />
-        ) : null}
-
-        {activeTab === "templates" ? (
-          <div
-            id="schedule-templates-panel"
-            role="tabpanel"
-            aria-labelledby="schedule-templates-tab"
-          >
-            <h2 className="sr-only">{t("schedule.tab.templates")}</h2>
-            <ScheduleRecommendations
-              recommendations={recommendations}
-              onSelect={openCreate}
-            />
-          </div>
-        ) : (
-          <div
-            id="schedule-active-panel"
-            role="tabpanel"
-            aria-labelledby="schedule-active-tab"
-          >
-            <h2 className="sr-only">{t("schedule.tab.active", { count: schedules.length })}</h2>
-            <ScheduledTaskList
-              schedules={schedules}
-              spaces={spaces}
-              models={models.profiles}
-              skills={enabledSkills}
-              loading={loading}
-              busyId={busyId}
-              onEdit={openEdit}
-              onTransition={(schedule, action) =>
-                void transition(schedule, action)
-              }
-              onRunNow={(schedule) => void runNow(schedule)}
-              onRemove={(schedule) => {
-                setDeleteError("");
-                setPendingDelete(schedule);
-              }}
-            />
-            <RecentScheduleRuns runs={runs} />
-          </div>
-        )}
-      </PageBody>
+      {error ? (
+        <InlineAlert className="schedule-error" tone="danger" title={error} />
+      ) : null}
+      <ScheduledTaskList
+        schedules={schedules}
+        runs={runs}
+        spaces={spaces}
+        models={models.profiles}
+        skills={enabledSkills}
+        loading={loading}
+        busyId={busyId}
+        selectedScheduleId={selectedScheduleId}
+        onSelect={setSelectedScheduleId}
+        onCreate={openCreate}
+        onEdit={openEdit}
+        onTransition={(schedule, action) => void transition(schedule, action)}
+        onRunNow={(schedule) => void runNow(schedule)}
+        onRemove={(schedule) => {
+          setDeleteError("");
+          setPendingDelete(schedule);
+        }}
+      />
 
       {draft ? (
         <Dialog

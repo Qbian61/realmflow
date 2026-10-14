@@ -25,20 +25,42 @@
         "properties": {
           "kind": {
             "type": "string",
-            "const": "current_run"
+            "const": "current_run",
+            "description": "Discriminator selecting the schema variant for this object.",
+            "examples": [
+              "current_run"
+            ]
           }
-        }
+        },
+        "description": "Current run target object for browser or UI automation.",
+        "examples": [
+          {
+            "kind": "current_run"
+          }
+        ]
       },
       "url": {
         "type": "string",
         "minLength": 1,
         "maxLength": 4096,
-        "pattern": "^https?://"
+        "pattern": "^https?://",
+        "description": "Public HTTP or HTTPS URL used by the web or browser operation.",
+        "examples": [
+          "https://example.com"
+        ]
       }
     },
     "required": [
       "target",
       "url"
+    ],
+    "examples": [
+      {
+        "target": {
+          "kind": "current_run"
+        },
+        "url": "https://example.com"
+      }
     ]
   },
   "outputSchema": {

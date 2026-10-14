@@ -190,12 +190,23 @@ export class SqliteKnowledgeRefreshRepository {
              ON policy.source_id = cursor.source_id
            JOIN knowledge_sources source ON source.id = cursor.source_id
            WHERE policy.enabled = 1 AND source.status <> 'removed'
+             AND NOT EXISTS (
+               SELECT 1 FROM knowledge_refresh_runs active
+               WHERE active.source_id = cursor.source_id
+                 AND active.status = 'running'
+             )
            UNION ALL
            SELECT
-             'retry' AS kind, source_id, id AS run_id,
-             policy_revision, next_attempt_at AS next_due_at
-           FROM knowledge_refresh_runs
-           WHERE status = 'retry_wait' AND next_attempt_at IS NOT NULL
+             'retry' AS kind, retry.source_id, retry.id AS run_id,
+             retry.policy_revision, retry.next_attempt_at AS next_due_at
+           FROM knowledge_refresh_runs retry
+           WHERE retry.status = 'retry_wait'
+             AND retry.next_attempt_at IS NOT NULL
+             AND NOT EXISTS (
+               SELECT 1 FROM knowledge_refresh_runs active
+               WHERE active.source_id = retry.source_id
+                 AND active.status = 'running'
+             )
          )
          ORDER BY next_due_at, source_id, kind
          LIMIT 1`
@@ -233,7 +244,9 @@ export class SqliteKnowledgeRefreshRepository {
     scheduledFor: number
     nextDueAt: number
     at: number
-  }): Promise<{ status: 'claimed' | 'replayed'; run: KnowledgeRefreshRun }> {
+  }): Promise<
+    { status: 'claimed' | 'replayed' | 'blocked'; run: KnowledgeRefreshRun }
+  > {
     return this.database.transaction(() => {
       const existing = this.database
         .prepare(
@@ -255,6 +268,10 @@ export class SqliteKnowledgeRefreshRepository {
         policy.nextDueAt !== input.scheduledFor
       ) {
         throw new Error('Knowledge refresh slot is stale')
+      }
+      const active = this.getRunningRunForSourceSync(input.sourceId)
+      if (active) {
+        return { status: 'blocked', run: toRun(active) } as const
       }
       this.insertRun({
         id: input.runId,
@@ -324,23 +341,43 @@ export class SqliteKnowledgeRefreshRepository {
     runId: string
     expectedNextAttemptAt: number
     at: number
-  }): Promise<{ status: 'claimed'; run: KnowledgeRefreshRun }> {
-    const row = this.database
-      .prepare(
-        `UPDATE knowledge_refresh_runs
-         SET status = 'running', attempt = attempt + 1,
-             next_attempt_at = NULL, error_code = NULL, completed_at = NULL
-         WHERE id = ? AND status = 'retry_wait'
-           AND next_attempt_at = ? AND next_attempt_at <= ?
-         RETURNING *`
-      )
-      .get(
-        input.runId,
-        input.expectedNextAttemptAt,
-        input.at
-      ) as RunRow | undefined
-    if (!row) throw new Error('Knowledge refresh retry is stale')
-    return { status: 'claimed', run: toRun(row) }
+  }): Promise<
+    { status: 'claimed' | 'blocked'; run: KnowledgeRefreshRun }
+  > {
+    return this.database.transaction(() => {
+      const retry = this.database
+        .prepare(
+          `SELECT * FROM knowledge_refresh_runs
+           WHERE id = ? AND status = 'retry_wait'
+             AND next_attempt_at = ? AND next_attempt_at <= ?`
+        )
+        .get(
+          input.runId,
+          input.expectedNextAttemptAt,
+          input.at
+        ) as RunRow | undefined
+      if (!retry) throw new Error('Knowledge refresh retry is stale')
+      const active = this.getRunningRunForSourceSync(retry.source_id)
+      if (active) {
+        return { status: 'blocked', run: toRun(active) } as const
+      }
+      const row = this.database
+        .prepare(
+          `UPDATE knowledge_refresh_runs
+           SET status = 'running', attempt = attempt + 1,
+               next_attempt_at = NULL, error_code = NULL, completed_at = NULL
+           WHERE id = ? AND status = 'retry_wait'
+             AND next_attempt_at = ? AND next_attempt_at <= ?
+           RETURNING *`
+        )
+        .get(
+          input.runId,
+          input.expectedNextAttemptAt,
+          input.at
+        ) as RunRow | undefined
+      if (!row) throw new Error('Knowledge refresh retry is stale')
+      return { status: 'claimed', run: toRun(row) } as const
+    })()
   }
 
   async completeUnchanged(input: {
@@ -359,7 +396,7 @@ export class SqliteKnowledgeRefreshRepository {
 
   async completeQueued(input: {
     runId: string
-    beforeChecksum: string
+    beforeChecksum: string | null
     afterChecksum: string
     indexJobId: string
     at: number
@@ -411,7 +448,7 @@ export class SqliteKnowledgeRefreshRepository {
   private completeRun(input: {
     runId: string
     status: 'unchanged' | 'queued'
-    beforeChecksum: string
+    beforeChecksum: string | null
     afterChecksum: string
     indexJobId: string | null
     at: number
@@ -506,6 +543,17 @@ export class SqliteKnowledgeRefreshRepository {
       .prepare('SELECT * FROM knowledge_refresh_runs WHERE id = ?')
       .get(id) as RunRow | undefined
     return row ? toRun(row) : undefined
+  }
+
+  private getRunningRunForSourceSync(sourceId: string): RunRow | undefined {
+    return this.database
+      .prepare(
+        `SELECT * FROM knowledge_refresh_runs
+         WHERE source_id = ? AND status = 'running'
+         ORDER BY started_at, id
+         LIMIT 1`
+      )
+      .get(sourceId) as RunRow | undefined
   }
 }
 

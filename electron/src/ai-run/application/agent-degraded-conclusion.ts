@@ -139,16 +139,19 @@ function stopReasonLabel(
   const labels = {
     'zh-CN': {
       repeated_tool_call: '检测到重复工具调用',
+      deterministic_tool_failure: '检测到确定性工具失败循环',
       consecutive_tool_failures: '连续工具执行失败',
       capability_unavailable: '所需能力在当前设备不可用',
     },
     en: {
       repeated_tool_call: 'repeated Tool calls were detected',
+      deterministic_tool_failure: 'a deterministic Tool failure loop was detected',
       consecutive_tool_failures: 'multiple Tool executions failed consecutively',
       capability_unavailable: 'a required capability is unavailable',
     },
     ja: {
       repeated_tool_call: '同じツール呼び出しが繰り返されました',
+      deterministic_tool_failure: '確定的なツール失敗の繰り返しが検出されました',
       consecutive_tool_failures: 'ツール実行が連続して失敗しました',
       capability_unavailable: '必要な機能を現在の端末で利用できません',
     },

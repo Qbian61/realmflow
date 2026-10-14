@@ -6,6 +6,7 @@ import {
 import {
   normalizeSkillDefinition,
   isToolVersionInRange,
+  requiredToolDependencyIssues,
   type SkillDefinition
 } from './skill-definition'
 import {
@@ -48,6 +49,7 @@ export type RunModelFacingSnapshot = {
 
 export type ToolCatalogStatus =
   | 'enabled'
+  | 'degraded'
   | 'disabled'
   | 'superseded'
   | 'dependency_disabled'
@@ -55,6 +57,19 @@ export type ToolCatalogStatus =
   | 'pending_review'
   | 'rejected'
   | 'unavailable'
+
+export type RuntimeToolEligibilityStatus =
+  | 'ready'
+  | 'degraded'
+  | 'unavailable'
+
+export type RuntimeToolEligibility = {
+  status: RuntimeToolEligibilityStatus
+  reasonCode: string
+  checkedAt: number
+  expiresAt: number
+  dependencyRevision: string
+}
 
 export type ToolModelFacingMode = 'direct' | 'facade' | 'directory'
 
@@ -108,6 +123,7 @@ export type ToolCatalogItem = {
   enabledPreference: boolean
   status: ToolCatalogStatus
   dependencyIssues: string[]
+  runtimeEligibility?: RuntimeToolEligibility
   revision: number
   updatedAt: number
   modelFacing?: ToolModelFacingMetadata
@@ -204,11 +220,9 @@ export function reduceToolCatalogEvents(
   const toolItems = [...tools.values()].map((item) =>
     resolveDefinitionStatus(item, packageByVersion, preferences)
   )
-  const enabledToolIds = new Set(
-    toolItems
-      .filter(({ status }) => status === 'enabled')
-      .map(({ id }) => id)
-  )
+  const enabledTools = toolItems
+    .filter(({ status }) => status === 'enabled')
+    .map(({ definition }) => definition)
   const skillItems = [...skills.values()].map((item) => {
     const resolved = resolveDefinitionStatus(
       item,
@@ -216,12 +230,10 @@ export function reduceToolCatalogEvents(
       preferences
     )
     if (resolved.status !== 'enabled') return resolved
-    const dependencyIssues = resolved.definition.requiredTools
-      .filter(
-        ({ toolId, required }) => required && !enabledToolIds.has(toolId)
-      )
-      .map(({ toolId }) => toolId)
-      .sort()
+    const dependencyIssues = requiredToolDependencyIssues(
+      resolved.definition.requiredTools,
+      enabledTools
+    )
     return dependencyIssues.length === 0
       ? resolved
       : {

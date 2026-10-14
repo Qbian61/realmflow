@@ -1,4 +1,5 @@
 import { resolve, sep } from 'node:path'
+import { mapCliConnectorArgument } from '../../../../domain/connector-runtime'
 import type { JsonObject } from '../../../../domain/tool-protocol-validation'
 import type {
   ConnectorProtocolAdapter,
@@ -78,7 +79,7 @@ export class CliConnectorAdapter implements ConnectorProtocolAdapter {
       arguments: [
         ...protocol.subcommand,
         ...protocol.argumentNames.flatMap((name) =>
-          mapArgument(name, input.arguments[name])
+          mapCliConnectorArgument(name, input.arguments[name])
         )
       ],
       cwd,
@@ -107,22 +108,4 @@ function pathAllowed(value: string, prefixes: readonly string[]): boolean {
       normalized.startsWith(`${normalizedPrefix}${sep}`)
     )
   })
-}
-
-function mapArgument(name: string, value: unknown): string[] {
-  const flag = `--${name.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}`
-  if (value === undefined || value === false || value === null) return []
-  if (value === true) return [flag]
-  if (typeof value === 'string' || typeof value === 'number') {
-    return [`${flag}=${String(value)}`]
-  }
-  if (
-    Array.isArray(value) &&
-    value.every(
-      (item) => typeof item === 'string' || typeof item === 'number'
-    )
-  ) {
-    return value.map((item) => `${flag}=${String(item)}`)
-  }
-  throw new Error('CLI Connector argument value is invalid')
 }

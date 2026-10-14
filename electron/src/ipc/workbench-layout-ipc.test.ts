@@ -24,7 +24,7 @@ describe('workbench layout IPC', () => {
     const command: UpdateWorkbenchLayoutCommand = {
       requestId: 'request-layout',
       expectedRevision: 0,
-      moduleOrder: ['tasks', 'sites', 'memos', 'terminal', 'system'],
+      moduleOrder: ['tasks', 'sites', 'memos', 'terminal', 'schedules'],
       hiddenModules: ['sites']
     }
 
@@ -70,7 +70,7 @@ describe('workbench layout IPC', () => {
   it('returns the latest Main snapshot on a revision conflict', async () => {
     const current = {
       revision: 2,
-      moduleOrder: ['terminal', 'tasks', 'sites', 'memos', 'system'] as const,
+      moduleOrder: ['terminal', 'tasks', 'sites', 'memos', 'schedules'] as const,
       hiddenModules: ['memos'] as const
     }
     const repository: WorkbenchLayoutRepository = {
@@ -86,7 +86,7 @@ describe('workbench layout IPC', () => {
       service.update({
         requestId: 'request-conflict',
         expectedRevision: 1,
-        moduleOrder: ['tasks', 'sites', 'memos', 'terminal', 'system'],
+        moduleOrder: ['tasks', 'sites', 'memos', 'terminal', 'schedules'],
         hiddenModules: []
       })
     ).resolves.toEqual({
@@ -99,7 +99,7 @@ describe('workbench layout IPC', () => {
   it('deduplicates repeated layout updates by request ID', async () => {
     const updated = {
       revision: 1,
-      moduleOrder: ['tasks', 'sites', 'memos', 'terminal', 'system'] as const,
+      moduleOrder: ['tasks', 'sites', 'memos', 'terminal', 'schedules'] as const,
       hiddenModules: ['sites'] as const
     }
     const repository: WorkbenchLayoutRepository = {

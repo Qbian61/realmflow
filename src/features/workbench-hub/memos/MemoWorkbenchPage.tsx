@@ -30,7 +30,6 @@ import {
   beginNativeDrag,
   finishNativeDrag
 } from '../../drag/native-drag-feedback'
-import { DragHandle } from '../../drag/DragHandle'
 import { WorkbenchSplitPage } from '../WorkbenchSplitPage'
 import { WorkbenchNavigationItem } from '../WorkbenchNavigationItem'
 
@@ -309,6 +308,7 @@ export function MemoWorkbenchPage({
   const Editor = EditorSurface ?? LazyMemoEditorSurface
   return (
     <WorkbenchSplitPage
+      navigationEmpty={!loadingMemos && memos.length === 0}
       navigation={
         <div className="workbench-memo-navigation">
           <div className="workbench-memo-list">
@@ -334,6 +334,8 @@ export function MemoWorkbenchPage({
               ) : (
                 <button
                   type="button"
+                  className="workbench-navigation-drag-source"
+                  draggable
                   ref={(node) => {
                     if (node) memoButtonRefs.current.set(memo.id, node)
                     else memoButtonRefs.current.delete(memo.id)
@@ -341,15 +343,6 @@ export function MemoWorkbenchPage({
                   onClick={() => void switchMemo(memo)}
                   onDoubleClick={() => beginRename(memo)}
                   aria-label={`${memo.title} ${formatUpdatedAt(memo.updatedAt, locale)}`}
-                >
-                  <span>{memo.title}</span>
-                </button>
-              )}
-              actions={
-                <>
-                <DragHandle
-                  name={memo.title}
-                  draggable
                   onDragStart={(event) => {
                     beginNativeDrag(
                       event,
@@ -368,7 +361,11 @@ export function MemoWorkbenchPage({
                     setDraggedMemoId(undefined)
                     setDropTargetMemoId(undefined)
                   }}
-                />
+                >
+                  <span>{memo.title}</span>
+                </button>
+              )}
+              actions={
                 <button
                   type="button"
                   className="danger"
@@ -380,7 +377,6 @@ export function MemoWorkbenchPage({
                 >
                   <Trash2 size={13} />
                 </button>
-                </>
               }
               onDragOver={(event) => {
                 event.preventDefault()
@@ -434,11 +430,7 @@ export function MemoWorkbenchPage({
                 onChange={changeDocument}
               />
             </Suspense>
-          ) : (
-            <div className="workbench-memo-empty">
-              {t('workbenchHub.memo.empty')}
-            </div>
-          )}
+          ) : null}
         </div>
         {activeMemo ? (
           <div className="workbench-memo-save-state" data-status={status}>

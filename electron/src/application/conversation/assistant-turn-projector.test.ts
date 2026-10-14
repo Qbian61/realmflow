@@ -230,6 +230,36 @@ describe('assistant turn projector', () => {
     ])
   })
 
+  it('projects a safe Tool recovery hint without leaking local paths', () => {
+    const projected = projectConversationRunEvent(
+      createAssistantTurnProjection({
+        runId: 'run-1',
+        assistantMessageId: 'assistant-1',
+        startedAt: 100
+      }),
+      aiEvent(1, 'tool.call.failed', {
+        toolName: 'rf_builtin_git_status_12345678',
+        toolResult: {
+          callId: 'call-git-status',
+          status: 'failed',
+          errorCode: 'git_repository_outside_scope',
+          message:
+            'Git repository is outside the authorized scope: /Users/alice/private',
+          recoveryHint:
+            'Choose the repository folder as the scope root. /Users/alice/private',
+          diagnosticId: 'toolerr_1111111111111111'
+        }
+      })
+    )
+
+    expect(projected?.toolCalls[0]).toMatchObject({
+      errorCode: 'git_repository_outside_scope',
+      error: 'Git repository is outside the authorized scope: [local path]',
+      recoveryHint: 'Choose the repository folder as the scope root. [local path]',
+      diagnosticId: 'toolerr_1111111111111111'
+    })
+  })
+
   it('caps summaries and redacts credentials and absolute local paths', () => {
     const summary = summarizeToolArguments({
       token: 'secret',
@@ -279,15 +309,17 @@ describe('assistant turn projector', () => {
           retryCount: 2,
           retryAfterMs: 5_000,
           errorCode: 'provider_rate_limited',
-          message: 'secret token at /Users/alice/private'
-        })
+          message: 'secret token at /Users/alice/private',
+          remainingAttempts: 1
+        } as AiRunEvent['data'])
       )
     ).toMatchObject({
       type: 'run.retrying',
       data: {
         attempt: 2,
         reason: 'provider_rate_limited',
-        nextRetryAt: 5_101
+        nextRetryAt: 5_101,
+        remainingAttempts: 1
       }
     })
     expect(
@@ -302,6 +334,19 @@ describe('assistant turn projector', () => {
       data: {
         reason: 'capability_unavailable',
         actions: ['resume', 'branch', 'cancel']
+      }
+    })
+    expect(
+      toAssistantRunEvent(
+        aiEvent(4, 'run.waiting_input', {
+          recoveryReason: 'deterministic_tool_failure',
+          recoveryActions: ['resume', 'cancel']
+        })
+      )
+    ).toMatchObject({
+      type: 'run.waiting_input',
+      data: {
+        reason: 'deterministic_tool_failure'
       }
     })
     expect(
@@ -328,6 +373,29 @@ describe('assistant turn projector', () => {
         )
       )
     ).not.toContain('secret')
+  })
+
+  it('preserves provider retry hints on terminal failures', () => {
+    expect(
+      toAssistantRunEvent(
+        aiEvent(1, 'run.failed', {
+          errorCode: 'provider_rate_limited',
+          message: 'Provider request failed',
+          retryCount: 1,
+          retryAfterMs: 5_000,
+          remainingAttempts: 0
+        })
+      )
+    ).toMatchObject({
+      type: 'run.failed',
+      data: {
+        errorCode: 'provider_rate_limited',
+        message: 'Provider request failed',
+        retryCount: 1,
+        retryAfterMs: 5_000,
+        remainingAttempts: 0
+      }
+    })
   })
 })
 

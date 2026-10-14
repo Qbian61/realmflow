@@ -486,6 +486,7 @@ def test_main_gateway_provider_preserves_bounded_rate_limit_guidance():
                     "retryable": True,
                     "retryAfterMs": 45_000,
                     "retryCount": 1,
+                    "remainingAttempts": 0,
                 }
             },
         )
@@ -519,6 +520,7 @@ def test_main_gateway_provider_preserves_bounded_rate_limit_guidance():
     assert raised.value.error_code == "provider_rate_limited"
     assert raised.value.retryable is True
     assert raised.value.retry_after_ms == 30_000
+    assert getattr(raised.value, "remaining_attempts", None) == 0
 
 
 def test_openai_completions_provider_preserves_allowlisted_quota_guidance():

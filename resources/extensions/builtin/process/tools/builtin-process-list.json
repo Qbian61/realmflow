@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.process.list",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "name": "List processes",
   "description": "List RealmFlow-managed processes.",
   "tags": [
@@ -15,17 +15,20 @@
   "inputSchema": {
     "type": "object",
     "additionalProperties": false,
-    "properties": {}
+    "properties": {},
+    "examples": [
+      {}
+    ]
   },
   "outputSchema": {
     "type": "object",
     "additionalProperties": true
   },
   "capabilities": [
-    "process.manage"
+    "process.inspect"
   ],
   "effects": [
-    "local_process.change"
+    "local_data.read"
   ],
   "risk": "low",
   "invocation": {

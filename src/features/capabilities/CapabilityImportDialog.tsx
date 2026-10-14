@@ -66,6 +66,16 @@ export function CapabilityImportDialog({
             <dd>{validationReport.dependencyStatus}</dd>
           </div>
           <div>
+            <dt>{t('capabilities.importProposal.contract')}</dt>
+            <dd>
+              {t(
+                validationReport.contract.status === 'passed'
+                  ? 'capabilities.importProposal.contractPassed'
+                  : 'capabilities.importProposal.contractBlocked'
+              )}
+            </dd>
+          </div>
+          <div>
             <dt>{t('capabilities.importProposal.tests')}</dt>
             <dd>
               {validationReport.tests.length}{' '}

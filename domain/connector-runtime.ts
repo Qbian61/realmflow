@@ -90,19 +90,330 @@ export function normalizeConnectorAction(value: ConnectorAction): ConnectorActio
   if (value.operation === 'write' && value.idempotency?.mode !== 'required') {
     throw new Error('Connector write action requires idempotency')
   }
+  const inputSchema = structuredClone(value.inputSchema)
+  const outputSchema = structuredClone(value.outputSchema)
+  const protocol = normalizeProtocol(value.protocol)
+  assertProtocolInputSchema(inputSchema, protocol)
   const normalized: ConnectorAction = {
     ...value,
     name: value.name.trim(),
     description: value.description.trim(),
-    inputSchema: structuredClone(value.inputSchema),
-    outputSchema: structuredClone(value.outputSchema),
+    inputSchema,
+    outputSchema,
     effects: uniqueIdentifiers(value.effects, 'effect'),
     ...(value.idempotency
       ? { idempotency: normalizeIdempotency(value.idempotency) }
       : {}),
-    protocol: normalizeProtocol(value.protocol)
+    protocol
   }
   return deepFreeze(normalized)
+}
+
+type InputObjectSchema = {
+  properties: Record<string, JsonObject>
+  required: Set<string>
+  additionalProperties: unknown
+}
+
+function assertProtocolInputSchema(
+  inputSchema: JsonObject,
+  protocol: ConnectorActionProtocol
+): void {
+  const schema = normalizeInputObjectSchema(inputSchema)
+  if (protocol.kind === 'http') {
+    assertHttpProtocolSchema(schema, protocol)
+    return
+  }
+  if (protocol.kind === 'database') {
+    assertDatabaseProtocolSchema(schema, protocol)
+    return
+  }
+  if (protocol.kind === 'cli') {
+    assertCliProtocolSchema(schema, protocol)
+  }
+}
+
+function normalizeInputObjectSchema(schema: JsonObject): InputObjectSchema {
+  if (!schemaHasOnlyTypes(schema, new Set(['object']))) {
+    throw new Error('Connector action input schema must be an object')
+  }
+  const propertiesValue = schema.properties ?? {}
+  if (!isJsonObject(propertiesValue)) {
+    throw new Error('Connector action input schema is invalid')
+  }
+  const properties = Object.fromEntries(
+    Object.entries(propertiesValue).map(([name, property]) => {
+      if (!isJsonObject(property)) {
+        throw new Error('Connector action input schema is invalid')
+      }
+      return [name, property]
+    })
+  ) as Record<string, JsonObject>
+  const requiredValue = schema.required ?? []
+  if (
+    !Array.isArray(requiredValue) ||
+    requiredValue.some((name) => typeof name !== 'string') ||
+    new Set(requiredValue).size !== requiredValue.length ||
+    requiredValue.some((name) => !(name in properties))
+  ) {
+    throw new Error('Connector action input schema is invalid')
+  }
+  return {
+    properties,
+    required: new Set(requiredValue),
+    additionalProperties: schema.additionalProperties
+  }
+}
+
+function assertHttpProtocolSchema(
+  schema: InputObjectSchema,
+  protocol: Extract<ConnectorActionProtocol, { kind: 'http' }>
+): void {
+  const placeholders = pathPlaceholders(protocol.pathTemplate)
+  assertHttpCredentialInputs(schema, protocol, placeholders)
+  for (const name of placeholders) {
+    const property = schema.properties[name]
+    if (
+      !property ||
+      !schema.required.has(name) ||
+      !isHttpPathParameterSchema(property)
+    ) {
+      throw new Error(
+        'Connector HTTP path parameter must be a required scalar input property'
+      )
+    }
+  }
+  if (protocol.method !== 'GET' && protocol.method !== 'HEAD') {
+    if (schema.additionalProperties !== false) {
+      throw new Error(
+        'Connector HTTP request body schema must match input schema'
+      )
+    }
+    return
+  }
+  for (const [name, property] of Object.entries(schema.properties)) {
+    if (!placeholders.has(name) && !isHttpQueryParameterSchema(property)) {
+      throw new Error(
+        'Connector HTTP query parameter schema must be encodable'
+      )
+    }
+  }
+}
+
+function assertHttpCredentialInputs(
+  schema: InputObjectSchema,
+  protocol: Extract<ConnectorActionProtocol, { kind: 'http' }>,
+  placeholders: Set<string>
+): void {
+  const credentialRefs = httpCredentialRefs(protocol)
+  for (const reference of credentialRefs) {
+    if (placeholders.has(reference) || reference in schema.properties) {
+      throw new Error(
+        'Connector HTTP credentials must not be model input properties'
+      )
+    }
+  }
+}
+
+function httpCredentialRefs(
+  protocol: Extract<ConnectorActionProtocol, { kind: 'http' }>
+): string[] {
+  return protocol.authentication.type === 'none'
+    ? []
+    : [protocol.authentication.credentialRef]
+}
+
+function assertDatabaseProtocolSchema(
+  schema: InputObjectSchema,
+  protocol: Extract<ConnectorActionProtocol, { kind: 'database' }>
+): void {
+  const parameterNames = [...protocol.parameterNames].sort()
+  const statementParameters = databaseStatementParameterNames(
+    protocol.statement
+  )
+  const propertyNames = Object.keys(schema.properties).sort()
+  const requiredNames = [...schema.required].sort()
+  if (
+    schema.additionalProperties !== false ||
+    !sameStrings(propertyNames, parameterNames) ||
+    !sameStrings(requiredNames, parameterNames)
+  ) {
+    throw new Error('Connector Database parameters must match input schema')
+  }
+  if (!sameStrings(parameterNames, statementParameters)) {
+    throw new Error('Connector Database parameters must match statement')
+  }
+  const tables = databaseStatementTables(protocol.statement)
+  if (
+    protocol.access === 'read' &&
+    (tables.length === 0 ||
+      tables.some((table) => !protocol.allowedTables.includes(table)))
+  ) {
+    throw new Error('Connector Database table is not allowlisted')
+  }
+}
+
+function assertCliProtocolSchema(
+  schema: InputObjectSchema,
+  protocol: Extract<ConnectorActionProtocol, { kind: 'cli' }>
+): void {
+  const argumentNames = [...protocol.argumentNames].sort()
+  const propertyNames = Object.keys(schema.properties).sort()
+  if (schema.additionalProperties !== false) {
+    throw new Error('Connector CLI arguments must match input schema')
+  }
+  if (!sameStrings(propertyNames, argumentNames)) {
+    throw new Error('Connector CLI arguments must match input schema')
+  }
+  for (const name of argumentNames) {
+    const property = schema.properties[name]
+    if (!property || !isCliArgumentSchema(property)) {
+      throw new Error('Connector CLI argument schema must be encodable')
+    }
+  }
+}
+
+function pathPlaceholders(template: string): Set<string> {
+  const names = [...template.matchAll(/\{([A-Za-z0-9._:-]+)\}/g)].map(
+    (match) => match[1]
+  )
+  if ((template.match(/[{}]/g)?.length ?? 0) !== names.length * 2) {
+    throw new Error('Connector HTTP path parameter is invalid')
+  }
+  return new Set(names)
+}
+
+export function databaseStatementParameterNames(statement: string): string[] {
+  const names = new Set<string>()
+  const pattern = /(^|[^:])[:@$]([A-Za-z_][A-Za-z0-9_]*)/g
+  for (const match of stripSqlLiterals(statement).matchAll(pattern)) {
+    names.add(match[2])
+  }
+  return [...names].sort()
+}
+
+export function databaseStatementTables(statement: string): string[] {
+  const tables = new Set<string>()
+  const pattern =
+    /\b(?:from|join|update|into|delete\s+from)\s+["`[]?([A-Za-z_][A-Za-z0-9_.]*)/gi
+  for (const match of stripSqlLiterals(statement).matchAll(pattern)) {
+    tables.add(match[1].replace(/["`\]]/g, '').split('.').at(-1)!)
+  }
+  return [...tables].sort()
+}
+
+function stripSqlLiterals(statement: string): string {
+  return statement
+    .replace(/'([^']|'')*'/g, "''")
+    .replace(/--.*$/gm, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+}
+
+export function cliArgumentFlag(name: string): string {
+  return `--${name.replace(
+    /[A-Z]/g,
+    (letter) => `-${letter.toLowerCase()}`
+  )}`
+}
+
+export function mapCliConnectorArgument(
+  name: string,
+  value: unknown
+): string[] {
+  const flag = cliArgumentFlag(name)
+  if (value === undefined || value === false) return []
+  if (value === true) return [flag]
+  if (typeof value === 'string') return [`${flag}=${value}`]
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return [`${flag}=${String(value)}`]
+  }
+  if (
+    Array.isArray(value) &&
+    value.every(
+      (item) =>
+        typeof item === 'string' ||
+        (typeof item === 'number' && Number.isFinite(item))
+    )
+  ) {
+    return value.map((item) => `${flag}=${String(item)}`)
+  }
+  throw new Error('CLI Connector argument value is invalid')
+}
+
+function isHttpPathParameterSchema(schema: JsonObject): boolean {
+  return schemaHasOnlyTypes(schema, new Set(['string', 'number', 'integer']))
+}
+
+function isHttpQueryParameterSchema(schema: JsonObject): boolean {
+  if (
+    schemaHasOnlyTypes(
+      schema,
+      new Set(['string', 'number', 'integer', 'boolean'])
+    )
+  ) {
+    return true
+  }
+  return isArraySchemaWithItemTypes(
+    schema,
+    new Set(['string', 'number', 'integer', 'boolean'])
+  )
+}
+
+function isCliArgumentSchema(schema: JsonObject): boolean {
+  if (
+    schemaHasOnlyTypes(
+      schema,
+      new Set(['string', 'number', 'integer', 'boolean'])
+    )
+  ) {
+    return true
+  }
+  return isArraySchemaWithItemTypes(
+    schema,
+    new Set(['string', 'number', 'integer'])
+  )
+}
+
+function isArraySchemaWithItemTypes(
+  schema: JsonObject,
+  itemTypes: Set<string>
+): boolean {
+  if (!schemaHasOnlyTypes(schema, new Set(['array']))) return false
+  if (!isJsonObject(schema.items)) return false
+  return schemaHasOnlyTypes(schema.items, itemTypes)
+}
+
+function schemaHasOnlyTypes(
+  schema: JsonObject,
+  allowed: Set<string>
+): boolean {
+  const declared = schemaTypes(schema)
+  return (
+    declared.length > 0 &&
+    declared.every((type) => allowed.has(type))
+  )
+}
+
+function schemaTypes(schema: JsonObject): string[] {
+  if (typeof schema.type === 'string') return [schema.type]
+  if (
+    Array.isArray(schema.type) &&
+    schema.type.every((type) => typeof type === 'string')
+  ) {
+    return schema.type
+  }
+  return []
+}
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function sameStrings(left: string[], right: string[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  )
 }
 
 function normalizeProtocol(

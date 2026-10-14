@@ -56,30 +56,6 @@ it('shows the approval selector without workspace context and preserves the draf
   ).toHaveAttribute('width', '17')
 })
 
-it('offers a one-turn context routing segmented control', () => {
-  const onContextModeChange = vi.fn()
-  render(<LocalizationProvider><Composer
-    value="继续" placeholder="输入" fileInputId="attachment-context"
-    labels={{ textarea: '内容', model: '模型', workspace: '空间', permission: '审批模式',
-      submit: '发送', menu: '菜单', openMenu: '打开', closeMenu: '关闭' }}
-    insertions={{ mode: '', skill: '', connector: '' }}
-    showContext={false} contextMode="auto" showContextMode
-    onContextModeChange={onContextModeChange}
-    onChange={vi.fn()} onSubmit={vi.fn()}
-  /></LocalizationProvider>)
-
-  const modes = screen.getByRole('radiogroup', { name: '上下文范围' })
-  expect(modes).toBeInTheDocument()
-  expect(screen.getByRole('radio', { name: '自动' })).toHaveAttribute(
-    'aria-checked',
-    'true',
-  )
-  fireEvent.click(screen.getByRole('radio', { name: '新任务' }))
-  expect(onContextModeChange).toHaveBeenCalledWith('fresh')
-  fireEvent.click(screen.getByRole('radio', { name: '继续任务' }))
-  expect(onContextModeChange).toHaveBeenCalledWith('continuation')
-})
-
 it('uses the same downward threshold as model and approval selectors for workspace placement', () => {
   render(<LocalizationProvider><Composer
     value="" placeholder="输入" fileInputId="attachment-workspace"

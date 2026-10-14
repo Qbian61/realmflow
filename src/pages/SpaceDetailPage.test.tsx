@@ -190,6 +190,27 @@ describe("SpaceDetailPage", () => {
     expect(nameTab).toHaveAttribute("aria-selected", "true");
   });
 
+  it("does not report zero knowledge sources while Main is still loading them", async () => {
+    const pending = deferred<ReturnType<typeof repositorySource>[]>();
+    const business = {
+      listKnowledgeSources: vi.fn(() => pending.promise),
+    } as unknown as RealmFlowApi["business"];
+    renderSpaceDetailHeader("Product Space", undefined, business);
+
+    expect(
+      screen.getByRole("tab", { name: "空间知识库" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: "空间知识库 (0)" }),
+    ).not.toBeInTheDocument();
+
+    await act(async () => pending.resolve([repositorySource()]));
+
+    expect(
+      await screen.findByRole("tab", { name: "空间知识库 (1)" }),
+    ).toBeInTheDocument();
+  });
+
   it("returns to the combined overview from the space name tab", () => {
     const spaceName = "Product Space";
     renderSpaceDetailHeader(spaceName);
@@ -523,15 +544,15 @@ describe("SpaceDetailPage", () => {
     expect(
       screen.getByRole("tab", { name: "xxx 空间 (0)" }),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("tab", { name: "空间知识库 (0)" }),
-    ).toBeInTheDocument();
+    const knowledgeTab = await screen.findByRole("tab", {
+      name: "空间知识库 (0)",
+    });
     expect(
       screen.getByRole("heading", { level: 1, name: "xxx 空间" }),
     ).toBeInTheDocument();
     expect(screen.queryByText("0 个需求 · 0 项资源")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("tab", { name: "空间知识库 (0)" }));
+    fireEvent.click(knowledgeTab);
     expect(
       screen.queryByRole("heading", { name: "空间资源" }),
     ).not.toBeInTheDocument();
@@ -554,6 +575,23 @@ describe("SpaceDetailPage", () => {
       await screen.findByRole("button", { name: "打开 architecture.md" }),
     );
 
+    const detailDialog = await screen.findByRole("dialog", {
+      name: "architecture.md",
+    });
+    expect(within(detailDialog).getByText("检查与索引信息")).toBeInTheDocument();
+    expect(within(detailDialog).getByText("已登记")).toBeInTheDocument();
+    expect(business.openLocalFileSource).not.toHaveBeenCalled();
+    fireEvent.click(
+      within(detailDialog).getByRole("button", {
+        name: "在工作区打开 architecture.md",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(business.openLocalFileSource).toHaveBeenCalledWith({
+        sourceId: "file-source-1",
+      }),
+    );
     expect(business.openLocalFileSource).toHaveBeenCalledWith({
       sourceId: "file-source-1",
     });
@@ -698,7 +736,7 @@ describe("SpaceDetailPage", () => {
     expect(screen.getByText("Product brief")).toBeInTheDocument();
   });
 
-  it("refreshes online documents through the unified refresh command", async () => {
+  it("checks online document updates through the unified command", async () => {
     const api = createApi();
     const source = onlineDocumentSource();
     const refreshKnowledgeSource = vi.fn(async () => ({
@@ -712,7 +750,11 @@ describe("SpaceDetailPage", () => {
     renderSpaceResources(api, business);
 
     fireEvent.click(await screen.findByRole("tab", { name: "空间知识库 (1)" }));
-    fireEvent.click(screen.getByRole("button", { name: "刷新 Product brief" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "检查更新并索引 Product brief",
+      }),
+    );
 
     await waitFor(() =>
       expect(refreshKnowledgeSource).toHaveBeenCalledWith({
@@ -725,7 +767,7 @@ describe("SpaceDetailPage", () => {
     );
   });
 
-  it("shows local knowledge health, source timestamps, and refresh policy", async () => {
+  it("shows source check/index details and refresh policy", async () => {
     const api = createApi();
     const source = {
       ...onlineDocumentSource(),
@@ -760,15 +802,18 @@ describe("SpaceDetailPage", () => {
     fireEvent.click(await screen.findByRole("tab", { name: "空间知识库 (1)" }));
 
     expect(
-      await screen.findByRole("status", { name: "本地知识运行时" }),
-    ).toHaveTextContent("本地知识可用");
-    expect(screen.getByText("上次检查")).toBeInTheDocument();
-    expect(screen.getByText("上次变化")).toBeInTheDocument();
-    expect(screen.getByText("上次索引")).toBeInTheDocument();
-    expect(screen.getByText("索引就绪")).toBeInTheDocument();
+      screen.queryByRole("status", { name: "本地知识运行时" }),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByRole("combobox", { name: "Product brief 的自动刷新周期" }),
     ).toHaveValue("30m");
+    fireEvent.click(screen.getByRole("button", { name: "打开 Product brief" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Product brief" });
+    expect(within(dialog).getByText("上次检查")).toBeInTheDocument();
+    expect(within(dialog).getByText("上次变化")).toBeInTheDocument();
+    expect(within(dialog).getByText("上次索引")).toBeInTheDocument();
+    expect(within(dialog).getByText("索引就绪")).toBeInTheDocument();
   });
 
   it("updates refresh policy through Main and reloads the source row", async () => {
@@ -817,47 +862,39 @@ describe("SpaceDetailPage", () => {
     );
   });
 
-  it("opens online documents from the local snapshot without external navigation", async () => {
+  it("opens online document details before opening it in the workbench", async () => {
     const api = createApi();
     const source = onlineDocumentSource();
+    vi.mocked(api.webWorkbench.create).mockResolvedValue({
+      id: "web-product-brief",
+      url: source.locator,
+      title: "Product brief",
+      loading: false,
+      canGoBack: false,
+      canGoForward: false,
+    });
     const business = {
       listKnowledgeSources: vi.fn(async () => [source]),
-      getOnlineDocumentSnapshot: vi.fn(async () => ({
-        document: {
-          sourceId: "source-online",
-          workspaceId: "space-1",
-          connectorId: "connector-docs",
-          path: "/documents/brief",
-          locator: source.locator,
-          mediaType: "text/markdown",
-          etag: '"revision-1"',
-          lastFetchedAt: 2,
-          createdAt: 1,
-          updatedAt: 2,
-        },
-        snapshot: {
-          id: "snapshot-1",
-          sourceId: "source-online",
-          version: 1,
-          content: "# Product brief\n\nLocal content",
-          mediaType: "text/markdown",
-          contentChecksum: "sha256:brief",
-          byteSize: 30,
-          etag: '"revision-1"',
-          fetchedAt: 2,
-        },
-      })),
     } as unknown as RealmFlowApi["business"];
     renderSpaceResources(api, business);
 
     fireEvent.click(await screen.findByRole("tab", { name: "空间知识库 (1)" }));
     fireEvent.click(screen.getByRole("button", { name: "打开 Product brief" }));
 
+    const dialog = await screen.findByRole("dialog", { name: "Product brief" });
+    expect(within(dialog).getByText("检查与索引信息")).toBeInTheDocument();
+    expect(screen.queryByText("Local content", { exact: false })).not.toBeInTheDocument();
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "在工作区打开 Product brief",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(api.webWorkbench.create).toHaveBeenCalledWith(source.locator),
+    );
     expect(
-      await screen.findByRole("dialog", { name: "Product brief" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("Local content", { exact: false }),
+      await screen.findByRole("complementary", { name: "全局工作区" }),
     ).toBeInTheDocument();
     expect(api.webWorkbench.openExternal).not.toHaveBeenCalled();
     expect(api.webWorkbench.navigate).not.toHaveBeenCalled();
@@ -999,7 +1036,7 @@ describe("SpaceDetailPage", () => {
     expect(screen.getByText(existing.name)).toBeInTheDocument();
   });
 
-  it("refreshes and previews repository snapshots through Main", async () => {
+  it("checks repository updates and previews snapshots through Main", async () => {
     const api = createApi();
     const source = repositorySource();
     const refreshKnowledgeSource = vi.fn(async () => ({
@@ -1019,7 +1056,9 @@ describe("SpaceDetailPage", () => {
 
     fireEvent.click(await screen.findByRole("tab", { name: "空间知识库 (1)" }));
     fireEvent.click(
-      screen.getByRole("button", { name: `刷新 ${source.name}` }),
+      screen.getByRole("button", {
+        name: `检查更新并索引 ${source.name}`,
+      }),
     );
     await waitFor(() =>
       expect(refreshKnowledgeSource).toHaveBeenCalledWith({
@@ -1115,7 +1154,9 @@ describe("SpaceDetailPage", () => {
 
     fireEvent.click(await screen.findByRole("tab", { name: "空间知识库 (1)" }));
     fireEvent.click(
-      screen.getByRole("button", { name: `刷新 ${source.name}` }),
+      screen.getByRole("button", {
+        name: `检查更新并索引 ${source.name}`,
+      }),
     );
 
     await waitFor(() =>
@@ -1164,7 +1205,9 @@ describe("SpaceDetailPage", () => {
 
     fireEvent.click(await screen.findByRole("tab", { name: "空间知识库 (1)" }));
     fireEvent.click(
-      screen.getByRole("button", { name: "刷新 architecture.md" }),
+      screen.getByRole("button", {
+        name: "检查更新并索引 architecture.md",
+      }),
     );
 
     await waitFor(() =>
@@ -1173,7 +1216,14 @@ describe("SpaceDetailPage", () => {
         idempotencyKey: expect.any(String),
       }),
     );
-    expect(screen.getByText("待更新")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(listKnowledgeSources).toHaveBeenCalledTimes(2),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "打开 architecture.md" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "architecture.md",
+    });
+    expect(within(dialog).getByText("待更新")).toBeInTheDocument();
   });
 
   it("loads knowledge sources from Main without writing them back", async () => {
@@ -1270,7 +1320,9 @@ describe("SpaceDetailPage", () => {
     await waitFor(() =>
       expect(business.listKnowledgeSources).toHaveBeenCalled(),
     );
-    fireEvent.click(screen.getByRole("tab", { name: "空间知识库 (0)" }));
+    fireEvent.click(
+      await screen.findByRole("tab", { name: "空间知识库 (0)" }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "上传本地文件" }));
 
     expect(
@@ -1412,18 +1464,21 @@ describe("SpaceDetailPage", () => {
     fireEvent.click(await screen.findByRole("tab", { name: "空间知识库 (1)" }));
     fireEvent.click(
       screen.getByRole("button", {
-        name: "查看 Product brief 的最近索引任务",
+        name: "打开 Product brief",
       }),
     );
 
     expect(getKnowledgeIndex).toHaveBeenCalledWith({ sourceId: "resource-1" });
+    const dialog = await screen.findByRole("dialog", {
+      name: "Product brief",
+    });
     expect(
-      await screen.findByRole("dialog", {
+      within(dialog).getByRole("heading", {
         name: "Product brief 的最近索引任务",
       }),
     ).toBeVisible();
-    expect(screen.getByText("定时任务")).toBeVisible();
-    expect(screen.getByText("本地向量数据库响应超时")).toBeVisible();
+    expect(within(dialog).getByText("定时任务")).toBeVisible();
+    expect(within(dialog).getByText("本地向量数据库响应超时")).toBeVisible();
   });
 
   it("shows failed source status and replaces it only after retry succeeds", async () => {
@@ -1492,9 +1547,25 @@ describe("SpaceDetailPage", () => {
     );
 
     fireEvent.click(await screen.findByRole("tab", { name: "空间知识库 (1)" }));
-    expect(screen.getByText("同步失败")).toBeInTheDocument();
-    expect(screen.getByText("无法读取知识源")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "刷新 Architecture" }));
+    fireEvent.click(screen.getByRole("button", { name: "打开 Architecture" }));
+    const failedDialog = await screen.findByRole("dialog", {
+      name: "Architecture",
+    });
+    expect(within(failedDialog).getByText("同步失败")).toBeInTheDocument();
+    expect(within(failedDialog).getByText("文件不可用")).toBeInTheDocument();
+    fireEvent.click(
+      within(failedDialog).getByRole("button", { name: "关闭资源详情" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Architecture" }),
+      ).not.toBeInTheDocument(),
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "检查更新并索引 Architecture",
+      }),
+    );
 
     await waitFor(() =>
       expect(refreshKnowledgeSource).toHaveBeenCalledWith({
@@ -1502,7 +1573,14 @@ describe("SpaceDetailPage", () => {
         idempotencyKey: expect.any(String),
       }),
     );
-    expect(screen.getByText("同步中")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(listKnowledgeSources).toHaveBeenCalledTimes(2),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "打开 Architecture" }));
+    const syncingDialog = await screen.findByRole("dialog", {
+      name: "Architecture",
+    });
+    expect(within(syncingDialog).getByText("同步中")).toBeInTheDocument();
   });
 
   it("shows a non-blocking status when resource persistence is unavailable", async () => {
@@ -1541,7 +1619,9 @@ describe("SpaceDetailPage", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole("tab", { name: "空间知识库 (0)" }));
+    fireEvent.click(
+      await screen.findByRole("tab", { name: "空间知识库 (0)" }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "上传本地文件" }));
     expect(
       await screen.findByRole("status", { name: "空间资源存储状态" }),

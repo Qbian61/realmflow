@@ -11,7 +11,7 @@ describe('BuiltinCatalogLoader', () => {
     const packages = await loader.load()
 
     expect(packages).toHaveLength(17)
-    expect(packages.flatMap(({ tools }) => tools)).toHaveLength(132)
+    expect(packages.flatMap(({ tools }) => tools)).toHaveLength(135)
     expect(packages.flatMap(({ skills }) => skills)).toHaveLength(10)
     expect(
       packages.flatMap(({ tools }) => tools).every(

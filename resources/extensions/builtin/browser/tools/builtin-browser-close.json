@@ -25,13 +25,30 @@
         "properties": {
           "kind": {
             "type": "string",
-            "const": "current_run"
+            "const": "current_run",
+            "description": "Discriminator selecting the schema variant for this object.",
+            "examples": [
+              "current_run"
+            ]
           }
-        }
+        },
+        "description": "Current run target object for browser or UI automation.",
+        "examples": [
+          {
+            "kind": "current_run"
+          }
+        ]
       }
     },
     "required": [
       "target"
+    ],
+    "examples": [
+      {
+        "target": {
+          "kind": "current_run"
+        }
+      }
     ]
   },
   "outputSchema": {

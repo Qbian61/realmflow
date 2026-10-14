@@ -18,7 +18,11 @@
     "properties": {
       "bundleId": {
         "type": "string",
-        "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]{1,199}$"
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]{1,199}$",
+        "description": "macOS application bundle identifier for the authorized target app.",
+        "examples": [
+          "com.realmflow.App"
+        ]
       },
       "key": {
         "type": "string",
@@ -32,6 +36,10 @@
           "right",
           "down",
           "up"
+        ],
+        "description": "Keyboard key sent to the authorized target. Allowed values: return, tab, space, delete, escape, left, right, down, up.",
+        "examples": [
+          "return"
         ]
       },
       "modifiers": {
@@ -43,15 +51,33 @@
             "control",
             "option",
             "shift"
+          ],
+          "examples": [
+            "command"
           ]
         },
         "uniqueItems": true,
-        "maxItems": 4
+        "maxItems": 4,
+        "description": "Keyboard modifier keys sent with the key press.",
+        "examples": [
+          [
+            "command"
+          ]
+        ]
       }
     },
     "required": [
       "bundleId",
       "key"
+    ],
+    "examples": [
+      {
+        "bundleId": "com.realmflow.App",
+        "key": "return",
+        "modifiers": [
+          "command"
+        ]
+      }
     ]
   },
   "outputSchema": {

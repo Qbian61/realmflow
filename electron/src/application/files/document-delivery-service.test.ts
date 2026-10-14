@@ -176,6 +176,102 @@ describe('DocumentDeliveryService', () => {
     expect(engine.exportDocumentPdf).not.toHaveBeenCalled()
   })
 
+  it('delegates DOCX PDF exports to PdfGenerationService when configured', async () => {
+    const source = Buffer.from('source')
+    const sourcePath = join(root, 'source.docx')
+    await writeFile(sourcePath, source)
+    const engine = {
+      createDocument: vi.fn(),
+      exportDocumentPdf: vi.fn(),
+      verifyDocumentArtifact: vi.fn()
+    }
+    const pdfGeneration = {
+      generate: vi.fn().mockResolvedValue({
+        requestId: 'request-export',
+        status: 'succeeded',
+        idempotencyFingerprint: `sha256:${'c'.repeat(64)}`,
+        artifact: {
+          path: 'result.pdf',
+          format: 'pdf',
+          byteSize: 2048,
+          checksum: `sha256:${'d'.repeat(64)}`,
+          pageCount: 2,
+          backend: 'libreoffice_docx_pdf',
+          quality: 'print',
+          warnings: []
+        },
+        route: {
+          selectedBackend: 'libreoffice_docx_pdf',
+          quality: 'print',
+          degraded: false,
+          reasons: ['libreoffice_ready'],
+          warnings: []
+        },
+        completedAt: 200
+      })
+    }
+    const service = new DocumentDeliveryService({
+      engine,
+      storage: storage(directory),
+      pdfGeneration
+    })
+    const signal = new AbortController().signal
+
+    await expect(
+      service.exportPdf({
+        sourceCanonicalPath: sourcePath,
+        sourceRelativePath: 'source.docx',
+        sourceChecksum: checksum(source),
+        outputCanonicalPath: join(root, 'result.pdf'),
+        outputRelativePath: 'result.pdf',
+        operation: {
+          requestId: 'request-export',
+          scopeRoot: root,
+          requirementId: 'requirement-1',
+          nodeRunId: 'node-1'
+        },
+        signal
+      })
+    ).resolves.toEqual({
+      path: 'result.pdf',
+      format: 'pdf',
+      byteSize: 2048,
+      checksum: `sha256:${'d'.repeat(64)}`,
+      pageCount: 2,
+      converter: 'libreoffice',
+      quality: 'print',
+      warnings: [],
+      backend: 'libreoffice_docx_pdf',
+      routeDecision: {
+        selectedBackend: 'libreoffice_docx_pdf',
+        quality: 'print',
+        degraded: false,
+        reasons: ['libreoffice_ready'],
+        warnings: []
+      }
+    })
+    expect(pdfGeneration.generate).toHaveBeenCalledWith(
+      {
+        requestId: 'request-export',
+        scopeRoot: root,
+        outputPath: 'result.pdf',
+        expectedAbsent: true,
+        source: {
+          kind: 'docx',
+          sourcePath: 'source.docx',
+          sourceChecksum: checksum(source)
+        },
+        qualityPolicy: 'prefer_print_layout',
+        operation: {
+          requirementId: 'requirement-1',
+          nodeRunId: 'node-1'
+        }
+      },
+      signal
+    )
+    expect(engine.exportDocumentPdf).not.toHaveBeenCalled()
+  })
+
   it('recovers a file committed before the verification receipt after restart', async () => {
     const bytes = Buffer.from('recoverable-docx')
     const databasePath = join(directory, 'realmflow.db')

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.files.apply_patch",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "name": "Apply patch",
   "description": "Apply a patch with prior-content validation.",
   "tags": [
@@ -23,15 +23,27 @@
     "properties": {
       "path": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Authorized local path as a relative path under the authorized root. Do not invent or pass absolute local paths.",
+        "examples": [
+          "docs/example.md"
+        ]
       },
       "scopeRoot": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Optional authorized root override. Omit or pass \".\" to use the current authorized root.",
+        "examples": [
+          "."
+        ]
       },
       "expectedChecksum": {
         "type": "string",
-        "pattern": "^[a-f0-9]{64}$"
+        "pattern": "^[a-f0-9]{64}$",
+        "description": "SHA-256 checksum of the authorized prior file content.",
+        "examples": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ]
       },
       "edits": {
         "type": "array",
@@ -47,18 +59,63 @@
           "properties": {
             "oldText": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "description": "Exact prior text that must be present before the patch edit is applied.",
+              "examples": [
+                "example"
+              ]
             },
             "newText": {
-              "type": "string"
+              "type": "string",
+              "description": "Replacement text inserted by the patch edit.",
+              "examples": [
+                ""
+              ]
             },
             "replaceAll": {
-              "type": "boolean"
+              "type": "boolean",
+              "description": "Whether every match should be replaced instead of only the first match.",
+              "examples": [
+                true
+              ]
             }
-          }
-        }
+          },
+          "examples": [
+            [
+              {
+                "oldText": "before",
+                "newText": "after",
+                "replaceAll": false
+              }
+            ]
+          ]
+        },
+        "description": "Ordered patch edits with exact prior text and replacement text.",
+        "examples": [
+          [
+            {
+              "oldText": "before",
+              "newText": "after",
+              "replaceAll": false
+            }
+          ]
+        ]
       }
-    }
+    },
+    "examples": [
+      {
+        "path": "docs/example.md",
+        "scopeRoot": ".",
+        "expectedChecksum": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "edits": [
+          {
+            "oldText": "before",
+            "newText": "after",
+            "replaceAll": false
+          }
+        ]
+      }
+    ]
   },
   "outputSchema": {
     "type": "object",

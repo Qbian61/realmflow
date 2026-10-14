@@ -1,53 +1,38 @@
-import {
-  BookOpen,
-  DatabaseZap,
-  File,
-  FileCode2,
-  History,
-  RefreshCw,
-  Trash2,
-} from "lucide-react";
+import { DatabaseZap, Trash2 } from "lucide-react";
+import { useId, useState, type FocusEvent } from "react";
 import type { KnowledgeRefreshPreset } from "../../../domain/knowledge-refresh";
 import type { SpaceResource } from "../../domain/space-resource";
-import {
-  Badge,
-  IconButton,
-  Select,
-} from "../../components/ui";
+import { IconButton, Select } from "../../components/ui";
 import { useLocalization } from "../../localization/LocalizationProvider";
-import type { TranslationKey } from "../../localization/translate";
+import {
+  getResourceDisplayType,
+  resourceDisplayTypeLabelKeys,
+} from "./resource-display-type";
+import {
+  getResourceIcon,
+  getResourceIndexErrorLabelKey,
+  getResourceIndexHealth,
+  type RepositoryIndexStatus,
+  type RepositoryIndexStatusCounts,
+  repositoryIndexStatusLabelKeys,
+  resourceIndexHealthLabelKeys,
+} from "./resource-presentation";
 
-const resourceLabelKeys = {
-  file: "resources.type.file",
-  document: "resources.type.document",
-  repository: "resources.type.repository",
-} as const satisfies Record<SpaceResource["type"], TranslationKey>;
-
-const resourceStatusLabelKeys = {
-  registered: "resources.status.registered",
-  syncing: "resources.status.syncing",
-  indexed: "resources.status.indexed",
-  stale: "resources.status.stale",
-  failed: "resources.status.failed",
-  removed: "resources.status.removed",
-} as const satisfies Record<
-  NonNullable<SpaceResource["status"]>,
-  TranslationKey
->;
-
-const indexHealthLabelKeys = {
-  missing: "resources.index.missing",
-  building: "resources.index.building",
-  ready: "resources.index.ready",
-  failed: "resources.index.failed",
-} as const satisfies Record<
-  NonNullable<SpaceResource["index"]>["health"],
-  TranslationKey
->;
+export type RepositoryIndexStatusSummaryState = {
+  loading: boolean;
+  counts?: RepositoryIndexStatusCounts;
+  error?: boolean;
+};
 
 const refreshPresets: ReadonlyArray<{
   value: KnowledgeRefreshPreset;
-  label: TranslationKey;
+  label:
+    | "resources.refresh.manual"
+    | "resources.refresh.5m"
+    | "resources.refresh.15m"
+    | "resources.refresh.30m"
+    | "resources.refresh.1h"
+    | "resources.refresh.daily";
 }> = [
   { value: "manual", label: "resources.refresh.manual" },
   { value: "5m", label: "resources.refresh.5m" },
@@ -61,47 +46,70 @@ export function KnowledgeResourceRow({
   resource,
   onOpen,
   onSync,
-  onIndex,
-  onViewLatestIndexJob,
   onRefreshPolicyChange,
   onRemove,
+  repositoryIndexStatusSummary,
+  onLoadRepositoryIndexStatusSummary,
 }: {
   resource: SpaceResource;
   onOpen: (resource: SpaceResource) => Promise<void>;
   onSync: (resource: SpaceResource) => Promise<void>;
-  onIndex: (resource: SpaceResource) => Promise<void>;
-  onViewLatestIndexJob: (resource: SpaceResource) => void;
   onRefreshPolicyChange: (
     resource: SpaceResource,
     preset: KnowledgeRefreshPreset,
   ) => Promise<void>;
   onRemove: (resource: SpaceResource) => Promise<void>;
+  repositoryIndexStatusSummary?: RepositoryIndexStatusSummaryState;
+  onLoadRepositoryIndexStatusSummary?: (resource: SpaceResource) => void;
 }): JSX.Element {
-  const { locale, t } = useLocalization();
-  const ResourceIcon =
-    resource.type === "file"
-      ? File
-      : resource.type === "repository"
-        ? FileCode2
-        : BookOpen;
-  const canIndex =
+  const { t } = useLocalization();
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  const summaryId = useId();
+  const ResourceIcon = getResourceIcon(resource);
+  const canCheckAndIndex =
     resource.status &&
     resource.status !== "syncing" &&
     resource.status !== "removed";
-  const indexLabel = t(
-    resource.index?.health === "ready"
-      ? "resources.action.rebuildIndex"
-      : "resources.action.buildIndex",
-    { name: resource.name },
-  );
-  const resourceStatus = resource.status
-    ? t(resourceStatusLabelKeys[resource.status])
-    : undefined;
-  const indexAvailability = resource.index
-    ? t(indexHealthLabelKeys[resource.index.health])
-    : undefined;
-  const refreshLabel = t("resources.action.refresh", { name: resource.name });
+  const indexLabel = t("resources.action.checkAndIndex", {
+    name: resource.name,
+  });
+  const indexTooltipLabel = t("resources.action.checkAndIndexTooltip");
+  const resourceDisplayType = getResourceDisplayType(resource);
   const deleteLabel = t("resources.action.delete", { name: resource.name });
+  const deleteTooltipLabel = t("resources.action.deleteTooltip");
+  const resourceSubtitle = resourceSubtitleText(resource, t("resources.never"));
+  const indexHealth = getResourceIndexHealth(resource);
+  const indexStatusLabel = t(resourceIndexHealthLabelKeys[indexHealth]);
+  const indexErrorLabelKey = getResourceIndexErrorLabelKey(resource);
+  const indexErrorMessage = indexErrorLabelKey
+    ? t(indexErrorLabelKey)
+    : undefined;
+  const indexFailureAria = indexErrorMessage
+    ? t("resources.indexFailureAria", {
+        status: indexStatusLabel,
+        message: indexErrorMessage,
+      })
+    : undefined;
+  const indexFailureTitle = indexErrorMessage
+    ? t("resources.indexFailureTitle", { message: indexErrorMessage })
+    : undefined;
+  const canShowRepositoryIndexSummary = resource.type === "repository";
+  const openRepositoryIndexSummary = (): void => {
+    if (!canShowRepositoryIndexSummary) return;
+    setSummaryOpen(true);
+    onLoadRepositoryIndexStatusSummary?.(resource);
+  };
+  const closeRepositoryIndexSummary = (
+    event: FocusEvent<HTMLSpanElement>,
+  ): void => {
+    if (
+      event.relatedTarget instanceof Node &&
+      event.currentTarget.contains(event.relatedTarget)
+    ) {
+      return;
+    }
+    setSummaryOpen(false);
+  };
 
   return (
     <div role="row">
@@ -117,68 +125,72 @@ export function KnowledgeResourceRow({
           </span>
           <span>
             <strong>{resource.name}</strong>
-            <small className="space-resource-locator" title={resource.locator}>
-              {resource.locator}
-            </small>
+            {resourceSubtitle ? (
+              <small className="space-resource-name-meta">
+                {resourceSubtitle}
+              </small>
+            ) : null}
           </span>
         </button>
       </div>
-      <span role="cell">{t(resourceLabelKeys[resource.type])}</span>
-      <span className="space-resource-state" role="cell">
-        <span className="space-resource-detail">{resource.detail}</span>
-        {resourceStatus ? (
-          <Badge
-            tone={resourceStatusTone(resource.status)}
-            className="space-resource-status-line"
-            aria-label={`${t("resources.resourceStatus")}：${resourceStatus}`}
-          >
-            <small>{t("resources.resourceStatus")}</small>
-            <strong>{resourceStatus}</strong>
-          </Badge>
-        ) : null}
-        {indexAvailability ? (
-          <Badge
-            tone={indexHealthTone(resource.index?.health)}
-            className="space-resource-status-line"
-            aria-label={`${t("resources.indexAvailability")}：${indexAvailability}`}
-          >
-            <small>{t("resources.indexAvailability")}</small>
-            <strong data-health={resource.index?.health}>
-              {indexAvailability}
-            </strong>
-          </Badge>
-        ) : null}
-        {resource.errorMessage ? (
-          <small className="space-resource-error">
-            {resource.errorMessage}
-          </small>
-        ) : null}
+      <span role="cell">
+        {t(resourceDisplayTypeLabelKeys[resourceDisplayType])}
       </span>
-      <span className="space-resource-timestamps" role="cell">
-        <small>
-          <b>{t("resources.lastChecked")}</b>
-          {formatTimestamp(
-            resource.refresh?.lastCheckedAt,
-            locale,
-            t("resources.never"),
-          )}
-        </small>
-        <small>
-          <b>{t("resources.lastChanged")}</b>
-          {formatTimestamp(
-            resource.refresh?.lastChangedAt,
-            locale,
-            t("resources.never"),
-          )}
-        </small>
-        <small>
-          <b>{t("resources.lastIndexed")}</b>
-          {formatTimestamp(
-            resource.index?.indexedAt,
-            locale,
-            t("resources.never"),
-          )}
-        </small>
+      <span role="cell">
+        {canShowRepositoryIndexSummary ? (
+          <span
+            className="space-resource-index-status-wrap"
+            onMouseEnter={openRepositoryIndexSummary}
+            onMouseLeave={() => setSummaryOpen(false)}
+            onFocus={openRepositoryIndexSummary}
+            onBlur={closeRepositoryIndexSummary}
+          >
+            <span
+              className="space-resource-index-status"
+              data-health={indexHealth}
+              tabIndex={0}
+              aria-describedby={summaryOpen ? summaryId : undefined}
+              aria-label={indexFailureAria}
+              title={indexFailureTitle}
+            >
+              {indexStatusLabel}
+            </span>
+            {summaryOpen ? (
+              <RepositoryIndexStatusSummaryTooltip
+                id={summaryId}
+                summary={repositoryIndexStatusSummary}
+                labels={{
+                  title: t("resources.repositoryIndexStatusSummary.title"),
+                  loading: t("resources.repositoryIndexStatusSummary.loading"),
+                  empty: t("resources.repositoryIndexStatusSummary.empty"),
+                  loadFailed: t(
+                    "resources.repositoryIndexStatusSummary.loadFailed",
+                  ),
+                  count: (count) =>
+                    t("resources.repositoryIndexStatusSummary.count", {
+                      count,
+                    }),
+                  statuses: {
+                    indexed: t(repositoryIndexStatusLabelKeys.indexed),
+                    failed: t(repositoryIndexStatusLabelKeys.failed),
+                    indexing: t(repositoryIndexStatusLabelKeys.indexing),
+                    pending: t(repositoryIndexStatusLabelKeys.pending),
+                    skipped: t(repositoryIndexStatusLabelKeys.skipped),
+                  },
+                }}
+              />
+            ) : null}
+          </span>
+        ) : (
+          <span
+            className="space-resource-index-status"
+            data-health={indexHealth}
+            aria-label={indexFailureAria}
+            title={indexFailureTitle}
+          >
+            {indexStatusLabel}
+          </span>
+        )}
       </span>
       <span className="space-resource-row-actions" role="cell">
         {resource.refresh ? (
@@ -199,13 +211,13 @@ export function KnowledgeResourceRow({
             ))}
           </Select>
         ) : null}
-        {canIndex ? (
+        {canCheckAndIndex ? (
           <IconButton
             size="compact"
             variant="ghost"
             aria-label={indexLabel}
-            title={indexLabel}
-            onClick={() => void onIndex(resource)}
+            title={indexTooltipLabel}
+            onClick={() => void onSync(resource)}
           >
             <DatabaseZap size={14} />
           </IconButton>
@@ -213,28 +225,8 @@ export function KnowledgeResourceRow({
         <IconButton
           size="compact"
           variant="ghost"
-          aria-label={t("resources.indexJob.open", { name: resource.name })}
-          title={t("tooltip.viewIndexJob")}
-          onClick={() => onViewLatestIndexJob(resource)}
-        >
-          <History size={14} />
-        </IconButton>
-        {resource.status !== "syncing" && resource.status !== "removed" ? (
-          <IconButton
-            size="compact"
-            variant="ghost"
-            aria-label={refreshLabel}
-            title={refreshLabel}
-            onClick={() => void onSync(resource)}
-          >
-            <RefreshCw size={14} />
-          </IconButton>
-        ) : null}
-        <IconButton
-          size="compact"
-          variant="ghost"
           aria-label={deleteLabel}
-          title={deleteLabel}
+          title={deleteTooltipLabel}
           onClick={() => void onRemove(resource)}
         >
           <Trash2 size={14} />
@@ -244,33 +236,94 @@ export function KnowledgeResourceRow({
   );
 }
 
-function resourceStatusTone(
-  status: SpaceResource["status"],
-): "neutral" | "success" | "warning" | "danger" | "info" {
-  if (status === "indexed") return "success";
-  if (status === "syncing") return "info";
-  if (status === "stale") return "warning";
-  if (status === "failed") return "danger";
-  return "neutral";
+const repositoryIndexStatusOrder: RepositoryIndexStatus[] = [
+  "indexed",
+  "failed",
+  "indexing",
+  "pending",
+  "skipped",
+];
+
+function RepositoryIndexStatusSummaryTooltip({
+  id,
+  summary,
+  labels,
+}: {
+  id: string;
+  summary?: RepositoryIndexStatusSummaryState;
+  labels: {
+    title: string;
+    loading: string;
+    empty: string;
+    loadFailed: string;
+    count: (count: number) => string;
+    statuses: Record<RepositoryIndexStatus, string>;
+  };
+}): JSX.Element {
+  const rows = repositoryIndexStatusOrder
+    .map((status) => ({
+      status,
+      count: summary?.counts?.[status] ?? 0,
+    }))
+    .filter(({ count }) => count > 0);
+
+  return (
+    <span
+      id={id}
+      className="space-resource-index-status-summary"
+      role="tooltip"
+      aria-label={labels.title}
+    >
+      <strong>{labels.title}</strong>
+      {!summary || summary.loading ? (
+        <span className="space-resource-index-status-summary-message">
+          {labels.loading}
+        </span>
+      ) : summary.error ? (
+        <span className="space-resource-index-status-summary-message">
+          {labels.loadFailed}
+        </span>
+      ) : rows.length === 0 ? (
+        <span className="space-resource-index-status-summary-message">
+          {labels.empty}
+        </span>
+      ) : (
+        rows.map(({ status, count }) => (
+          <span
+            className="space-resource-index-status-summary-row"
+            data-status={status}
+            key={status}
+          >
+            <span>{labels.statuses[status]}</span>
+            <b>{labels.count(count)}</b>
+          </span>
+        ))
+      )}
+    </span>
+  );
 }
 
-function indexHealthTone(
-  health: NonNullable<SpaceResource["index"]>["health"] | undefined,
-): "neutral" | "success" | "warning" | "danger" | "info" {
-  if (health === "ready") return "success";
-  if (health === "building") return "info";
-  if (health === "failed") return "danger";
-  return "neutral";
+function resourceSubtitleText(
+  resource: SpaceResource,
+  fallback: string,
+): string | undefined {
+  if (resource.type !== "repository") return undefined;
+  const branch =
+    resource.repository?.selectedBranch ??
+    resource.repository?.revisionLabel?.split("@")[0] ??
+    fallback;
+  const revision = formatRepositoryRevision(
+    resource.repository?.revisionLabel,
+    fallback,
+  );
+  return `${branch} · ${revision}`;
 }
 
-function formatTimestamp(
-  value: number | null | undefined,
-  locale: string,
+function formatRepositoryRevision(
+  revisionLabel: string | undefined,
   fallback: string,
 ): string {
-  if (!value) return fallback;
-  return new Intl.DateTimeFormat(locale, {
-    dateStyle: "short",
-    timeStyle: "short",
-  }).format(value);
+  if (!revisionLabel) return fallback;
+  const [, revision] = revisionLabel.split("@");
+  return revision || revisionLabel;
 }

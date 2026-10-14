@@ -31,7 +31,8 @@ import type {
   AdapterPreparation,
   PreparedToolInvocation,
   ResolvedToolBinding,
-  ToolConnectorGrant
+  ToolConnectorGrant,
+  ToolExecutionError
 } from './tool-adapter'
 import type { ToolAdapterRegistry } from './tool-adapter-registry'
 import type { ToolEventStore } from './tool-event-store'
@@ -61,9 +62,11 @@ import {
   isAssistantRuntimeControl,
   resolveModelFacingFacadeInvocation
 } from './tool-model-facing-projection'
+import { compileRuntimeToolInputSchema } from './model-tool-contract-compiler'
 import { directorySearchOutput, directoryDescribeOutput } from './tool-directory'
 import { ToolPermissionReuse } from './tool-permission-reuse'
 import { runtimeControlEffects } from './runtime-control-effects'
+import { normalizeToolExecutionError } from './tool-error-envelope'
 
 export type ToolExecutionCommand = {
   definition: ToolDefinitionReference
@@ -99,7 +102,7 @@ export type ToolExecutionRecord = {
   id: string
   status: 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
   output?: Record<string, unknown>
-  error?: { code: string; message: string }
+  error?: ToolExecutionError
   finishedAt?: number
 }
 
@@ -138,6 +141,9 @@ type RuntimeInvocation = ResolvedRuntimeInvocation & {
   modelFacingFacade?: ToolFacadeDispatchMetadata
   modelFacingDirectory?: ToolDirectoryDispatchMetadata
 }
+
+type DispatchCompletion = 'terminal' | 'retry_scheduled'
+type RetryWaitRestoreResult = 'restored' | 'handled' | 'missing'
 
 type ToolFacadeDispatchMetadata = {
   id: string
@@ -777,15 +783,17 @@ export class ToolExecutionApplicationService {
         output: result.output
       })
     }
-    await this.completeDispatch(
+    const completion = await this.completeDispatch(
       executionId,
       message.id,
       attempt,
       result,
       runtime
     )
-    this.pending.delete(executionId)
-    await this.dependencies.pendingCheckpoints.delete(executionId)
+    if (completion === 'terminal') {
+      this.pending.delete(executionId)
+      await this.dependencies.pendingCheckpoints.delete(executionId)
+    }
   }
 
   async resolvePermission(
@@ -1032,6 +1040,7 @@ export class ToolExecutionApplicationService {
     await this.catchUpProjection()
     const executionIds = await this.scanExecutionIds(() => true)
     let recovered = 0
+    let restoredRetryWait = 0
     for (const executionId of executionIds) {
       const state = await this.dependencies.projections.getExecution(
         executionId
@@ -1043,6 +1052,16 @@ export class ToolExecutionApplicationService {
         )
       ) {
         continue
+      }
+      if (state.status === 'retry_wait') {
+        const restore = await this.restoreRetryWaitExecution(executionId, state)
+        if (restore !== 'missing') {
+          if (restore === 'restored') {
+            restoredRetryWait += 1
+          }
+          recovered += 1
+          continue
+        }
       }
       const at = this.now()
       await this.appendExecutionEvents(
@@ -1070,6 +1089,10 @@ export class ToolExecutionApplicationService {
         'realmflow'
       )
       recovered += 1
+    }
+    if (restoredRetryWait > 0) {
+      await this.drainOutbox()
+      await this.catchUpProjection()
     }
     if (recovered > 0) await this.catchUpProjection()
     return recovered
@@ -1119,6 +1142,65 @@ export class ToolExecutionApplicationService {
     }
     await this.catchUpProjection()
     return restored
+  }
+
+  private async restoreRetryWaitExecution(
+    executionId: string,
+    state: ToolExecutionState
+  ): Promise<RetryWaitRestoreResult> {
+    const checkpoint = await this.dependencies.pendingCheckpoints.load(
+      executionId
+    )
+    if (!checkpoint) return 'missing'
+    const restoredRuntime = parsePendingRuntime(checkpoint.runtime)
+    if (
+      restoredRuntime.invocation.executionId !== executionId ||
+      restoredRuntime.invocation.idempotencyKey.length === 0 ||
+      restoredRuntime.invocation.attempt !== state.attempts.length + 1 ||
+      restoredRuntime.effectsDigest !== state.effects?.digest ||
+      restoredRuntime.effects.length !== state.effects?.count ||
+      toolExecutionDigest(restoredRuntime.invocation.arguments) !==
+        state.argumentsDigest
+    ) {
+      return 'missing'
+    }
+    if (!await this.pendingPolicyValid(restoredRuntime)) {
+      await this.interruptUnavailable(
+        executionId,
+        `retry-restore:${executionId}:policy-changed`,
+        'tool_policy_changed',
+        restoredRuntime
+      )
+      return 'handled'
+    }
+    const definition = await this.resolveDefinition(
+      restoredRuntime.command.definition,
+      restoredRuntime.command
+    )
+    const binding = (await this.prepareRuntime(
+      restoredRuntime.command,
+      definition,
+      executionId,
+      restoredRuntime.invocation.attemptId,
+      restoredRuntime.invocation.idempotencyKey,
+      restoredRuntime.invocation.attempt
+    )).binding
+    const preparation = runtimeControlEffects(
+      definition,
+      restoredRuntime.invocation.arguments
+    )
+      ? { outcome: 'ready' as const }
+      : await this.dependencies.adapters.prepare(
+          binding,
+          restoredRuntime.invocation
+        )
+    if (preparation.outcome !== 'ready') return 'missing'
+    this.pending.set(executionId, {
+      ...restoredRuntime,
+      definition,
+      binding
+    })
+    return 'restored'
   }
 
   async listReusablePermissions(): Promise<ReusableToolPermissionView[]> {
@@ -1284,7 +1366,7 @@ export class ToolExecutionApplicationService {
     const validate = new Ajv2020({
       strict: true,
       allErrors: true
-    }).compile(definition.inputSchema)
+    }).compile(compileRuntimeToolInputSchema(definition.inputSchema))
     if (!validate(input)) {
       throw new ToolArgumentValidationError(
         `Tool arguments invalid: ${formatSchemaErrors(validate.errors)}`
@@ -1297,7 +1379,8 @@ export class ToolExecutionApplicationService {
     definition: ToolDefinition,
     executionId: string,
     attemptId: string,
-    idempotencyKey: string
+    idempotencyKey: string,
+    attempt = 1
   ): Promise<ResolvedRuntimeInvocation> {
     const context = toolRuntimeContext(command, executionId)
     const binding: ResolvedToolBinding = runtimeControlEffects(definition, command.input as JsonObject)
@@ -1320,7 +1403,7 @@ export class ToolExecutionApplicationService {
         executionId,
         idempotencyKey,
         attemptId,
-        attempt: 1,
+        attempt,
         requestedBy: toolRequestedBy(command),
         arguments: cloneJsonObject(command.input, 'Tool arguments'),
         scopeRoots: await this.dependencies.resolveScopeRoots(command),
@@ -1837,6 +1920,15 @@ export class ToolExecutionApplicationService {
     const at = this.now()
     const metadata = this.metadata(input.command, commandId, at)
     const effectsDigest = toolExecutionDigest([])
+    const failureError = input.status === 'failed'
+      ? normalizeToolExecutionError({
+          ...(input.error ?? {
+            code: 'directory_tool_failed',
+            message: 'Directory control Tool failed'
+          }),
+          retryable: false
+        })
+      : undefined
     const resultEvents = input.status === 'succeeded'
       ? [
           ...(input.artifact
@@ -1866,13 +1958,7 @@ export class ToolExecutionApplicationService {
             'tool.attempt_failed',
             {
               attempt,
-              error: {
-                ...(input.error ?? {
-                  code: 'directory_tool_failed',
-                  message: 'Directory control Tool failed'
-                }),
-                retryable: false
-              },
+              error: failureError!,
               metrics: { durationMs: 0, outputBytes: 0 },
               finishedAt: at
             },
@@ -1883,13 +1969,7 @@ export class ToolExecutionApplicationService {
             'tool.failed',
             {
               failedAt: at,
-              error: {
-                ...(input.error ?? {
-                  code: 'directory_tool_failed',
-                  message: 'Directory control Tool failed'
-                }),
-                retryable: false
-              }
+              error: failureError!
             },
             metadata
           )
@@ -1997,7 +2077,7 @@ export class ToolExecutionApplicationService {
     attempt: number,
     result: Awaited<ReturnType<ToolAdapterRegistry['execute']>>,
     runtime: RuntimeInvocation
-  ): Promise<void> {
+  ): Promise<DispatchCompletion> {
     const at = this.now()
     if (result.outcome === 'succeeded') {
       const artifacts = (result.artifacts ?? []).map((artifact) => ({
@@ -2040,9 +2120,14 @@ export class ToolExecutionApplicationService {
           )
         ]
       )
-      return
+      return 'terminal'
     }
     if (result.outcome === 'cancelled') {
+      const error = normalizeToolExecutionError({
+        code: 'tool_cancelled',
+        message: 'Tool execution was cancelled',
+        retryable: false
+      })
       await this.appendExecutionEvents(
         executionId,
         `${dispatchId}:cancelled`,
@@ -2058,14 +2143,18 @@ export class ToolExecutionApplicationService {
         ],
         'system',
         'realmflow',
-        this.terminalFailureOutbox(runtime, executionId, {
-          code: 'tool_cancelled',
-          message: 'Tool execution was cancelled'
-        })
+        this.terminalFailureOutbox(runtime, executionId, error)
       )
-      return
+      return 'terminal'
     }
     if (result.outcome === 'interrupted') {
+      const error = normalizeToolExecutionError(
+        result.error ?? {
+          code: 'tool_interrupted',
+          message: 'Tool execution was interrupted',
+          retryable: false
+        }
+      )
       await this.appendExecutionEvents(
         executionId,
         `${dispatchId}:interrupted`,
@@ -2074,27 +2163,68 @@ export class ToolExecutionApplicationService {
             eventType: 'tool.interrupted',
             payload: {
               interruptedAt: at,
-              ...(result.error ? { error: result.error } : {})
+              error
             }
           }
         ],
         'system',
         'realmflow',
-        this.terminalFailureOutbox(
-          runtime,
-          executionId,
-          result.error ?? {
-            code: 'tool_interrupted',
-            message: 'Tool execution was interrupted'
-          }
-        )
+        this.terminalFailureOutbox(runtime, executionId, error)
       )
-      return
+      return 'terminal'
     }
-    const error = result.error ?? {
-      code: 'tool_execution_failed',
-      message: 'Tool execution failed',
-      retryable: false
+    const error = normalizeToolExecutionError(
+      result.error ?? {
+        code: 'tool_execution_failed',
+        message: 'Tool execution failed',
+        retryable: false
+      }
+    )
+    if (this.canRetryToolInvocation(runtime, attempt, error)) {
+      const nextDispatchId = this.createId()
+      const nextRuntime = this.nextRetryRuntime(runtime)
+      await this.dependencies.pendingCheckpoints.save({
+        schemaVersion: 1,
+        executionId,
+        runtime: serializePendingRuntime(nextRuntime),
+        savedAt: at
+      })
+      await this.appendExecutionEvents(
+        executionId,
+        `${dispatchId}:retry:${nextRuntime.invocation.attempt}`,
+        [
+          {
+            eventType: 'tool.attempt_failed',
+            payload: {
+              attempt,
+              error,
+              metrics: result.metrics,
+              finishedAt: at
+            }
+          },
+          {
+            eventType: 'tool.retry_scheduled',
+            payload: {
+              nextAttempt: nextRuntime.invocation.attempt,
+              retryAt: at
+            }
+          }
+        ],
+        'system',
+        'realmflow',
+        [
+          {
+            id: nextDispatchId,
+            topic: 'tool.dispatch',
+            messageKey: executionId,
+            payload: { executionId },
+            headers: {},
+            availableAt: at
+          }
+        ]
+      )
+      this.pending.set(executionId, nextRuntime)
+      return 'retry_scheduled'
     }
     await this.appendExecutionEvents(
       executionId,
@@ -2118,6 +2248,58 @@ export class ToolExecutionApplicationService {
       'realmflow',
       this.terminalFailureOutbox(runtime, executionId, error)
     )
+    return 'terminal'
+  }
+
+  private canRetryToolInvocation(
+    runtime: RuntimeInvocation,
+    attempt: number,
+    error: ToolExecutionError
+  ): boolean {
+    if (!error.retryable) return false
+    if (attempt >= runtime.definition.resources.maxAttempts) return false
+    if (runtime.invocation.attempt !== attempt) return false
+    if (
+      this.hasSideEffect(runtime.effects) &&
+      runtime.definition.invocation.idempotency !== 'required'
+    ) {
+      return false
+    }
+    return true
+  }
+
+  private nextRetryRuntime(runtime: RuntimeInvocation): RuntimeInvocation {
+    return {
+      ...runtime,
+      command: {
+        ...runtime.command,
+        context: { ...runtime.command.context },
+        input: cloneJsonObject(runtime.command.input, 'Tool arguments')
+      },
+      invocation: {
+        ...runtime.invocation,
+        attempt: runtime.invocation.attempt + 1,
+        attemptId: this.createId(),
+        arguments: cloneJsonObject(
+          runtime.invocation.arguments,
+          'Tool arguments'
+        ),
+        scopeRoots: [...runtime.invocation.scopeRoots],
+        connectorGrants: runtime.invocation.connectorGrants.map((grant) => ({
+          ...grant
+        }))
+      },
+      effects: runtime.effects.map((effect) => ({ ...effect })),
+      boundScopes: runtime.boundScopes.map((scope) => ({
+        ...scope,
+        roots: scope.roots.map((root) => ({ ...root })),
+        source: { ...scope.source }
+      }))
+    }
+  }
+
+  private hasSideEffect(effects: readonly ToolEffect[]): boolean {
+    return effects.some((effect) => !isReadOnlyToolEffect(effect))
   }
 
   private terminalResultOutbox(
@@ -2176,13 +2358,17 @@ export class ToolExecutionApplicationService {
   private terminalFailureOutbox(
     runtime: PersistedPendingRuntime,
     executionId: string,
-    error: { code: string; message: string }
+    error: ToolExecutionError
   ): Parameters<ToolEventStore['append']>[0]['outbox'] {
     return this.terminalResultOutbox(runtime, executionId, {
       callId: runtime.command.context.toolCallId ?? runtime.invocation.idempotencyKey,
       status: 'failed',
       errorCode: error.code,
-      message: error.message,
+      message: error.publicMessage ?? error.message,
+      retryable: error.retryable,
+      category: error.category,
+      ...(error.recoveryHint ? { recoveryHint: error.recoveryHint } : {}),
+      ...(error.diagnosticId ? { diagnosticId: error.diagnosticId } : {}),
       toolExecutionId: executionId
     })
   }
@@ -2196,6 +2382,11 @@ export class ToolExecutionApplicationService {
     const message = code === 'tool_policy_changed'
       ? 'Tool policy changed before dispatch'
       : 'Tool runtime state was lost before dispatch'
+    const error = normalizeToolExecutionError({
+      code,
+      message,
+      retryable: false
+    })
     await this.appendExecutionEvents(
       executionId,
       `${dispatchId}:unavailable`,
@@ -2204,17 +2395,13 @@ export class ToolExecutionApplicationService {
           eventType: 'tool.interrupted',
           payload: {
             interruptedAt: this.now(),
-            error: {
-              code,
-              message,
-              retryable: false
-            }
+            error
           }
         }
       ],
       'recovery',
       'realmflow',
-      runtime ? this.terminalFailureOutbox(runtime, executionId, { code, message }) : [],
+      runtime ? this.terminalFailureOutbox(runtime, executionId, error) : [],
     )
     this.pending.delete(executionId)
     await this.dependencies.pendingCheckpoints.delete(executionId)
@@ -2401,6 +2588,16 @@ function toolNameForRuntime(runtime: RuntimeInvocation): string {
   return runtime.definition.executor.kind === 'builtin'
     ? runtime.definition.executor.handler === 'media-provider-runtime' ? runtime.definition.id : runtime.definition.executor.handler
     : runtime.definition.id
+}
+
+function isReadOnlyToolEffect(effect: ToolEffect): boolean {
+  return (
+    effect.kind === 'filesystem.read' ||
+    effect.kind === 'network.public_read' ||
+    effect.kind === 'browser.page.read' ||
+    effect.kind === 'process.inspect' ||
+    effect.kind === 'computer.observe'
+  )
 }
 
 function defaultBoundScopes(
@@ -2650,7 +2847,10 @@ function parsePendingRuntime(value: JsonObject): PersistedPendingRuntime {
     !Array.isArray(value.effects) ||
     typeof value.effectsDigest !== 'string' ||
     !isRecord(value.authorization) ||
-    value.authorization.outcome !== 'ask' ||
+    (
+      value.authorization.outcome !== 'ask' &&
+      value.authorization.outcome !== 'authorized'
+    ) ||
     !Array.isArray(value.boundScopes)
   ) {
     throw new Error('Pending Tool invocation checkpoint is invalid')
@@ -2680,6 +2880,12 @@ function formatSchemaErrors(
       return `missing required property ${error.params.missingProperty}`
     }
     const path = schemaErrorPath(error.instancePath)
+    if (
+      error.keyword === 'enum' &&
+      path.startsWith('sourceKinds')
+    ) {
+      return `${path} must use a supported knowledge source kind. Use sourceKinds value "repository" for code repository knowledge.`
+    }
     const message = error.message ?? error.keyword ?? 'schema mismatch'
     return path ? `${path} ${message}` : message
   })
@@ -2727,6 +2933,18 @@ function terminalToolResult(payload: JsonObject): AiRunToolResult {
       message: payload.message,
       ...(typeof payload.toolExecutionId === 'string'
         ? { toolExecutionId: payload.toolExecutionId }
+        : {}),
+      ...(typeof payload.retryable === 'boolean'
+        ? { retryable: payload.retryable }
+        : {}),
+      ...(typeof payload.category === 'string'
+        ? { category: payload.category }
+        : {}),
+      ...(typeof payload.recoveryHint === 'string'
+        ? { recoveryHint: payload.recoveryHint }
+        : {}),
+      ...(typeof payload.diagnosticId === 'string'
+        ? { diagnosticId: payload.diagnosticId }
         : {})
     }
   }

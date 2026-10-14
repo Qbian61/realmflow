@@ -1,3 +1,4 @@
+import { databaseStatementTables } from '../../../../domain/connector-runtime'
 import type { JsonObject } from '../../../../domain/tool-protocol-validation'
 import type {
   ConnectorProtocolAdapter,
@@ -41,13 +42,14 @@ export class DatabaseConnectorAdapter implements ConnectorProtocolAdapter {
       throw new Error('Database Connector action is invalid')
     }
     const keys = Object.keys(input.arguments).sort()
+    const parameterNames = [...protocol.parameterNames].sort()
     if (
-      keys.length !== protocol.parameterNames.length ||
-      keys.some((key, index) => key !== protocol.parameterNames[index])
+      keys.length !== parameterNames.length ||
+      keys.some((key, index) => key !== parameterNames[index])
     ) {
       throw new Error('Database Connector parameters are invalid')
     }
-    const referencedTables = statementTables(protocol.statement)
+    const referencedTables = databaseStatementTables(protocol.statement)
     if (
       referencedTables.length === 0 ||
       referencedTables.some(
@@ -83,14 +85,4 @@ export class DatabaseConnectorAdapter implements ConnectorProtocolAdapter {
       await session.close()
     }
   }
-}
-
-function statementTables(statement: string): string[] {
-  const tables = new Set<string>()
-  const pattern =
-    /\b(?:from|join|update|into|delete\s+from)\s+["`[]?([A-Za-z_][A-Za-z0-9_.]*)/gi
-  for (const match of statement.matchAll(pattern)) {
-    tables.add(match[1].replace(/["`\]]/g, '').split('.').at(-1)!)
-  }
-  return [...tables].sort()
 }

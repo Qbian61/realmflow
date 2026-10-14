@@ -72,6 +72,7 @@ class ProviderExecutionError(Exception):
         retry_count: int = 0,
         retryable: bool = False,
         retry_after_ms: int | None = None,
+        remaining_attempts: int | None = None,
         message: str = "Provider request failed",
     ) -> None:
         super().__init__(message)
@@ -83,6 +84,9 @@ class ProviderExecutionError(Exception):
             None
             if retry_after_ms is None
             else min(30_000, max(0, retry_after_ms))
+        )
+        self.remaining_attempts = (
+            None if remaining_attempts is None else max(0, remaining_attempts)
         )
 
 
@@ -141,7 +145,11 @@ class MainGatewayProvider:
                 if not response.is_success:
                     await response.aread()
                     error_code, message = provider_error(response)
-                    retryable, retry_after_ms = provider_retry_metadata(
+                    (
+                        retryable,
+                        retry_after_ms,
+                        remaining_attempts,
+                    ) = provider_retry_metadata(
                         response
                     )
                     raise ProviderExecutionError(
@@ -150,6 +158,7 @@ class MainGatewayProvider:
                         retry_count=retry_count,
                         retryable=retryable,
                         retry_after_ms=retry_after_ms,
+                        remaining_attempts=remaining_attempts,
                         message=message,
                     )
                 if "text/event-stream" not in response.headers.get(
@@ -534,16 +543,16 @@ def provider_error(response: httpx.Response) -> tuple[str, str]:
 
 def provider_retry_metadata(
     response: httpx.Response,
-) -> tuple[bool, int | None]:
+) -> tuple[bool, int | None, int | None]:
     try:
         payload = response.json()
     except ValueError:
-        return False, None
+        return False, None, None
     if not isinstance(payload, dict):
-        return False, None
+        return False, None, None
     error = payload.get("error")
     if not isinstance(error, dict):
-        return False, None
+        return False, None, None
     retryable = error.get("retryable") is True
     retry_after_ms = error.get("retryAfterMs")
     if (
@@ -552,6 +561,13 @@ def provider_retry_metadata(
         or retry_after_ms < 0
     ):
         retry_after_ms = None
+    remaining_attempts = error.get("remainingAttempts")
+    if (
+        not isinstance(remaining_attempts, int)
+        or isinstance(remaining_attempts, bool)
+        or remaining_attempts < 0
+    ):
+        remaining_attempts = None
     return (
         retryable,
         (
@@ -559,6 +575,7 @@ def provider_retry_metadata(
             if retry_after_ms is None
             else min(30_000, retry_after_ms)
         ),
+        remaining_attempts,
     )
 
 

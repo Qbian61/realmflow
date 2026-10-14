@@ -1,5 +1,4 @@
 import {
-  AlarmClock,
   Blocks,
   ChartNoAxesCombined,
   House,
@@ -21,12 +20,6 @@ export function getPrimaryNavigation(t: Translator) {
       label: t('navigation.newChat'),
       description: t('navigation.newChatDescription'),
       icon: MessageCirclePlus
-    },
-    {
-      path: '/schedules',
-      label: t('navigation.schedules'),
-      description: t('navigation.schedulesDescription'),
-      icon: AlarmClock
     },
     {
       path: '/capabilities',

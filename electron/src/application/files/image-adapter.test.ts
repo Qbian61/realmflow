@@ -113,7 +113,8 @@ describe('SharpImageAdapter', () => {
     const unsafe = [
       '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
       '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"></svg>',
-      '<svg xmlns="http://www.w3.org/2000/svg"><image href="https://example.com/a.png"/></svg>'
+      '<svg xmlns="http://www.w3.org/2000/svg"><image href="https://example.com/a.png"/></svg>',
+      '<svg xmlns="http://www.w3.org/2000/svg"><foreignObject><div>unsafe</div></foreignObject></svg>'
     ]
 
     for (const svg of unsafe) {

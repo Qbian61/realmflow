@@ -18,16 +18,35 @@
     "properties": {
       "scopeRoot": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Optional authorized root override. Omit or pass \".\" to use the current authorized root.",
+        "examples": [
+          "."
+        ]
       },
       "staged": {
-        "type": "boolean"
+        "type": "boolean",
+        "description": "Whether to inspect staged Git changes instead of unstaged changes.",
+        "examples": [
+          false
+        ]
       },
       "path": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Authorized local path as a relative path under the authorized root. Do not invent or pass absolute local paths.",
+        "examples": [
+          "docs/example.md"
+        ]
       }
-    }
+    },
+    "examples": [
+      {
+        "scopeRoot": ".",
+        "staged": false,
+        "path": "docs/example.md"
+      }
+    ]
   },
   "outputSchema": {
     "type": "object",

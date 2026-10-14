@@ -9,6 +9,7 @@ import {
 const SECRET_KEY =
   /^(authorization|cookie|credential|password|secret|token|api[_-]?key)$/i
 const ABSOLUTE_PATH = /(?:\/Users|\/home|\/tmp|[A-Za-z]:\\)[^\s"',}]*/g
+const URL = /\bhttps?:\/\/[^\s"',}]+/gi
 const INLINE_SECRET =
   /\b(?:authorization|cookie|credential|password|secret|token|api[_-]?key)\s*[:=]\s*\S+/gi
 
@@ -181,8 +182,14 @@ export function toAssistantRunEvent(
                 : 'tool_execution_failed',
             message:
               result.status === 'failed'
-                ? truncate(result.message)
-                : 'Tool execution failed'
+                ? truncate(redactText(result.message))
+                : 'Tool execution failed',
+            ...(result.status === 'failed' && result.recoveryHint
+              ? { recoveryHint: truncate(redactText(result.recoveryHint)) }
+              : {}),
+            ...(result.status === 'failed' && result.diagnosticId
+              ? { diagnosticId: result.diagnosticId }
+              : {})
           }
         }
       }
@@ -200,6 +207,9 @@ export function toAssistantRunEvent(
     }
     case 'run.retrying': {
       const retryAfterMs = nonNegativeInteger(event.data.retryAfterMs)
+      const remainingAttempts = nonNegativeInteger(
+        event.data.remainingAttempts
+      )
       return {
         ...base,
         type: event.type,
@@ -211,7 +221,10 @@ export function toAssistantRunEvent(
           ),
           ...(retryAfterMs === undefined
             ? {}
-            : { nextRetryAt: base.timestamp + retryAfterMs })
+            : { nextRetryAt: base.timestamp + retryAfterMs }),
+          ...(remainingAttempts === undefined
+            ? {}
+            : { remainingAttempts })
         }
       }
     }
@@ -282,27 +295,38 @@ export function toAssistantRunEvent(
             : { durationMs: event.data.durationMs })
         }
       }
-    case 'run.failed':
+    case 'run.failed': {
+      const retryAfterMs = nonNegativeInteger(event.data.retryAfterMs)
+      const retryCount = nonNegativeInteger(event.data.retryCount)
+      const remainingAttempts = nonNegativeInteger(
+        event.data.remainingAttempts
+      )
       return {
         ...base,
         type: event.type,
         data: {
-          message: truncate(event.data.message ?? 'Run failed'),
+          message: truncate(redactText(event.data.message ?? 'Run failed')),
           ...(event.data.errorCode
             ? { errorCode: event.data.errorCode }
             : {}),
           ...(event.data.durationMs === undefined
             ? {}
-            : { durationMs: event.data.durationMs })
+            : { durationMs: event.data.durationMs }),
+          ...(retryCount === undefined ? {} : { retryCount }),
+          ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+          ...(remainingAttempts === undefined
+            ? {}
+            : { remainingAttempts })
         }
       }
+    }
     case 'run.cancelled':
       return {
         ...base,
         type: event.type,
         data: {
           ...(event.data.message
-            ? { message: truncate(event.data.message) }
+            ? { message: truncate(redactText(event.data.message)) }
             : {}),
           ...(event.data.durationMs === undefined
             ? {}
@@ -332,6 +356,7 @@ function publicRecoveryReason(
     'max_agent_turns',
     'continuation_limit_reached',
     'repeated_tool_call',
+    'deterministic_tool_failure',
     'consecutive_tool_failures',
     'clarification_required',
     'user_requested',
@@ -493,6 +518,7 @@ function delegationResult(
 
 function redactText(value: string): string {
   return value
+    .replace(URL, '[url]')
     .replace(ABSOLUTE_PATH, '[local path]')
     .replace(INLINE_SECRET, '[REDACTED]')
 }

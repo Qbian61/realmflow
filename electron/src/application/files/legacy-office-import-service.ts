@@ -77,6 +77,38 @@ export class LegacyOfficeImportService {
     }
   ) {}
 
+  async convertBytes(input: {
+    bytes: Uint8Array
+    sourceFormat: LegacyOfficeFormat
+    signal: AbortSignal
+  }): Promise<{ bytes: Uint8Array; outputFormat: ModernOfficeFormat }> {
+    assertNotAborted(input.signal)
+    const expectedOutputFormat = targetFormat(input.sourceFormat)
+    const converted = await this.dependencies.convert(
+      {
+        sourceFormat: input.sourceFormat,
+        documentBase64: Buffer.from(input.bytes).toString('base64')
+      },
+      input.signal
+    )
+    if (converted.outputFormat !== expectedOutputFormat) {
+      throw new LegacyOfficeImportError(
+        'legacy_office_output_invalid',
+        'Legacy Office converter returned the wrong output format'
+      )
+    }
+    const bytes = Uint8Array.from(
+      Buffer.from(converted.documentBase64, 'base64')
+    )
+    if (bytes.byteLength === 0) {
+      throw new LegacyOfficeImportError(
+        'legacy_office_output_invalid',
+        'Legacy Office converter returned an empty document'
+      )
+    }
+    return { bytes, outputFormat: converted.outputFormat }
+  }
+
   async import(input: {
     sourceCanonicalPath: string
     sourceRelativePath: string
@@ -104,26 +136,12 @@ export class LegacyOfficeImportService {
       input.sourceCanonicalPath,
       input.expectedSourceChecksum
     )
-    const converted = await this.dependencies.convert(
-      {
-        sourceFormat: input.sourceFormat,
-        documentBase64: source.toString('base64')
-      },
-      input.signal
-    )
-    if (converted.outputFormat !== expectedOutputFormat) {
-      throw new LegacyOfficeImportError(
-        'legacy_office_output_invalid',
-        'Legacy Office converter returned the wrong output format'
-      )
-    }
-    const candidate = Buffer.from(converted.documentBase64, 'base64')
-    if (candidate.byteLength === 0) {
-      throw new LegacyOfficeImportError(
-        'legacy_office_output_invalid',
-        'Legacy Office converter returned an empty document'
-      )
-    }
+    const converted = await this.convertBytes({
+      bytes: source,
+      sourceFormat: input.sourceFormat,
+      signal: input.signal
+    })
+    const candidate = Buffer.from(converted.bytes)
     if (
       sourceChecksum !==
       (await this.dependencies.storage.checksum(input.sourceCanonicalPath))
@@ -165,7 +183,7 @@ export class LegacyOfficeImportService {
         outputPath: destination.relativePath,
         outputFormat: converted.outputFormat,
         outputChecksum: digest(candidate),
-        converter: converted.converter,
+        converter: 'LibreOffice',
         converted: true,
         session
       }
@@ -219,11 +237,13 @@ function targetFormat(format: LegacyOfficeFormat): ModernOfficeFormat {
     format === 'doc' ||
     format === 'dot' ||
     format === 'wps' ||
-    format === 'wpt'
+    format === 'wpt' ||
+    format === 'odt' ||
+    format === 'rtf'
   ) {
     return 'docx'
   }
-  if (format === 'xls' || format === 'xlt') return 'xlsx'
+  if (format === 'xls' || format === 'xlt' || format === 'ods') return 'xlsx'
   return 'pptx'
 }
 

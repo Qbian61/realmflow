@@ -74,7 +74,9 @@ class PresentationComputeService:
                 "Presentation document is invalid",
             ) from error
 
-        if operation == "inspect":
+        if operation == "extract_text":
+            result = _extract_text(presentation)
+        elif operation == "inspect":
             result = _inspect(presentation)
         elif operation == "update_text":
             result = _update_text(presentation, parameters)
@@ -123,6 +125,65 @@ class PresentationComputeService:
             modified=modified,
             preservation_risk=risks,
         )
+
+
+def _extract_text(
+    presentation: PresentationObject,
+) -> dict[str, object]:
+    return {
+        "slides": [
+            _extract_slide_text(slide, number)
+            for number, slide in enumerate(presentation.slides, start=1)
+        ]
+    }
+
+
+def _extract_slide_text(slide: Slide, number: int) -> dict[str, object]:
+    texts: list[str] = []
+    tables: list[list[str]] = []
+    chart_labels: list[str] = []
+    title = ""
+    for shape in slide.shapes:
+        if shape.has_table:
+            tables.extend(
+                [[cell.text for cell in row.cells] for row in shape.table.rows]
+            )
+            continue
+        if shape.has_chart:
+            chart = _inspect_chart(shape.chart)
+            chart_labels.extend(
+                value
+                for value in [
+                    str(chart["title"]),
+                    *[str(value) for value in chart["categories"]],
+                ]
+                if value
+            )
+            for series in chart["series"]:
+                chart_labels.append(str(series["name"]))
+                chart_labels.extend(
+                    str(value)
+                    for value in series["values"]
+                    if value is not None
+                )
+            continue
+        if shape.has_text_frame:
+            value = shape.text.strip()
+            if not value:
+                continue
+            texts.append(value)
+            if not title and "title" in shape.name.lower():
+                title = value
+    if not title and texts:
+        title = texts[0]
+    return {
+        "number": number,
+        "title": title,
+        "text": texts,
+        "tables": tables,
+        "chartLabels": chart_labels,
+        "notes": _notes(slide),
+    }
 
 
 def _inspect(presentation: PresentationObject) -> dict[str, object]:

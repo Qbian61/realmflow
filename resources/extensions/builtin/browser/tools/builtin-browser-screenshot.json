@@ -25,24 +25,51 @@
         "properties": {
           "kind": {
             "type": "string",
-            "const": "current_run"
+            "const": "current_run",
+            "description": "Discriminator selecting the schema variant for this object.",
+            "examples": [
+              "current_run"
+            ]
           }
-        }
+        },
+        "description": "Current run target object for browser or UI automation.",
+        "examples": [
+          {
+            "kind": "current_run"
+          }
+        ]
       },
       "path": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 16000
+        "maxLength": 16000,
+        "description": "Authorized local path as a relative path under the authorized root. Do not invent or pass absolute local paths.",
+        "examples": [
+          "docs/example.md"
+        ]
       },
       "expectedAbsent": {
         "type": "boolean",
-        "const": true
+        "const": true,
+        "description": "Must be true to confirm the target path does not already exist.",
+        "examples": [
+          true
+        ]
       }
     },
     "required": [
       "target",
       "path",
       "expectedAbsent"
+    ],
+    "examples": [
+      {
+        "target": {
+          "kind": "current_run"
+        },
+        "path": "docs/example.md",
+        "expectedAbsent": true
+      }
     ]
   },
   "outputSchema": {

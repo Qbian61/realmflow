@@ -4,9 +4,6 @@ import type {
 import type {
   WebProviderConfiguration
 } from '../../../../shared/web-provider'
-import type {
-  BrowserCallContext
-} from '../browser/browser-runtime-port'
 
 type WebProviderPort = {
   search(
@@ -21,19 +18,8 @@ type WebProviderPort = {
   ): Promise<JsonObject>
 }
 
-type BrowserFallbackPort = {
-  ensureCurrentSession(
-    call: BrowserCallContext
-  ): Promise<{ id: string; created: boolean }>
-  executeCurrent(
-    action: 'navigate',
-    args: JsonObject,
-    call: BrowserCallContext
-  ): Promise<JsonObject>
-}
-
 type WebAccessAttempt = {
-  channel: 'provider' | 'browser'
+  channel: 'provider'
   status: 'succeeded' | 'failed'
   reason?: string
 }
@@ -42,16 +28,13 @@ export class WebAccessCoordinator {
   constructor(
     private readonly dependencies: {
       provider: WebProviderPort
-      browser?: BrowserFallbackPort
-      searchOrigin?: string
     }
   ) {}
 
   async search(
     args: JsonObject,
     configuration: WebProviderConfiguration,
-    signal: AbortSignal,
-    call: BrowserCallContext
+    signal: AbortSignal
   ): Promise<JsonObject> {
     const attempts: WebAccessAttempt[] = []
     const provider = await this.dependencies.provider.search(
@@ -68,55 +51,13 @@ export class WebAccessCoordinator {
     }
     const reason = webFailureCode(provider) ?? 'provider_error'
     attempts.push({ channel: 'provider', status: 'failed', reason })
-    if (!this.dependencies.browser) {
-      throw logicalFailure(attempts)
-    }
-    try {
-      const query = requiredString(args.query, 'query')
-      const target = new URL(
-        this.dependencies.searchOrigin ??
-          'https://www.google.com/search'
-      )
-      target.searchParams.set('q', query)
-      const session = await this.dependencies.browser.ensureCurrentSession(
-        call
-      )
-      const snapshot = await this.dependencies.browser.executeCurrent(
-        'navigate',
-        {
-          target: { kind: 'current_run' },
-          url: target.toString()
-        },
-        call
-      )
-      attempts.push({ channel: 'browser', status: 'succeeded' })
-      return {
-        status: 'ok',
-        provider: 'browser',
-        results: [browserSearchResult(snapshot)],
-        cached: false,
-        access: {
-          ...accessDetails('browser', true, attempts),
-          fallbackReason: reason,
-          leaseCreated: session.created
-        }
-      }
-    } catch (error) {
-      if (signal.aborted) throw signal.reason
-      attempts.push({
-        channel: 'browser',
-        status: 'failed',
-        reason: safeCode(error)
-      })
-      throw logicalFailure(attempts)
-    }
+    throw logicalFailure(attempts)
   }
 
   async fetch(
     args: JsonObject,
     configuration: WebProviderConfiguration,
-    signal: AbortSignal,
-    call: BrowserCallContext
+    signal: AbortSignal
   ): Promise<JsonObject> {
     const requestedUrl = requiredString(args.url, 'url')
     if (!allowsBrowserFallback(requestedUrl)) {
@@ -137,12 +78,7 @@ export class WebAccessCoordinator {
         status: 'failed',
         reason: safeCode(error)
       })
-      return this.browserFetch(
-        requestedUrl,
-        call,
-        attempts,
-        signal
-      )
+      throw logicalFailure(attempts)
     }
     if (provider.outcome !== 'browser_required') {
       return {
@@ -152,78 +88,17 @@ export class WebAccessCoordinator {
         ])
       }
     }
-    attempts.push({
-      channel: 'provider',
-      status: 'failed',
-      reason: 'browser_required'
-    })
-    const continuation = provider.continuation
-    const target =
-      isObject(continuation) && typeof continuation.url === 'string'
-        ? continuation.url
-        : requestedUrl
-    return this.browserFetch(target, call, attempts, signal)
-  }
-
-  private async browserFetch(
-    url: string,
-    call: BrowserCallContext,
-    attempts: WebAccessAttempt[],
-    signal: AbortSignal
-  ): Promise<JsonObject> {
-    if (!this.dependencies.browser) throw logicalFailure(attempts)
-    try {
-      const session = await this.dependencies.browser.ensureCurrentSession(
-        call
-      )
-      const snapshot = await this.dependencies.browser.executeCurrent(
-        'navigate',
-        { target: { kind: 'current_run' }, url },
-        call
-      )
-      attempts.push({ channel: 'browser', status: 'succeeded' })
-      return {
-        provider: 'browser',
-        outcome: 'fetched',
-        ...snapshot,
-        access: {
-          ...accessDetails('browser', true, attempts),
-          fallbackReason: attempts[0]?.reason ?? 'provider_error',
-          leaseCreated: session.created
-        }
-      }
-    } catch (error) {
-      if (signal.aborted) throw signal.reason
-      attempts.push({
-        channel: 'browser',
-        status: 'failed',
-        reason: safeCode(error)
-      })
-      throw logicalFailure(attempts)
+    return {
+      ...provider,
+      access: accessDetails('provider', false, [
+        { channel: 'provider', status: 'succeeded' }
+      ])
     }
   }
 }
 
-function browserSearchResult(snapshot: JsonObject): JsonObject {
-  return {
-    title:
-      typeof snapshot.title === 'string'
-        ? snapshot.title
-        : 'Browser search results',
-    url: typeof snapshot.url === 'string' ? snapshot.url : '',
-    snippet:
-      typeof snapshot.text === 'string'
-        ? snapshot.text.slice(0, 1_000)
-        : '',
-    source: 'browser',
-    provider: 'browser',
-    rank: 1,
-    confidence: { score: 0.5 }
-  }
-}
-
 function accessDetails(
-  actualChannel: 'provider' | 'browser',
+  actualChannel: 'provider',
   degraded: boolean,
   attempts: readonly WebAccessAttempt[]
 ): JsonObject {

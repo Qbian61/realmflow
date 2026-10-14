@@ -252,6 +252,63 @@ describe('SqliteKnowledgeRefreshRepository', () => {
     })
   })
 
+  it('defers a retry when the same source already has a running refresh', async () => {
+    await repository.reconcile({
+      planned: [
+        {
+          sourceId: 'source-file',
+          policyRevision: 1,
+          nextDueAt: 100_000
+        },
+        {
+          sourceId: 'source-document',
+          policyRevision: 1,
+          nextDueAt: 200_000
+        }
+      ],
+      at: 1,
+      preserveOverdue: false
+    })
+    await repository.claimManual({
+      runId: 'run-retry',
+      sourceId: 'source-file',
+      idempotencyKey: 'manual-retry',
+      at: 10
+    })
+    await repository.fail({
+      runId: 'run-retry',
+      errorCode: 'source_temporarily_unavailable',
+      nextAttemptAt: 70_000,
+      at: 20
+    })
+    await repository.claimManual({
+      runId: 'run-active',
+      sourceId: 'source-file',
+      idempotencyKey: 'manual-active',
+      at: 30
+    })
+
+    await expect(repository.getNextWakeup()).resolves.toMatchObject({
+      sourceId: 'source-document',
+      nextDueAt: 200_000,
+      kind: 'policy'
+    })
+    await expect(
+      repository.claimRetry({
+        runId: 'run-retry',
+        expectedNextAttemptAt: 70_000,
+        at: 70_000
+      })
+    ).resolves.toMatchObject({
+      status: 'blocked',
+      run: { id: 'run-active', status: 'running' }
+    })
+    await expect(repository.getRun('run-retry')).resolves.toMatchObject({
+      status: 'retry_wait',
+      nextAttemptAt: 70_000
+    })
+  })
+
   it('disables scheduling and cancels the cursor when a source is removed', async () => {
     database
       .prepare(

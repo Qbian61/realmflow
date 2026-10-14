@@ -18,25 +18,45 @@
     "properties": {
       "sessionId": {
         "type": "string",
-        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$",
+        "description": "Stable local editing or browser session ID returned by an inspect/create tool.",
+        "examples": [
+          "12345678-1234-4234-9234-123456789abc"
+        ]
       },
       "expectedRevision": {
         "type": "integer",
-        "minimum": 0
+        "minimum": 0,
+        "description": "Expected revision used for optimistic concurrency control. Copy this value from the latest RealmFlow UI/API state; do not invent it.",
+        "examples": [
+          1
+        ]
       },
       "blockId": {
         "type": "string",
-        "pattern": "^paragraph-[1-9][0-9]*$"
+        "pattern": "^paragraph-[1-9][0-9]*$",
+        "description": "Stable document block ID to update or comment on.",
+        "examples": [
+          "paragraph-1"
+        ]
       },
       "text": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 100000
+        "maxLength": 100000,
+        "description": "Text content used by the requested operation.",
+        "examples": [
+          "Example text."
+        ]
       },
       "author": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 255
+        "maxLength": 255,
+        "description": "Display name recorded on the local document comment.",
+        "examples": [
+          "RealmFlow"
+        ]
       }
     },
     "required": [
@@ -45,6 +65,15 @@
       "blockId",
       "text",
       "author"
+    ],
+    "examples": [
+      {
+        "sessionId": "12345678-1234-4234-9234-123456789abc",
+        "expectedRevision": 1,
+        "blockId": "paragraph-1",
+        "text": "Example text.",
+        "author": "RealmFlow"
+      }
     ]
   },
   "outputSchema": {

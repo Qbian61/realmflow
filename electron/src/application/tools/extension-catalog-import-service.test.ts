@@ -302,8 +302,9 @@ async function writePluginPackage(path: string): Promise<void> {
       description: 'Review the requested changes.',
       instructionsPath: 'instructions/review.md',
       runtime: { kind: 'instruction' },
-      inputSchema: { type: 'object' },
-      outputSchema: { type: 'object' },
+      inputSchema: emptyContractSchema('Review request.'),
+      outputSchema: emptyContractSchema('Review result.'),
+      examples: [{}],
       requiredTools: [],
       activation: {
         intents: ['review'],
@@ -360,8 +361,9 @@ async function writeExtensionPackage(
       description: 'Create an implementation plan.',
       instructionsPath: 'instructions/plan.md',
     runtime: { kind: 'instruction' },
-      inputSchema: { type: 'object' },
-      outputSchema: { type: 'object' },
+      inputSchema: emptyContractSchema('Planning request.'),
+      outputSchema: emptyContractSchema('Planning result.'),
+      examples: [{}],
       requiredTools,
       activation: {
         intents: ['create implementation plan'],
@@ -377,4 +379,12 @@ async function writeExtensionPackage(
     join(path, 'instructions', 'plan.md'),
     'Create a grounded implementation plan.\n'
   )
+}
+
+function emptyContractSchema(description: string) {
+  return {
+    type: 'object',
+    description,
+    additionalProperties: false,
+  }
 }

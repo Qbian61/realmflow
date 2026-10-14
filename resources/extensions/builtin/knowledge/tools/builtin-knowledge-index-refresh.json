@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.knowledge.index.refresh",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "name": "Refresh knowledge index",
   "description": "Refresh or rebuild a knowledge source index.",
   "tags": [
@@ -23,14 +23,28 @@
       "sourceId": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 200
+        "maxLength": 200,
+        "description": "Knowledge source ID in the current workspace.",
+        "examples": [
+          "source-1"
+        ]
       },
       "idempotencyKey": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 200
+        "maxLength": 200,
+        "description": "Caller-provided key that makes a retry or replay safe and deduplicated. Reuse the same key for retries of the same user request; use a new key for a different user intent.",
+        "examples": [
+          "request-1"
+        ]
       }
-    }
+    },
+    "examples": [
+      {
+        "sourceId": "source-1",
+        "idempotencyKey": "request-1"
+      }
+    ]
   },
   "outputSchema": {
     "type": "object",

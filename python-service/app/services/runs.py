@@ -827,6 +827,7 @@ def failure_metrics(
                 error_code=error.error_code,
                 retryable=error.retryable,
                 retry_after_ms=error.retry_after_ms,
+                remaining_attempts=error.remaining_attempts,
             ),
         }
     return {
@@ -846,6 +847,7 @@ def terminal_metrics(
     error_code: str,
     retryable: bool = False,
     retry_after_ms: int | None = None,
+    remaining_attempts: int | None = None,
 ) -> dict[str, object]:
     return {
         "usage": {
@@ -861,6 +863,11 @@ def terminal_metrics(
         **(
             {"retryAfterMs": min(30_000, max(0, retry_after_ms))}
             if retry_after_ms is not None
+            else {}
+        ),
+        **(
+            {"remainingAttempts": max(0, remaining_attempts)}
+            if remaining_attempts is not None
             else {}
         ),
     }

@@ -6678,6 +6678,220 @@ export const REALMFLOW_MIGRATIONS: readonly SqlMigration[] = [
     name: 'conversation_memory',
     up: (database) =>
       database.exec(CONVERSATION_MEMORY_SCHEMA)
+  },
+  {
+    version: 112,
+    name: 'workbench_schedule_module',
+    up: (database) =>
+      database.exec(`
+        UPDATE workbench_hub_layout
+        SET
+          module_order_json = (
+            SELECT json_group_array(
+              CASE value WHEN 'system' THEN 'schedules' ELSE value END
+            )
+            FROM json_each(workbench_hub_layout.module_order_json)
+          ),
+          hidden_modules_json = (
+            SELECT json_group_array(
+              CASE value WHEN 'system' THEN 'schedules' ELSE value END
+            )
+            FROM json_each(workbench_hub_layout.hidden_modules_json)
+          );
+      `)
+  },
+  {
+    version: 113,
+    name: 'repository_snapshot_skipped_files',
+    up: (database) =>
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS repository_snapshot_skipped_files (
+          snapshot_id TEXT NOT NULL
+            REFERENCES repository_snapshots(id) ON DELETE RESTRICT,
+          source_id TEXT NOT NULL
+            REFERENCES repository_sources(source_id) ON DELETE RESTRICT,
+          version INTEGER NOT NULL CHECK (version > 0),
+          relative_path TEXT NOT NULL,
+          reason TEXT NOT NULL CHECK (
+            reason IN (
+              'file_too_large',
+              'binary',
+              'invalid_utf8',
+              'repository_text_limit_exceeded',
+              'file_count_limit_exceeded'
+            )
+          ),
+          byte_size INTEGER CHECK (byte_size IS NULL OR byte_size >= 0),
+          PRIMARY KEY (snapshot_id, relative_path),
+          UNIQUE (source_id, version, relative_path)
+        );
+        CREATE INDEX IF NOT EXISTS repository_snapshot_skipped_files_source_version
+          ON repository_snapshot_skipped_files(source_id, version, relative_path);
+
+        CREATE TRIGGER IF NOT EXISTS repository_snapshot_skipped_files_prevent_update
+          BEFORE UPDATE ON repository_snapshot_skipped_files
+          BEGIN
+            SELECT RAISE(ABORT, 'Repository snapshot skipped files are immutable');
+          END;
+        CREATE TRIGGER IF NOT EXISTS repository_snapshot_skipped_files_prevent_delete
+          BEFORE DELETE ON repository_snapshot_skipped_files
+          BEGIN
+            SELECT RAISE(ABORT, 'Repository snapshot skipped files are immutable');
+          END;
+      `)
+  },
+  {
+    version: 114,
+    name: 'repository_snapshot_documents',
+    requiresForeignKeysDisabled: true,
+    up: (database) =>
+      database.exec(`
+        DROP TRIGGER IF EXISTS repository_snapshot_files_prevent_update;
+        DROP TRIGGER IF EXISTS repository_snapshot_files_prevent_delete;
+        DROP INDEX IF EXISTS repository_snapshot_files_source_version;
+
+        ALTER TABLE repository_snapshot_files
+          RENAME TO repository_snapshot_files_v113;
+        CREATE TABLE repository_snapshot_files (
+          snapshot_id TEXT NOT NULL
+            REFERENCES repository_snapshots(id) ON DELETE RESTRICT,
+          source_id TEXT NOT NULL
+            REFERENCES repository_sources(source_id) ON DELETE RESTRICT,
+          version INTEGER NOT NULL CHECK (version > 0),
+          relative_path TEXT NOT NULL,
+          content TEXT,
+          content_checksum TEXT NOT NULL,
+          byte_size INTEGER NOT NULL CHECK (byte_size >= 0),
+          PRIMARY KEY (snapshot_id, relative_path),
+          UNIQUE (source_id, version, relative_path)
+        );
+        INSERT INTO repository_snapshot_files (
+          snapshot_id, source_id, version, relative_path, content,
+          content_checksum, byte_size
+        )
+        SELECT
+          snapshot_id, source_id, version, relative_path, content,
+          content_checksum, byte_size
+        FROM repository_snapshot_files_v113;
+        DROP TABLE repository_snapshot_files_v113;
+
+        CREATE INDEX repository_snapshot_files_source_version
+          ON repository_snapshot_files(source_id, version, relative_path);
+        CREATE TRIGGER repository_snapshot_files_prevent_update
+          BEFORE UPDATE ON repository_snapshot_files
+          BEGIN
+            SELECT RAISE(ABORT, 'Repository snapshot files are immutable');
+          END;
+        CREATE TRIGGER repository_snapshot_files_prevent_delete
+          BEFORE DELETE ON repository_snapshot_files
+          BEGIN
+            SELECT RAISE(ABORT, 'Repository snapshot files are immutable');
+          END;
+
+        CREATE TABLE repository_snapshot_documents (
+          snapshot_id TEXT NOT NULL,
+          source_path TEXT NOT NULL,
+          unit_key TEXT NOT NULL,
+          title TEXT NOT NULL,
+          content TEXT NOT NULL,
+          content_checksum TEXT NOT NULL,
+          byte_size INTEGER NOT NULL CHECK (byte_size >= 0),
+          metadata_json TEXT CHECK (
+            metadata_json IS NULL OR json_valid(metadata_json)
+          ),
+          PRIMARY KEY (snapshot_id, source_path, unit_key),
+          FOREIGN KEY (snapshot_id, source_path)
+            REFERENCES repository_snapshot_files(snapshot_id, relative_path)
+            ON DELETE RESTRICT
+        );
+        CREATE INDEX repository_snapshot_documents_snapshot
+          ON repository_snapshot_documents(snapshot_id, source_path, unit_key);
+        CREATE TRIGGER repository_snapshot_documents_prevent_update
+          BEFORE UPDATE ON repository_snapshot_documents
+          BEGIN
+            SELECT RAISE(ABORT, 'Repository snapshot documents are immutable');
+          END;
+        CREATE TRIGGER repository_snapshot_documents_prevent_delete
+          BEFORE DELETE ON repository_snapshot_documents
+          BEGIN
+            SELECT RAISE(ABORT, 'Repository snapshot documents are immutable');
+          END;
+      `)
+  },
+  {
+    version: 115,
+    name: 'online_document_snapshot_documents',
+    requiresForeignKeysDisabled: true,
+    up: (database) =>
+      database.exec(`
+        DROP TRIGGER IF EXISTS online_document_snapshots_prevent_update;
+        DROP TRIGGER IF EXISTS online_document_snapshots_prevent_delete;
+        DROP INDEX IF EXISTS online_document_snapshots_current;
+
+        ALTER TABLE online_document_snapshots
+          RENAME TO online_document_snapshots_v114;
+        CREATE TABLE online_document_snapshots (
+          id TEXT PRIMARY KEY,
+          source_id TEXT NOT NULL
+            REFERENCES online_document_sources(source_id) ON DELETE CASCADE,
+          version INTEGER NOT NULL CHECK (version > 0),
+          media_type TEXT NOT NULL,
+          content_checksum TEXT NOT NULL,
+          byte_size INTEGER NOT NULL CHECK (byte_size > 0),
+          etag TEXT,
+          last_modified TEXT,
+          fetched_at INTEGER NOT NULL CHECK (fetched_at >= 0),
+          UNIQUE (source_id, version)
+        );
+        INSERT INTO online_document_snapshots (
+          id, source_id, version, media_type, content_checksum, byte_size,
+          etag, last_modified, fetched_at
+        )
+        SELECT
+          id, source_id, version, media_type, content_checksum, byte_size,
+          etag, last_modified, fetched_at
+        FROM online_document_snapshots_v114;
+        DROP TABLE online_document_snapshots_v114;
+
+        CREATE INDEX online_document_snapshots_current
+          ON online_document_snapshots(source_id, version DESC);
+        CREATE TRIGGER online_document_snapshots_prevent_update
+          BEFORE UPDATE ON online_document_snapshots
+          BEGIN
+            SELECT RAISE(ABORT, 'Online document snapshots are immutable');
+          END;
+        CREATE TRIGGER online_document_snapshots_prevent_delete
+          BEFORE DELETE ON online_document_snapshots
+          BEGIN
+            SELECT RAISE(ABORT, 'Online document snapshots are immutable');
+          END;
+
+        CREATE TABLE online_document_snapshot_documents (
+          snapshot_id TEXT NOT NULL
+            REFERENCES online_document_snapshots(id) ON DELETE RESTRICT,
+          unit_key TEXT NOT NULL,
+          title TEXT NOT NULL,
+          content TEXT NOT NULL,
+          content_checksum TEXT NOT NULL,
+          byte_size INTEGER NOT NULL CHECK (byte_size >= 0),
+          metadata_json TEXT CHECK (
+            metadata_json IS NULL OR json_valid(metadata_json)
+          ),
+          PRIMARY KEY (snapshot_id, unit_key)
+        );
+        CREATE INDEX online_document_snapshot_documents_snapshot
+          ON online_document_snapshot_documents(snapshot_id, unit_key);
+        CREATE TRIGGER online_document_snapshot_documents_prevent_update
+          BEFORE UPDATE ON online_document_snapshot_documents
+          BEGIN
+            SELECT RAISE(ABORT, 'Online document snapshot documents are immutable');
+          END;
+        CREATE TRIGGER online_document_snapshot_documents_prevent_delete
+          BEFORE DELETE ON online_document_snapshot_documents
+          BEGIN
+            SELECT RAISE(ABORT, 'Online document snapshot documents are immutable');
+          END;
+      `)
   }
 ]
 

@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   parseAttachmentOwnerQuery,
   parseDeleteWorkbenchAttachmentCommand,
-  parsePickWorkbenchAttachmentCommand
+  parsePickWorkbenchAttachmentCommand,
+  parseReadWorkbenchAttachmentContentQuery
 } from './workbench-attachments'
 
 describe('workbench attachment contract', () => {
@@ -75,5 +76,23 @@ describe('workbench attachment contract', () => {
         attachmentId: 'attachment-1'
       })
     ).toThrow('requestId')
+  })
+
+  it('validates extracted preview and AI context queries', () => {
+    expect(
+      parseReadWorkbenchAttachmentContentQuery({
+        attachmentId: 'attachment-1',
+        purpose: 'ai_context'
+      })
+    ).toEqual({
+      attachmentId: 'attachment-1',
+      purpose: 'ai_context'
+    })
+    expect(() =>
+      parseReadWorkbenchAttachmentContentQuery({
+        attachmentId: 'attachment-1',
+        purpose: 'remote'
+      })
+    ).toThrow('purpose')
   })
 })

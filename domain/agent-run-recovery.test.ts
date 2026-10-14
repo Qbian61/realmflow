@@ -36,6 +36,7 @@ describe('Agent Run recovery', () => {
         sideEffects: 2,
         consecutiveFailures: 0,
         repeatedCallFingerprints: { 'files.read:abc': 1 },
+        deterministicFailureFingerprints: { 'files.read:def': 1 },
         activeRuntimeMs: 12_000,
         remainingContinuationAttempts: 1
       }
@@ -274,6 +275,7 @@ function checkpointInput(): Parameters<typeof createRunCheckpoint>[0] {
       sideEffects: 2,
       consecutiveFailures: 0,
       repeatedCallFingerprints: { 'files.read:abc': 1 },
+      deterministicFailureFingerprints: { 'files.read:def': 1 },
       activeRuntimeMs: 12_000,
       remainingContinuationAttempts: 1
     },

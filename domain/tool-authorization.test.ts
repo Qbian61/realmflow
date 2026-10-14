@@ -94,6 +94,30 @@ describe('authorizeToolEffects', () => {
     })
   })
 
+  it('authorizes owner-scoped managed process inspection without a bound file root', () => {
+    expect(
+      authorizeToolEffects({
+        effects: [
+          {
+            kind: 'process.inspect',
+            owner: { type: 'conversation', id: 'conversation-1' }
+          }
+        ] as unknown as ToolEffect[],
+        risk: 'low',
+        context: { sessionId: 'conversation-1' },
+        appSessionId: 'app-session-1',
+        boundScopes: [],
+        explicitGrants: [],
+        approvalProfile: 'protected'
+      })
+    ).toEqual({
+      outcome: 'authorized',
+      source: 'bound_scope',
+      effectiveRisk: 'L0',
+      authorizationIds: []
+    })
+  })
+
   it('requires approval for delete, out-of-root process, and computer effects', () => {
     const cases: Array<{
       effect: ToolEffect

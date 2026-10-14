@@ -26,6 +26,7 @@ const definition: SkillDefinition = {
   },
   inputSchema: { type: 'object' },
   outputSchema: { type: 'object' },
+  examples: [{}],
   requiredTools: [],
   activation: { intents: ['report'], contexts: ['space'] },
   limits: { maxToolCalls: 2, timeoutMs: 30_000 },

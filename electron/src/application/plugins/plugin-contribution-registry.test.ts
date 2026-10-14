@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ToolCatalogState } from '../../../../domain/tool-catalog'
 import type { ToolDefinition } from '../../../../domain/tool-definition'
+import type { JsonObject } from '../../../../domain/tool-protocol-validation'
 import {
   PluginContributionRegistry,
   PluginHookDispatcher
@@ -49,6 +50,34 @@ describe('PluginContributionRegistry', () => {
       'research.media',
       'research.web',
     ])
+  })
+
+  it('blocks Hooks when the automatic input cannot satisfy the target Tool schema', async () => {
+    const registry = new PluginContributionRegistry()
+    const blocked = catalog('enabled', 'enabled', {
+      toolInputSchema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['query'],
+        properties: {
+          query: { type: 'string' },
+        },
+      },
+    })
+
+    expect(registry.snapshot(blocked)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          contribution: expect.objectContaining({
+            kind: 'hook',
+            id: 'research.after-search',
+          }),
+          effective: false,
+          blockedReasons: ['hook_input_unsatisfied'],
+        }),
+      ]),
+    )
+    expect(registry.effective(blocked, 'hook')).toEqual([])
   })
 })
 
@@ -157,8 +186,11 @@ describe('PluginHookDispatcher', () => {
 function catalog(
   packageStatus: 'enabled' | 'disabled',
   toolStatus: 'enabled' | 'disabled',
+  options: {
+    toolInputSchema?: JsonObject
+  } = {},
 ): ToolCatalogState {
-  const definition = toolDefinition()
+  const definition = toolDefinition(options.toolInputSchema)
   return {
     packages: [
       {
@@ -225,7 +257,7 @@ function catalog(
   }
 }
 
-function toolDefinition(): ToolDefinition {
+function toolDefinition(inputSchema: JsonObject = { type: 'object' }): ToolDefinition {
   return {
     schemaVersion: 1,
     id: 'research.search',
@@ -245,7 +277,7 @@ function toolDefinition(): ToolDefinition {
       runtime: 'process',
       entryPath: 'runtime/search.js',
     },
-    inputSchema: { type: 'object' },
+    inputSchema,
     outputSchema: { type: 'object' },
     capabilities: ['network.connect'],
     effects: ['external.read'],

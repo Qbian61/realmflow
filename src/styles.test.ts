@@ -542,6 +542,20 @@ describe("Root viewport styles", () => {
     );
   });
 
+  it("uses workbench navigation names as grab targets", () => {
+    const nameRule =
+      styles.match(
+        /\.workbench-navigation-item \.workbench-navigation-item-primary\s*>\s*\.workbench-navigation-drag-source,\s*\.workbench-task-table-item \.workbench-navigation-drag-source\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    const draggingRule =
+      styles.match(
+        /\.workbench-navigation-item\[data-dragging='true'\]\s*\.workbench-navigation-drag-source,\s*\.workbench-task-table-item\[data-dragging='true'\]\s*\.workbench-navigation-drag-source\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+
+    expect(nameRule).toContain("cursor: grab;");
+    expect(draggingRule).toContain("cursor: grabbing;");
+  });
+
   it("keeps task table actions contextual and pagination at the bottom", () => {
     const actionRule =
       styles.match(/\.workbench-task-table-actions\s*\{([^}]*)\}/)?.[1] ?? "";
@@ -673,6 +687,68 @@ describe("Root viewport styles", () => {
     expect(headerRule).toContain("top: 0;");
     expect(headerRule).toContain("z-index:");
     expect(headerRule).toContain("background:");
+  });
+
+  it("keeps the repository status filter menu inside the dialog edge", () => {
+    const dialogRule =
+      styles.match(
+        /\.ui-dialog\.repository-snapshot-preview\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    const closeRule =
+      styles.match(
+        /\.repository-snapshot-preview > header button,\s*\.agent-profile-detail-header \.ui-icon-button\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    const agentDialogRule =
+      styles.match(
+        /\.ui-dialog\.agent-profile-detail-dialog\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    const rowRule =
+      styles.match(
+        /\.repository-snapshot-files \[role='row'\]\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    const headerRule =
+      styles.match(/\.repository-snapshot-file-header\s*\{([^}]*)\}/)?.[1] ??
+      "";
+    const displayRule =
+      styles.match(
+        /\.repository-header-filter-menu\.ui-popover\.ui-menu\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    const skippedStatusRule =
+      styles.match(/\.repository-file-status\.skipped\s*\{([^}]*)\}/)?.[1] ??
+      "";
+    const filterButtonRule =
+      [...styles.matchAll(/\.repository-header-filter\s*\{([^}]*)\}/g)]
+        .map((match) => match[1] ?? "")
+        .find((rule) => rule.includes("cursor: pointer;")) ?? "";
+
+    expect(dialogRule).toContain(
+      "height: min(720px, calc(100dvh - 96px));",
+    );
+    expect(dialogRule).toContain(
+      "max-height: min(720px, calc(100dvh - 96px));",
+    );
+    expect(dialogRule).not.toContain("--workspace-header-height");
+    expect(agentDialogRule).toContain(
+      "height: min(720px, calc(100dvh - 96px));",
+    );
+    expect(agentDialogRule).toContain(
+      "max-height: min(720px, calc(100dvh - 96px));",
+    );
+    expect(agentDialogRule).not.toContain("--workspace-header-height");
+    expect(closeRule).toContain("-webkit-app-region: no-drag;");
+    expect(closeRule).toContain("pointer-events: auto;");
+    expect(rowRule).toContain(
+      "grid-template-columns: minmax(0, 1fr) 80px 132px;",
+    );
+    expect(headerRule).toContain("z-index: var(--ui-layer-menu);");
+    expect(filterButtonRule).toContain("cursor: pointer;");
+    expect(displayRule).toContain("position: fixed;");
+    expect(displayRule).toContain("z-index: var(--ui-layer-tooltip);");
+    expect(displayRule).toContain("width: 128px;");
+    expect(skippedStatusRule).toContain("display: inline-flex;");
+    expect(styles).not.toContain(".repository-header-filter .ui-select");
+    expect(styles).not.toContain(".repository-header-filter .ui-select-popover");
+    expect(styles).not.toContain(".repository-skipped-files");
   });
 
   it("wraps recommendation descriptions at the 900px acceptance viewport", () => {
@@ -1599,6 +1675,13 @@ describe("Composer focus styles", () => {
     );
   });
 
+  it("keeps the agent portrait directory free of bottom divider lines", () => {
+    const directoryRule =
+      styles.match(/\.agent-profile-directory\s*\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(directoryRule).not.toContain("border-bottom:");
+  });
+
   it("matches analytics tabs to the shared workspace header style", () => {
     const headerRule =
       styles.match(/\.analytics-page-header\s*\{([^}]*)\}/)?.[1] ?? "";
@@ -1944,9 +2027,7 @@ describe("Composer focus styles", () => {
     const summaryLabelRule =
       styles.match(/\.space-statistics-summary span\s*\{([^}]*)\}/)?.[1] ?? "";
     const headingRule =
-      styles.match(
-        /\.space-statistics-grid h2,\s*\.space-resource-header h2\s*\{([^}]*)\}/,
-      )?.[1] ?? "";
+      styles.match(/\.space-statistics-grid h2\s*\{([^}]*)\}/)?.[1] ?? "";
     const stageRule =
       styles.match(/\.space-stage-row\s*\{([^}]*)\}/)?.[1] ?? "";
     const requirementRule =
@@ -1961,6 +2042,60 @@ describe("Composer focus styles", () => {
     expect(stageRule).toContain("font-size: 12px;");
     expect(requirementRule).toContain("font-size: 12px;");
     expect(resourceRule).toContain("font-size: 12px;");
+  });
+
+  it("aligns space resource actions left and search right in one control row", () => {
+    const controlsRule =
+      styles.match(/\.ui-toolbar\.space-resource-controls\s*\{([^}]*)\}/)
+        ?.[1] ?? "";
+    const actionsRule =
+      styles.match(/\.space-resource-actions\s*\{([^}]*)\}/)?.[1] ?? "";
+    const actionButtonRule =
+      styles.match(/\.space-resource-actions \.ui-button\s*\{([^}]*)\}/)
+        ?.[1] ?? "";
+    const actionLabelRule =
+      styles.match(
+        /\.space-resource-actions \.ui-button__label\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    const searchRule =
+      styles.match(/\.space-resource-search\s*\{([^}]*)\}/)?.[1] ?? "";
+    const rowRule =
+      styles.match(/\.space-resource-table > div\s*\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(controlsRule).toContain("grid-template-columns: max-content 220px;");
+    expect(controlsRule).toContain("justify-content: space-between;");
+    expect(controlsRule).not.toContain("border-bottom:");
+    expect(actionsRule).toContain("flex-wrap: nowrap;");
+    expect(actionsRule).toContain("justify-self: start;");
+    expect(actionButtonRule).toContain("flex: 0 0 auto;");
+    expect(actionButtonRule).toContain("white-space: nowrap;");
+    expect(actionLabelRule).toContain("white-space: nowrap;");
+    expect(searchRule).toContain("justify-self: end;");
+    expect(searchRule).toContain("width: 220px;");
+    expect(searchRule).toContain("max-width: 220px;");
+    expect(rowRule).toContain("minmax(92px, 0.46fr)");
+    expect(rowRule).not.toContain("minmax(120px, 0.7fr)");
+    expect(rowRule).toContain("minmax(206px, auto)");
+    expect(rowRule).not.toContain("minmax(190px, 1fr)");
+    expect(styles).not.toContain(".space-resource-toolbar");
+  });
+
+  it("keeps repository index status summaries out of the resource row layout", () => {
+    const wrapperRule =
+      styles.match(/\.space-resource-index-status-wrap\s*\{([^}]*)\}/)?.[1] ??
+      "";
+    const summaryRule =
+      styles.match(/\.space-resource-index-status-summary\s*\{([^}]*)\}/)?.[1] ??
+      "";
+    const rowRule =
+      styles.match(
+        /\.space-resource-index-status-summary-row\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+
+    expect(wrapperRule).toContain("position: relative;");
+    expect(summaryRule).toContain("position: absolute;");
+    expect(summaryRule).toContain("width: 176px;");
+    expect(rowRule).toContain("grid-template-columns: minmax(0, 1fr) auto;");
   });
 
   it("matches the recent heading density to the spaces heading", () => {
@@ -2270,15 +2405,23 @@ describe("Composer focus styles", () => {
   it("reveals space collapse controls only on row interaction", () => {
     const groupChevronRule =
       styles.match(/(?:^|\n)\.spaces-chevron\s*\{([^}]*)\}/)?.[1] ?? "";
+    const leadingControlRule =
+      styles.match(/\.space-leading-control\s*\{([^}]*)\}/)?.[1] ?? "";
+    const spaceIconRule =
+      styles.match(/(?:^|\n)\.space-icon\s*\{([^}]*)\}/)?.[1] ?? "";
     const spaceToggleRule =
       styles.match(/\.space-requirements-toggle\s*\{([^}]*)\}/)?.[1] ?? "";
     const groupRevealRule =
       styles.match(
         /\.spaces-heading:hover \.spaces-chevron,\s*\.spaces-heading:focus-within \.spaces-chevron\s*\{([^}]*)\}/,
       )?.[1] ?? "";
+    const spaceIconHideRule =
+      styles.match(
+        /\.space-row:hover \.space-icon,\s*\.space-leading-control:has\(\.space-requirements-toggle:focus-visible\) \.space-icon\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
     const spaceRevealRule =
       styles.match(
-        /\.space-row:hover \.space-requirements-toggle,\s*\.space-requirements-toggle:focus-visible\s*\{([^}]*)\}/,
+        /\.space-row:hover \.space-requirements-toggle,\s*\.space-leading-control:has\(\.space-requirements-toggle:focus-visible\) \.space-requirements-toggle\s*\{([^}]*)\}/,
       )?.[1] ?? "";
 
     for (const rule of [groupChevronRule, spaceToggleRule]) {
@@ -2286,10 +2429,16 @@ describe("Composer focus styles", () => {
       expect(rule).toContain("pointer-events: none;");
     }
 
+    expect(leadingControlRule).toContain("position: relative;");
+    expect(spaceIconRule).toContain("position: absolute;");
+    expect(spaceToggleRule).toContain("position: absolute;");
+    expect(spaceIconHideRule).toContain("opacity: 0;");
+
     for (const rule of [groupRevealRule, spaceRevealRule]) {
       expect(rule).toContain("opacity: 1;");
       expect(rule).toContain("pointer-events: auto;");
     }
+    expect(styles).not.toContain(".space-leading-control:focus-within");
   });
 
   it("matches recent collapse controls to the space collapse controls", () => {
@@ -2405,28 +2554,33 @@ describe("Composer focus styles", () => {
     expect(styles).toMatch(
       /\.requirement-actions\s*\{[^}]*position:\s*relative;/s,
     );
-    expect(styles).toMatch(
-      /\.requirement-drag-handle\s*\{[^}]*position:\s*relative;/s,
-    );
   });
 
-  it("reveals drag handles on hover and marks valid drop targets", () => {
-    const handleRule =
+  it("uses space and requirement names as grab targets", () => {
+    const spaceRule =
+      styles.match(/\.space-item\s*\{([^}]*)\}/)?.[1] ?? "";
+    const spaceDraggingRule =
       styles.match(
-        /\.space-drag-handle,\s*\.requirement-drag-handle\s*\{([^}]*)\}/,
+        /\.space-item:active,\s*\.space-entry\[data-dragging='true'\] \.space-item\s*\{([^}]*)\}/,
       )?.[1] ?? "";
-    const revealRule =
+    const requirementRule =
       styles.match(
-        /\.space-row:hover \.space-drag-handle,\s*\.space-drag-handle:focus-visible,\s*\.space-requirements li:hover \.requirement-drag-handle,\s*\.requirement-drag-handle:focus-visible\s*\{([^}]*)\}/,
+        /\.space-requirements li a\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    const requirementDraggingRule =
+      styles.match(
+        /\.space-requirements li a:active,\s*\.space-requirements li\[data-dragging='true'\] a\s*\{([^}]*)\}/,
       )?.[1] ?? "";
     const dropRule =
       styles.match(
         /\[data-drop-target='before'\]::before\s*\{([^}]*)\}/,
       )?.[1] ?? "";
 
-    expect(handleRule).toContain("cursor: grab;");
-    expect(handleRule).toContain("opacity: 0;");
-    expect(revealRule).toContain("opacity: 1;");
+    expect(spaceRule).toContain("cursor: grab;");
+    expect(spaceDraggingRule).toContain("cursor: grabbing;");
+    expect(requirementRule).toContain("cursor: grab;");
+    expect(requirementDraggingRule).toContain("cursor: grabbing;");
+    expect(styles).not.toContain(".requirement-drag-handle");
     expect(dropRule).toContain("height: 2px;");
     expect(dropRule).toContain("background: var(--color-text);");
   });
@@ -2670,7 +2824,7 @@ describe("Composer focus styles", () => {
       /\.space-statistics-grid\s*\{[^}]*grid-template-columns: 1fr;/,
     );
     expect(narrowStyles).toMatch(
-      /\.space-resource-header\s*\{[^}]*flex-direction: column;/,
+      /\.ui-toolbar\.space-resource-controls\s*\{[^}]*grid-template-columns: max-content 220px;/,
     );
     expect(narrowStyles).toMatch(
       /\.requirement-overview\s*\{[^}]*grid-template-columns: 1fr;/,
@@ -3340,6 +3494,21 @@ describe("Composer focus styles", () => {
     expect(styles).toMatch(
       /\.app-route-page__body:focus\s*\{[^}]*outline: 2px solid transparent;[^}]*outline-offset: -2px;/s,
     );
+  });
+
+  it("lets the requirement template menu extend across the dialog footer", () => {
+    const bodyRule =
+      styles.match(
+        /\.ui-dialog \.requirement-create-dialog__body\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    const menuRule =
+      styles.match(
+        /\.requirement-create-dialog \.ui-select-popover\.ui-menu\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+
+    expect(bodyRule).toContain("overflow: visible;");
+    expect(menuRule).toContain("top: auto;");
+    expect(menuRule).toContain("bottom: calc(100% + 6px);");
   });
 
   it("localizes the skip-to-main-content command in every supported locale", () => {

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import type { ExtractedContentUnit } from './content-extraction'
 
 export type OnlineDocumentSource = {
   sourceId: string
@@ -18,13 +19,22 @@ export type OnlineDocumentSnapshot = {
   id: string
   sourceId: string
   version: number
-  content: string
   mediaType: string
   contentChecksum: string
   byteSize: number
+  documents: OnlineDocumentSnapshotDocument[]
   etag?: string
   lastModified?: string
   fetchedAt: number
+}
+
+export type OnlineDocumentSnapshotDocument = {
+  unitKey: string
+  title: string
+  content: string
+  checksum: string
+  byteSize: number
+  metadata?: ExtractedContentUnit['metadata']
 }
 
 export function normalizeOnlineDocumentPath(value: string): string {
@@ -67,6 +77,7 @@ export function createOnlineDocumentSnapshot(input: {
   version: number
   body: Uint8Array
   mediaType: string
+  documents: OnlineDocumentSnapshotDocument[]
   etag?: string
   lastModified?: string
   fetchedAt: number
@@ -78,23 +89,38 @@ export function createOnlineDocumentSnapshot(input: {
     throw new Error('Online document response is empty')
   }
   const mediaType = normalizeMediaType(input.mediaType)
-  let content: string
-  try {
-    content = new TextDecoder('utf-8', { fatal: true }).decode(input.body)
-  } catch {
-    throw new Error('Online document response is not valid UTF-8')
+  if (input.documents.length === 0) {
+    throw new Error('Online document snapshot documents are empty')
   }
-  if (!content.trim()) throw new Error('Online document response is empty')
+  const unitKeys = new Set<string>()
+  const documents = input.documents.map((document) => {
+    if (
+      !document.unitKey.trim() ||
+      !document.title.trim() ||
+      !document.content.trim() ||
+      !document.checksum.trim() ||
+      !Number.isSafeInteger(document.byteSize) ||
+      document.byteSize < 0 ||
+      unitKeys.has(document.unitKey)
+    ) {
+      throw new Error('Online document snapshot document is invalid')
+    }
+    unitKeys.add(document.unitKey)
+    return {
+      ...document,
+      ...(document.metadata ? { metadata: { ...document.metadata } } : {})
+    }
+  })
   return {
     id: input.id,
     sourceId: input.sourceId,
     version: input.version,
-    content,
     mediaType,
     contentChecksum: `sha256:${createHash('sha256')
       .update(input.body)
       .digest('hex')}`,
     byteSize: input.body.byteLength,
+    documents,
     ...(input.etag ? { etag: input.etag } : {}),
     ...(input.lastModified ? { lastModified: input.lastModified } : {}),
     fetchedAt: input.fetchedAt
@@ -102,13 +128,11 @@ export function createOnlineDocumentSnapshot(input: {
 }
 
 function normalizeMediaType(value: string): string {
-  const mediaType = value.split(';', 1)[0]?.trim().toLowerCase() ?? ''
-  if (
-    !mediaType.startsWith('text/') &&
-    mediaType !== 'application/json' &&
-    !/^application\/[^/]+\+json$/.test(mediaType)
-  ) {
-    throw new Error('Online document media type is unsupported')
+  const mediaType =
+    value.split(';', 1)[0]?.trim().toLowerCase() ||
+    'application/octet-stream'
+  if (!/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/.test(mediaType)) {
+    throw new Error('Online document media type is invalid')
   }
   return mediaType
 }

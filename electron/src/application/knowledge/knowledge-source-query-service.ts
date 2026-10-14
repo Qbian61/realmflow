@@ -1,5 +1,6 @@
 import type { KnowledgeRefreshPreset } from '../../../../domain/knowledge-refresh'
 import type { KnowledgeSource } from '../../../../domain/knowledge-source'
+import type { RepositorySource } from '../../../../domain/repository-source'
 import { DEFAULT_VECTOR_INDEX_PROFILE } from '../../../../domain/vector-index-profile'
 
 export type KnowledgeSourceRowView = KnowledgeSource & {
@@ -17,7 +18,24 @@ export type KnowledgeSourceRowView = KnowledgeSource & {
     generationId?: string
     sourceVersion?: string
     indexedAt?: number
+    errorCode?: string
   }
+  repository?: RepositorySourceSummaryView
+}
+
+type RepositorySourceSummaryView = {
+  sourceId: string
+  workspaceId: string
+  mode: 'local' | 'remote'
+  locator: string
+  selectedBranch?: string
+  currentVersion: number
+  revisionLabel?: string
+  fileCount: number
+  totalBytes: number
+  lastScannedAt?: number
+  createdAt: number
+  updatedAt: number
 }
 
 export class KnowledgeSourceQueryService {
@@ -47,7 +65,16 @@ export class KnowledgeSourceQueryService {
             sourceVersion: string
             committedAt: number | null
           }
+          job?: {
+            status: string
+            errorCode?: string | null
+          }
         }>
+      }
+      repositories?: {
+        getRepositorySource(
+          sourceId: string
+        ): Promise<RepositorySource | undefined>
       }
     }
   ) {}
@@ -56,9 +83,14 @@ export class KnowledgeSourceQueryService {
     const sources = await this.dependencies.sources.list(query)
     return Promise.all(
       sources.map(async (source) => {
-        const [refresh, index] = await Promise.all([
+        const [refresh, index, repository] = await Promise.all([
           this.dependencies.refresh.getPolicy(source.id),
-          this.dependencies.indexes.get(source.id)
+          this.dependencies.indexes.get(source.id),
+          source.type === 'repository'
+            ? (this.dependencies.repositories?.getRepositorySource(
+                source.id
+              ) ?? Promise.resolve(undefined))
+            : Promise.resolve(undefined)
         ])
         return {
           ...source,
@@ -85,10 +117,41 @@ export class KnowledgeSourceQueryService {
                     ? {}
                     : { indexedAt: index.index.committedAt })
                 }
+              : {}),
+            ...(index.health === 'failed' && index.job?.errorCode
+              ? { errorCode: index.job.errorCode }
               : {})
-          }
+          },
+          ...(repository
+            ? { repository: mapRepositorySourceSummary(repository) }
+            : {})
         }
       })
     )
+  }
+}
+
+function mapRepositorySourceSummary(
+  repository: RepositorySource
+): RepositorySourceSummaryView {
+  return {
+    sourceId: repository.sourceId,
+    workspaceId: repository.workspaceId,
+    mode: repository.mode,
+    locator: repository.locator,
+    ...(repository.selectedBranch
+      ? { selectedBranch: repository.selectedBranch }
+      : {}),
+    currentVersion: repository.currentVersion,
+    ...(repository.revisionLabel
+      ? { revisionLabel: repository.revisionLabel }
+      : {}),
+    fileCount: repository.fileCount,
+    totalBytes: repository.totalBytes,
+    ...(repository.lastScannedAt
+      ? { lastScannedAt: repository.lastScannedAt }
+      : {}),
+    createdAt: repository.createdAt,
+    updatedAt: repository.updatedAt
   }
 }

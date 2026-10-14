@@ -16,7 +16,10 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {},
-    "required": []
+    "required": [],
+    "examples": [
+      {}
+    ]
   },
   "outputSchema": {
     "type": "object",

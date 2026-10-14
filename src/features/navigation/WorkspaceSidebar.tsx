@@ -1,13 +1,7 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
-import { NavLink } from "react-router-dom";
 import {
   ChevronDown,
   Ellipsis,
-  FileText,
-  FolderClosed,
-  FolderDot,
-  FolderOpen,
-  FolderOpenDot,
   FolderPlus,
 } from "lucide-react";
 import type { BusinessApi } from "../../../shared/business";
@@ -16,8 +10,6 @@ import type { ChatSession } from "../../domain/chat-session";
 import type { WorkspaceNavigation } from "../../domain/workspace";
 import { useLocalization } from "../../localization/LocalizationProvider";
 import { RecentSessions } from "../sessions/RecentSessions";
-import { beginNativeDrag } from "../drag/native-drag-feedback";
-import { DragHandle } from "../drag/DragHandle";
 import type { RecentConversationFilters } from "../sessions/recent-conversation-filters";
 import {
   WorkspaceNameDialog,
@@ -27,12 +19,12 @@ import { RequirementActionsMenu } from "./RequirementActionsMenu";
 import { RequirementCreateDialog } from "./RequirementCreateDialog";
 import { SpaceActionsMenu } from "./SpaceActionsMenu";
 import { WorkspacePrimaryNavigation } from "./WorkspacePrimaryNavigation";
+import { SpaceEntry } from "./WorkspaceSpaceEntry";
 import { WorkspaceUserMenu } from "./WorkspaceUserMenu";
 import { useWorkspaceSidebarDrag } from "./use-workspace-sidebar-drag";
 import { getViewportMenuPosition, type ViewportMenuPosition }
   from "./workspace-sidebar-menu-position";
 import { dropTargetIndex } from "./workspace-sidebar-reorder";
-import type { SpaceEntryProps } from "./workspace-space-entry-types";
 
 const SPACE_ITEM_MENU_HEIGHT = 161, REQUIREMENT_MENU_HEIGHT = 86;
 
@@ -153,7 +145,18 @@ export function WorkspaceSidebar({
       if (!spaceActionsRef.current?.contains(event.target as Node)) {
         setSpaceMenuOpen(false);
       }
-      if (!spaceListRef.current?.contains(event.target as Node)) {
+      const target = event.target;
+      const insideFloatingSpaceMenu =
+        target instanceof Element &&
+        Boolean(
+          target.closest(
+            ".space-item-actions-menu, .requirement-actions-menu",
+          ),
+        );
+      if (
+        !spaceListRef.current?.contains(target as Node) &&
+        !insideFloatingSpaceMenu
+      ) {
         setSpaceItemMenuPath(null);
         setRequirementMenuKey(null);
         setRequirementMenuPosition(null);
@@ -457,240 +460,5 @@ export function WorkspaceSidebar({
         />
       ) : null}
     </>
-  );
-}
-
-function SpaceEntry({
-  space,
-  index,
-  count,
-  requirements,
-  requirementsOpen,
-  dropTarget,
-  activeMenuPath,
-  activeRequirementMenuKey,
-  menuPosition,
-  requirementMenuPosition,
-  dragRef,
-  onDropTargetChange,
-  onClearDrag,
-  onSpaceDrop,
-  onRequirementDrop,
-  onMoveSpace,
-  onMoveRequirement,
-  onToggleRequirements,
-  onOpenSpaceMenu,
-  onOpenRequirementMenu,
-  onOpenNameDialog,
-  onCloseSpaceMenu,
-  onCloseRequirementMenu,
-  onRelocateSpace,
-}: SpaceEntryProps): JSX.Element {
-  const { t } = useLocalization();
-  const SpaceStateIcon =
-    requirements.length > 0
-      ? requirementsOpen
-        ? FolderOpenDot
-        : FolderDot
-      : requirementsOpen
-        ? FolderOpen
-        : FolderClosed;
-
-  return (
-    <div
-      className={
-        dropTarget === `space:${space.path}`
-          ? "space-entry drag-over"
-          : "space-entry"
-      }
-      data-drop-target={
-        dropTarget === `space:${space.path}` ? "before" : undefined
-      }
-      draggable
-      onDragStart={(event) => {
-        beginNativeDrag(event, event.currentTarget);
-        dragRef.current = { kind: "space", spacePath: space.path };
-      }}
-      onDragEnd={onClearDrag}
-      onDragOver={(event) => {
-        const activeDrag = dragRef.current;
-        if (
-          activeDrag?.kind !== "space" ||
-          activeDrag.spacePath === space.path
-        ) {
-          return;
-        }
-        event.preventDefault();
-        onDropTargetChange(`space:${space.path}`);
-      }}
-      onDrop={(event) => onSpaceDrop(event, space.path)}
-    >
-      <div className="space-row">
-        <NavLink
-          to={space.path}
-          end
-          className={({ isActive }) =>
-            isActive ? "space-item active" : "space-item"
-          }
-        >
-          <span className="space-icon" aria-hidden="true">
-            <SpaceStateIcon size={18} strokeWidth={1.8} />
-          </span>
-          <span title={space.label}>{space.label}</span>
-        </NavLink>
-        <div className="space-row-actions">
-          <DragHandle
-            className="space-drag-handle"
-            name={space.label}
-            draggable
-          />
-          <button
-            className="space-requirements-toggle"
-            type="button"
-            aria-label={t("workspace.requirementsToggle", {
-              action: requirementsOpen
-                ? t("workspace.collapse")
-                : t("workspace.expand"),
-              name: space.label,
-            })}
-            title={t(requirementsOpen ? "workspace.collapse" : "workspace.expand")}
-            aria-expanded={requirementsOpen}
-            onClick={onToggleRequirements}
-          >
-            <ChevronDown
-              className={
-                requirementsOpen
-                  ? "space-requirements-chevron open"
-                  : "space-requirements-chevron"
-              }
-              size={14}
-            />
-          </button>
-          <div className="space-item-actions">
-            <button
-              className="space-item-actions-trigger"
-              type="button"
-              aria-label={t("workspace.itemActions", { name: space.label })}
-              aria-haspopup="menu"
-              aria-expanded={activeMenuPath === space.path}
-              title={t("tooltip.moreActions")}
-              onClick={(event) =>
-                onOpenSpaceMenu(event.currentTarget.getBoundingClientRect())
-              }
-            >
-              <Ellipsis size={17} />
-            </button>
-            {activeMenuPath === space.path && (
-              <SpaceActionsMenu
-                space={space}
-                position={menuPosition}
-                onOpenNameDialog={onOpenNameDialog}
-                onRelocate={onRelocateSpace}
-                onClose={onCloseSpaceMenu}
-              />
-            )}
-          </div>
-        </div>
-      </div>
-      {requirements.length > 0 && requirementsOpen && (
-        <ul
-          className="space-requirements"
-          aria-label={t("workspace.requirementsList", { name: space.label })}
-        >
-          {requirements.map((requirement, requirementIndex) => {
-            const menuKey = `${space.path}:${requirement.id}`;
-            return (
-              <li
-                className={
-                  dropTarget === `requirement:${space.path}:${requirement.id}`
-                    ? "drag-over"
-                    : undefined
-                }
-                data-drop-target={
-                  dropTarget ===
-                  `requirement:${space.path}:${requirement.id}`
-                    ? "before"
-                    : undefined
-                }
-                draggable
-                key={requirement.id}
-                onDragStart={(event) => {
-                  event.stopPropagation();
-                  beginNativeDrag(event, event.currentTarget);
-                  dragRef.current = {
-                    kind: "requirement",
-                    spacePath: space.path,
-                    requirementId: requirement.id,
-                  };
-                }}
-                onDragEnd={onClearDrag}
-                onDragOver={(event) => {
-                  const activeDrag = dragRef.current;
-                  if (
-                    activeDrag?.kind !== "requirement" ||
-                    activeDrag.spacePath !== space.path ||
-                    activeDrag.requirementId === requirement.id
-                  ) {
-                    return;
-                  }
-                  event.preventDefault();
-                  onDropTargetChange(
-                    `requirement:${space.path}:${requirement.id}`,
-                  );
-                }}
-                onDrop={(event) =>
-                  onRequirementDrop(event, space.path, requirement.id)
-                }
-              >
-                <NavLink
-                  to={`${space.path}/requirements/${requirement.id}`}
-                  title={requirement.title}
-                >
-                  <FileText size={15} strokeWidth={1.8} />
-                  <span>{requirement.title}</span>
-                </NavLink>
-                <div className="requirement-row-actions">
-                  <DragHandle
-                    className="requirement-drag-handle"
-                    name={requirement.title}
-                    draggable
-                  />
-                  <div className="requirement-actions">
-                    <button
-                      className="requirement-actions-trigger"
-                      type="button"
-                      aria-label={t("requirement.itemActions", {
-                        name: requirement.title,
-                      })}
-                      aria-haspopup="menu"
-                      aria-expanded={activeRequirementMenuKey === menuKey}
-                      title={t("tooltip.moreActions")}
-                      onClick={(event) =>
-                        onOpenRequirementMenu(
-                          menuKey,
-                          event.currentTarget.getBoundingClientRect(),
-                        )
-                      }
-                    >
-                      <Ellipsis size={16} />
-                    </button>
-                    {activeRequirementMenuKey === menuKey && (
-                      <RequirementActionsMenu
-                        spacePath={space.path}
-                        requirementId={requirement.id}
-                        requirementTitle={requirement.title}
-                        position={requirementMenuPosition ?? undefined}
-                        onOpenNameDialog={onOpenNameDialog}
-                        onClose={onCloseRequirementMenu}
-                      />
-                    )}
-                  </div>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </div>
   );
 }

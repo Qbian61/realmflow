@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { ContentExtractionError } from '../../../../domain/content-extraction'
 import {
   createKnowledgeChunkId,
   createKnowledgeDocumentId,
@@ -86,6 +87,7 @@ type WorkerRepository = {
     profileId: string
     sourceVersion: string
     documents: Array<{ documentKey: string; checksum: string }>
+    retryFailed: boolean
     at: number
   }): Promise<WorkerDocumentState[]>
   transitionDocumentState?(input: {
@@ -94,8 +96,9 @@ type WorkerRepository = {
     documentKey: string
     expectedSourceVersion: string
     expectedChecksum: string
-    expectedStatus: 'pending' | 'indexing'
-    status: 'indexing' | 'failed'
+    expectedStatus: WorkerDocumentState['status']
+    status: WorkerDocumentState['status']
+    generationId?: string | null
     errorCode?: string
     at: number
   }): Promise<unknown>
@@ -209,6 +212,13 @@ type BuiltGeneration = {
   }>
 }
 
+type RepositoryDocumentProgress = {
+  documentKey: string
+  sourceVersion: string
+  checksum: string
+  status: 'pending' | 'indexing' | 'indexed' | 'failed'
+}
+
 const MAX_CHUNK_DOCUMENT_BATCH_SIZE = 32
 
 export class KnowledgeIndexWorker {
@@ -257,7 +267,10 @@ export class KnowledgeIndexWorker {
     let status: KnowledgeIndexJobStatus = 'running'
     let startedWritingPoints = false
     let snapshot: FrozenKnowledgeSourceSnapshot | undefined
-    const indexingDocuments: WorkerDocumentState[] = []
+    const repositoryDocumentProgress = new Map<
+      string,
+      RepositoryDocumentProgress
+    >()
     try {
       snapshot = await this.dependencies.reader.readFrozen(job)
       assertSnapshotMatchesJob(snapshot, job)
@@ -271,21 +284,17 @@ export class KnowledgeIndexWorker {
               documentKey: document.documentKey,
               checksum: document.checksum ?? checksum(document.content)
             })),
+            retryFailed: !job.targetDocumentKey,
             at: this.now()
           })) ?? []
         for (const state of states) {
           if (state.status !== 'pending') continue
-          await this.dependencies.repository.transitionDocumentState?.({
-            sourceId: job.sourceId,
-            profileId: job.profileId,
+          repositoryDocumentProgress.set(state.documentKey, {
             documentKey: state.documentKey,
-            expectedSourceVersion: state.sourceVersion,
-            expectedChecksum: state.checksum,
-            expectedStatus: 'pending',
-            status: 'indexing',
-            at: this.now()
+            sourceVersion: state.sourceVersion,
+            checksum: state.checksum,
+            status: 'pending'
           })
-          indexingDocuments.push(state)
         }
       }
       const incremental = await this.prepareRepositoryIncrementalBuild({
@@ -293,36 +302,48 @@ export class KnowledgeIndexWorker {
         snapshot,
         signal
       })
-      const built = incremental
-        ? await buildIncrementalGeneration({
-            job,
-            snapshot,
-            incremental,
-            sidecar: this.dependencies.sidecar,
-            signal,
-            at: this.now()
-          })
-        : await buildFullGeneration({
-            job,
-            snapshot,
-            sidecar: this.dependencies.sidecar,
-            signal,
-            at: this.now()
-          })
-      await this.dependencies.repository.saveGenerationManifest({
-        generationId: job.generationId,
-        documents: built.documents
-      })
-      await this.dependencies.repository.saveSearchPoints?.({
-        generationId: job.generationId,
-        points: built.points
-      })
-      startedWritingPoints = true
-      await this.dependencies.qdrant.upsertPoints(
-        this.dependencies.profile.workspaceCollection,
-        built.points,
-        signal
-      )
+      if (job.sourceKind === 'repository' && incremental) {
+        await this.markRepositoryDocumentsIndexing({
+          job,
+          documents: snapshot.documents,
+          documentProgress: repositoryDocumentProgress
+        })
+      }
+      const built =
+        job.sourceKind === 'repository' && !incremental
+          ? await this.buildRepositoryFullGenerationInBatches({
+              job,
+              snapshot,
+              signal,
+              documentProgress: repositoryDocumentProgress,
+              markQdrantWriteStarted: () => {
+                startedWritingPoints = true
+              }
+            })
+          : await buildIncrementalGenerationOrFull({
+              job,
+              snapshot,
+              incremental,
+              sidecar: this.dependencies.sidecar,
+              signal,
+              at: this.now()
+            })
+      if (job.sourceKind !== 'repository' || incremental) {
+        await this.dependencies.repository.saveGenerationManifest({
+          generationId: job.generationId,
+          documents: built.documents
+        })
+        await this.dependencies.repository.saveSearchPoints?.({
+          generationId: job.generationId,
+          points: built.points
+        })
+        startedWritingPoints = true
+        await this.dependencies.qdrant.upsertPoints(
+          this.dependencies.profile.workspaceCollection,
+          built.points,
+          signal
+        )
+      }
       await this.dependencies.repository.transitionJob({
         id: job.id,
         expectedStatus: 'running',
@@ -388,23 +409,30 @@ export class KnowledgeIndexWorker {
       const errorCode =
         error instanceof StaleKnowledgeSourceError
           ? 'source_changed'
-          : 'indexing_failed'
+          : error instanceof ContentExtractionError
+            ? error.code
+            : 'indexing_failed'
       const target = snapshot?.documents.find(
         ({ documentKey }) => documentKey === job.targetDocumentKey
       )
-      if (indexingDocuments.length > 0) {
-        for (const document of indexingDocuments) {
+      if (repositoryDocumentProgress.size > 0) {
+        for (const document of repositoryDocumentProgress.values()) {
+          if (
+            document.status === 'pending' ||
+            document.status === 'failed'
+          ) continue
           await this.dependencies.repository.transitionDocumentState?.({
             sourceId: job.sourceId,
             profileId: job.profileId,
             documentKey: document.documentKey,
             expectedSourceVersion: document.sourceVersion,
             expectedChecksum: document.checksum,
-            expectedStatus: 'indexing',
+            expectedStatus: document.status,
             status: 'failed',
             errorCode,
             at: this.now()
           })
+          document.status = 'failed'
         }
       } else if (job.targetDocumentKey && target) {
         await this.dependencies.repository.transitionDocumentState?.({
@@ -459,7 +487,7 @@ export class KnowledgeIndexWorker {
           sourceId: input.job.sourceId,
           profileId: input.job.profileId
         })
-      if (!manifest) return undefined
+      if (!manifest || manifest.documents.length === 0) return undefined
       const points = await this.dependencies.qdrant.readGenerationPoints({
         collection: this.dependencies.profile.workspaceCollection,
         workspaceId: input.snapshot.scopeId,
@@ -482,12 +510,175 @@ export class KnowledgeIndexWorker {
       return undefined
     }
   }
+
+  private async buildRepositoryFullGenerationInBatches(input: {
+    job: WorkerJob
+    snapshot: FrozenKnowledgeSourceSnapshot
+    signal: AbortSignal
+    documentProgress: Map<string, RepositoryDocumentProgress>
+    markQdrantWriteStarted: () => void
+  }): Promise<BuiltGeneration> {
+    const built: BuiltGeneration = {
+      points: [],
+      documents: [],
+      failedDocuments: []
+    }
+    for (
+      let offset = 0;
+      offset < input.snapshot.documents.length;
+      offset += MAX_CHUNK_DOCUMENT_BATCH_SIZE
+    ) {
+      const batchSnapshot: FrozenKnowledgeSourceSnapshot = {
+        ...input.snapshot,
+        documents: input.snapshot.documents.slice(
+          offset,
+          offset + MAX_CHUNK_DOCUMENT_BATCH_SIZE
+        )
+      }
+      await this.markRepositoryDocumentsIndexing({
+        job: input.job,
+        documents: batchSnapshot.documents,
+        documentProgress: input.documentProgress
+      })
+      const batch = await buildFullGeneration({
+        job: input.job,
+        snapshot: batchSnapshot,
+        sidecar: this.dependencies.sidecar,
+        signal: input.signal,
+        at: this.now()
+      })
+      await this.dependencies.repository.saveGenerationManifest({
+        generationId: input.job.generationId,
+        documents: batch.documents
+      })
+      await this.dependencies.repository.saveSearchPoints?.({
+        generationId: input.job.generationId,
+        points: batch.points
+      })
+      if (batch.points.length > 0) {
+        input.markQdrantWriteStarted()
+        await this.dependencies.qdrant.upsertPoints(
+          this.dependencies.profile.workspaceCollection,
+          batch.points,
+          input.signal
+        )
+      }
+      await this.markRepositoryDocumentsIndexed({
+        job: input.job,
+        documents: batch.documents,
+        documentProgress: input.documentProgress
+      })
+      await this.markRepositoryDocumentsFailed({
+        job: input.job,
+        documents: batch.failedDocuments,
+        documentProgress: input.documentProgress
+      })
+      built.documents.push(...batch.documents)
+      built.points.push(...batch.points)
+      built.failedDocuments.push(...batch.failedDocuments)
+    }
+    return built
+  }
+
+  private async markRepositoryDocumentsIndexing(input: {
+    job: WorkerJob
+    documents: FrozenKnowledgeSourceSnapshot['documents']
+    documentProgress: Map<string, RepositoryDocumentProgress>
+  }): Promise<void> {
+    for (const document of input.documents) {
+      const progress = input.documentProgress.get(document.documentKey)
+      if (!progress || progress.status !== 'pending') continue
+      await this.dependencies.repository.transitionDocumentState?.({
+        sourceId: input.job.sourceId,
+        profileId: input.job.profileId,
+        documentKey: progress.documentKey,
+        expectedSourceVersion: progress.sourceVersion,
+        expectedChecksum: progress.checksum,
+        expectedStatus: 'pending',
+        status: 'indexing',
+        at: this.now()
+      })
+      progress.status = 'indexing'
+    }
+  }
+
+  private async markRepositoryDocumentsIndexed(input: {
+    job: WorkerJob
+    documents: GenerationManifestDocument[]
+    documentProgress: Map<string, RepositoryDocumentProgress>
+  }): Promise<void> {
+    for (const document of input.documents) {
+      const progress = input.documentProgress.get(document.documentKey)
+      if (!progress || progress.status !== 'indexing') continue
+      await this.dependencies.repository.transitionDocumentState?.({
+        sourceId: input.job.sourceId,
+        profileId: input.job.profileId,
+        documentKey: progress.documentKey,
+        expectedSourceVersion: progress.sourceVersion,
+        expectedChecksum: progress.checksum,
+        expectedStatus: progress.status,
+        status: 'indexed',
+        generationId: input.job.generationId,
+        at: this.now()
+      })
+      progress.status = 'indexed'
+    }
+  }
+
+  private async markRepositoryDocumentsFailed(input: {
+    job: WorkerJob
+    documents: BuiltGeneration['failedDocuments']
+    documentProgress: Map<string, RepositoryDocumentProgress>
+  }): Promise<void> {
+    for (const document of input.documents) {
+      const progress = input.documentProgress.get(document.documentKey)
+      if (!progress || progress.status !== 'indexing') continue
+      await this.dependencies.repository.transitionDocumentState?.({
+        sourceId: input.job.sourceId,
+        profileId: input.job.profileId,
+        documentKey: progress.documentKey,
+        expectedSourceVersion: progress.sourceVersion,
+        expectedChecksum: progress.checksum,
+        expectedStatus: progress.status,
+        status: 'failed',
+        errorCode: document.errorCode,
+        at: this.now()
+      })
+      progress.status = 'failed'
+    }
+  }
 }
 
 type RepositoryIncrementalBase = {
   generationId: string
   documents: GenerationManifestDocument[]
   points: WorkspaceKnowledgePoint[]
+}
+
+async function buildIncrementalGenerationOrFull(input: {
+  job: WorkerJob
+  snapshot: FrozenKnowledgeSourceSnapshot
+  incremental: RepositoryIncrementalBase | undefined
+  sidecar: WorkerSidecar
+  signal: AbortSignal
+  at: number
+}): Promise<BuiltGeneration> {
+  return input.incremental
+    ? buildIncrementalGeneration({
+        job: input.job,
+        snapshot: input.snapshot,
+        incremental: input.incremental,
+        sidecar: input.sidecar,
+        signal: input.signal,
+        at: input.at
+      })
+    : buildFullGeneration({
+        job: input.job,
+        snapshot: input.snapshot,
+        sidecar: input.sidecar,
+        signal: input.signal,
+        at: input.at
+      })
 }
 
 async function buildFullGeneration(input: {

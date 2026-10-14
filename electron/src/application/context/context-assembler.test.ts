@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 import { ContextAssembler } from './context-assembler'
 
@@ -74,12 +75,10 @@ describe('ContextAssembler', () => {
           }
         ]
       },
-      attachments: {
-        read: async (_requirementId, path) => ({
+      attachments: attachmentPort(async (_requirementId, path) => ({
           version: 4,
           content: `Attachment content from ${path}`
-        })
-      }
+        }))
     })
 
     const snapshot = await assembler.assemble({
@@ -172,9 +171,10 @@ describe('ContextAssembler', () => {
       knowledge: { search: async () => [] },
       questions: { listByNodeRun: async () => [] },
       todos: { listByNodeRun: async () => [] },
-      attachments: {
-        read: async () => ({ version: 1, content: 'B'.repeat(200) })
-      }
+      attachments: attachmentPort(async () => ({
+        version: 1,
+        content: 'B'.repeat(200)
+      }))
     })
     const input = {
       requirement: {
@@ -229,11 +229,11 @@ describe('ContextAssembler', () => {
       knowledge: { search },
       questions: { listByNodeRun: async () => [] },
       todos: { listByNodeRun: async () => [] },
-      attachments: {
-        read: async () => {
+      attachments: attachmentPort(
+        async () => {
           throw new Error('attachments should not be read')
         }
-      }
+      )
     })
 
     const snapshot = await assembler.assemble({
@@ -275,7 +275,10 @@ describe('ContextAssembler', () => {
       knowledge: { search: async () => [] },
       questions: { listByNodeRun: async () => [] },
       todos: { listByNodeRun: async () => [] },
-      attachments: { read }
+      attachments: {
+        read,
+        extract: vi.fn()
+      }
     })
 
     const snapshot = await assembler.assemble({
@@ -371,9 +374,7 @@ describe('ContextAssembler', () => {
       },
       questions: { listByNodeRun: async () => [] },
       todos: { listByNodeRun: async () => [] },
-      attachments: {
-        read: async () => ({ version: 1, content: '' })
-      }
+      attachments: attachmentPort(async () => ({ version: 1, content: '' }))
     })
 
     const snapshot = await assembler.assemble({
@@ -438,9 +439,7 @@ describe('ContextAssembler', () => {
       },
       questions: { listByNodeRun: async () => [] },
       todos: { listByNodeRun: async () => [] },
-      attachments: {
-        read: async () => ({ version: 1, content: '' })
-      }
+      attachments: attachmentPort(async () => ({ version: 1, content: '' }))
     })
 
     const snapshot = await assembler.assemble({
@@ -473,3 +472,50 @@ describe('ContextAssembler', () => {
     expect(snapshot.content).toContain('Local knowledge is insufficient')
   })
 })
+
+function attachmentPort(
+  read: (
+    requirementId: string,
+    path: string
+  ) => Promise<{ version: number; content: string }>
+) {
+  return {
+    read: async (requirementId: string, path: string) => {
+      const source = await read(requirementId, path)
+      const bytes = new TextEncoder().encode(source.content)
+      return {
+        version: source.version,
+        bytes,
+        fileName: path.split('/').at(-1) ?? path,
+        mimeType: 'text/plain',
+        sourceChecksum: checksum(bytes)
+      }
+    },
+    extract: async (input: {
+      bytes: Uint8Array
+      fileName: string
+      sourceChecksum: string
+    }) => {
+      const text = new TextDecoder().decode(input.bytes)
+      const bytes = new TextEncoder().encode(text)
+      return {
+        sourceChecksum: input.sourceChecksum,
+        format: 'text',
+        extractorVersion: 'text-v1',
+        units: [
+          {
+            key: 'content',
+            title: input.fileName,
+            text,
+            checksum: checksum(bytes),
+            byteSize: bytes.byteLength
+          }
+        ]
+      }
+    }
+  }
+}
+
+function checksum(bytes: Uint8Array): string {
+  return `sha256:${createHash('sha256').update(bytes).digest('hex')}`
+}

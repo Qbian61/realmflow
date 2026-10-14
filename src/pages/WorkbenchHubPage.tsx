@@ -1,4 +1,4 @@
-import { Plus, Settings, X } from "lucide-react";
+import { Settings, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import {
   DEFAULT_WORKBENCH_LAYOUT,
@@ -14,11 +14,11 @@ import {
 } from "../features/drag/native-drag-feedback";
 import { DragHandle } from "../features/drag/DragHandle";
 import { WorkbenchDashboardPage } from "../features/workbench-hub/dashboard/WorkbenchDashboardPage";
-import { SystemStatusPage } from "../features/workbench-hub/system/SystemStatusPage";
 import { TaskWorkbenchPage } from "../features/workbench-hub/tasks/TaskWorkbenchPage";
 import { SiteWorkbenchPage } from "../features/workbench-hub/sites/SiteWorkbenchPage";
 import { MemoWorkbenchPage } from "../features/workbench-hub/memos/MemoWorkbenchPage";
 import { TerminalWorkbenchPage } from "../features/workbench-hub/terminal/TerminalWorkbenchPage";
+import SchedulePage from "./SchedulePage";
 import { useLocalization } from "../localization/LocalizationProvider";
 import type { TranslationKey } from "../localization/translate";
 import {
@@ -27,9 +27,6 @@ import {
   DialogHeader,
   IconButton,
   InlineAlert,
-  Menu,
-  MenuContent,
-  MenuItem,
   PageBody,
   Tab,
   TabList,
@@ -43,7 +40,7 @@ const WORKBENCH_MODULES = [
   { id: "sites", labelKey: "workbenchHub.module.sites" },
   { id: "memos", labelKey: "workbenchHub.module.memos" },
   { id: "terminal", labelKey: "workbenchHub.module.terminal" },
-  { id: "system", labelKey: "workbenchHub.module.system" },
+  { id: "schedules", labelKey: "navigation.schedules" },
 ] as const satisfies readonly {
   id: WorkbenchModuleId;
   labelKey: TranslationKey;
@@ -52,6 +49,10 @@ const WORKBENCH_MODULES = [
 type WorkbenchHubPageProps = {
   layoutApi?: WorkbenchHubApi["layout"];
 };
+
+type WorkbenchLayoutChange = (
+  layout: WorkbenchLayout,
+) => Pick<WorkbenchLayout, "moduleOrder" | "hiddenModules">;
 
 export default function WorkbenchHubPage({
   layoutApi = window.realmflow?.workbenchHub?.layout,
@@ -62,8 +63,6 @@ export default function WorkbenchHubPage({
   const [hiddenModules, setHiddenModules] = useState<Set<WorkbenchModuleId>>(
     new Set(DEFAULT_WORKBENCH_LAYOUT.hiddenModules),
   );
-  const [moduleMenuOpen, setModuleMenuOpen] = useState(false);
-  const moduleMenuButtonRef = useRef<HTMLButtonElement>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [moduleOrder, setModuleOrder] = useState<
     ConfigurableWorkbenchModuleId[]
@@ -75,6 +74,10 @@ export default function WorkbenchHubPage({
     useState<ConfigurableWorkbenchModuleId>();
   const [moduleDropTarget, setModuleDropTarget] =
     useState<ConfigurableWorkbenchModuleId>();
+  const schedulesVisited = useRef(false);
+  if (activeModule === "schedules") {
+    schedulesVisited.current = true;
+  }
   const applyLayout = (layout: WorkbenchLayout): void => {
     setRevision(layout.revision);
     setModuleOrder([...layout.moduleOrder]);
@@ -105,38 +108,47 @@ export default function WorkbenchHubPage({
   }, [layoutApi, t]);
 
   const persistLayout = async (
-    nextOrder: ConfigurableWorkbenchModuleId[],
-    nextHiddenModules: Set<WorkbenchModuleId>,
+    change: WorkbenchLayoutChange,
   ): Promise<"saved" | "conflict" | "failed"> => {
     setLayoutMessage(undefined);
+    const currentLayout: WorkbenchLayout = {
+      revision,
+      moduleOrder,
+      hiddenModules: [...hiddenModules].filter(
+        (moduleId): moduleId is ConfigurableWorkbenchModuleId =>
+          moduleId !== "overview",
+      ),
+    };
     if (!layoutApi) {
+      const nextLayout = change(currentLayout);
       applyLayout({
         revision: revision + 1,
-        moduleOrder: nextOrder,
-        hiddenModules: [...nextHiddenModules].filter(
-          (moduleId): moduleId is ConfigurableWorkbenchModuleId =>
-            moduleId !== "overview",
-        ),
+        ...nextLayout,
       });
       return "saved";
     }
 
     setSavingLayout(true);
     try {
-      const result = await layoutApi.update({
-        requestId: workbenchLayoutRequestId(),
-        expectedRevision: revision,
-        moduleOrder: nextOrder,
-        hiddenModules: [...nextHiddenModules].filter(
-          (moduleId): moduleId is ConfigurableWorkbenchModuleId =>
-            moduleId !== "overview",
-        ),
-      });
+      const update = async (layout: WorkbenchLayout) => {
+        const nextLayout = change(layout);
+        return layoutApi.update({
+          requestId: workbenchLayoutRequestId(),
+          expectedRevision: layout.revision,
+          ...nextLayout,
+        });
+      };
+      const result = await update(currentLayout);
       if (result.ok) {
         applyLayout(result.layout);
         return "saved";
       }
-      applyLayout(result.current);
+      const retry = await update(result.current);
+      if (retry.ok) {
+        applyLayout(retry.layout);
+        return "saved";
+      }
+      applyLayout(retry.current);
       setLayoutMessage(t("workbenchHub.layoutConflict"));
       return "conflict";
     } catch {
@@ -154,30 +166,35 @@ export default function WorkbenchHubPage({
     WORKBENCH_MODULES[0],
     ...configurableModules.filter((module) => !hiddenModules.has(module.id)),
   ];
-  const hiddenConfigurableModules = configurableModules.filter((module) =>
-    hiddenModules.has(module.id),
-  );
   const active = WORKBENCH_MODULES.find(
     (module) => module.id === activeModule,
   )!;
 
   const hideModule = async (moduleId: WorkbenchModuleId): Promise<void> => {
-    const nextHiddenModules = new Set(hiddenModules).add(moduleId);
-    await persistLayout(moduleOrder, nextHiddenModules);
+    await persistLayout((layout) => ({
+      moduleOrder: layout.moduleOrder,
+      hiddenModules: [
+        ...new Set<WorkbenchModuleId>(layout.hiddenModules).add(moduleId),
+      ].filter(
+        (id): id is ConfigurableWorkbenchModuleId => id !== "overview",
+      ),
+    }));
   };
 
   const restoreModule = async (moduleId: WorkbenchModuleId): Promise<void> => {
-    const nextHiddenModules = new Set(hiddenModules);
-    nextHiddenModules.delete(moduleId);
+    const restore = (layout: WorkbenchLayout) => ({
+      moduleOrder: layout.moduleOrder,
+      hiddenModules: layout.hiddenModules.filter((id) => id !== moduleId),
+    });
     if (!layoutApi) {
-      void persistLayout(moduleOrder, nextHiddenModules);
+      void persistLayout(restore);
       setActiveModule(moduleId);
-      setModuleMenuOpen(false);
       return;
     }
-    if ((await persistLayout(moduleOrder, nextHiddenModules)) === "saved") {
+    if (
+      (await persistLayout(restore)) === "saved"
+    ) {
       setActiveModule(moduleId);
-      setModuleMenuOpen(false);
     }
   };
 
@@ -187,21 +204,23 @@ export default function WorkbenchHubPage({
   ): Promise<void> => {
     const sourceIndex = moduleOrder.indexOf(sourceId);
     if (sourceIndex < 0 || sourceIndex === targetIndex) return;
-    const withoutSource = moduleOrder.filter(
-      (moduleId) => moduleId !== sourceId,
-    );
-    const insertionIndex = Math.max(
-      0,
-      Math.min(targetIndex, withoutSource.length),
-    );
-    await persistLayout(
-      [
-        ...withoutSource.slice(0, insertionIndex),
-        sourceId,
-        ...withoutSource.slice(insertionIndex),
-      ],
-      hiddenModules,
-    );
+    await persistLayout((layout) => {
+      const rebasedWithoutSource = layout.moduleOrder.filter(
+        (moduleId) => moduleId !== sourceId,
+      );
+      const rebasedInsertionIndex = Math.max(
+        0,
+        Math.min(targetIndex, rebasedWithoutSource.length),
+      );
+      return {
+        moduleOrder: [
+          ...rebasedWithoutSource.slice(0, rebasedInsertionIndex),
+          sourceId,
+          ...rebasedWithoutSource.slice(rebasedInsertionIndex),
+        ],
+        hiddenModules: layout.hiddenModules,
+      };
+    });
   };
 
   return (
@@ -233,38 +252,6 @@ export default function WorkbenchHubPage({
                   {t(module.labelKey)}
                 </Tab>
               ))}
-              <div className="workbench-hub-add">
-                <IconButton
-                  ref={moduleMenuButtonRef}
-                  size="default"
-                  variant="ghost"
-                  aria-label={t("workbenchHub.addModule")}
-                  title={t("tooltip.add")}
-                  onClick={() => setModuleMenuOpen((open) => !open)}
-                >
-                  <Plus size={17} aria-hidden="true" />
-                </IconButton>
-                <Menu
-                  open={moduleMenuOpen}
-                  onOpenChange={setModuleMenuOpen}
-                  trigger={moduleMenuButtonRef.current}
-                >
-                  <MenuContent
-                    className="workbench-hub-module-menu"
-                    aria-label={t("workbenchHub.addModule")}
-                  >
-                    {hiddenConfigurableModules.map((module) => (
-                      <MenuItem
-                        key={module.id}
-                        disabled={savingLayout}
-                        onSelect={() => void restoreModule(module.id)}
-                      >
-                        {t(module.labelKey)}
-                      </MenuItem>
-                    ))}
-                  </MenuContent>
-                </Menu>
-              </div>
             </TabList>
           </Tabs>
           <IconButton
@@ -287,7 +274,7 @@ export default function WorkbenchHubPage({
             title={layoutMessage}
           />
         ) : null}
-        {active.id !== "terminal" ? (
+        {active.id !== "terminal" && active.id !== "schedules" ? (
           <section
             id={`workbench-hub-panel-${active.id}`}
             role="tabpanel"
@@ -301,9 +288,7 @@ export default function WorkbenchHubPage({
               <SiteWorkbenchPage />
             ) : active.id === "memos" ? (
               <MemoWorkbenchPage />
-            ) : (
-              <SystemStatusPage />
-            )}
+            ) : null}
           </section>
         ) : null}
         <section
@@ -314,6 +299,16 @@ export default function WorkbenchHubPage({
         >
           <TerminalWorkbenchPage active={active.id === "terminal"} />
         </section>
+        {schedulesVisited.current ? (
+          <section
+            id="workbench-hub-panel-schedules"
+            role="tabpanel"
+            aria-labelledby="workbench-hub-tab-schedules"
+            hidden={active.id !== "schedules"}
+          >
+            <SchedulePage active={active.id === "schedules"} />
+          </section>
+        ) : null}
       </PageBody>
       {settingsOpen ? (
         <Dialog
@@ -404,13 +399,24 @@ export default function WorkbenchHubPage({
                 <span>{t(module.labelKey)}</span>
                 <button
                   type="button"
-                  aria-label={t("workbenchHub.hideModule", {
-                    name: t(module.labelKey),
-                  })}
-                  disabled={savingLayout || hiddenModules.has(module.id)}
-                  onClick={() => void hideModule(module.id)}
+                  aria-label={t(
+                    hiddenModules.has(module.id)
+                      ? "workbenchHub.restoreNamed"
+                      : "workbenchHub.hideModule",
+                    { name: t(module.labelKey) },
+                  )}
+                  disabled={savingLayout}
+                  onClick={() =>
+                    void (hiddenModules.has(module.id)
+                      ? restoreModule(module.id)
+                      : hideModule(module.id))
+                  }
                 >
-                  {t("workbenchHub.hide")}
+                  {t(
+                    hiddenModules.has(module.id)
+                      ? "workbenchHub.restore"
+                      : "workbenchHub.hide",
+                  )}
                 </button>
               </div>
             ))}

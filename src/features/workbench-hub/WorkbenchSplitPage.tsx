@@ -24,6 +24,7 @@ const SPLIT_WIDTH_EVENT = "realmflow:workbench-split-width-change";
 
 type WorkbenchSplitPageProps = {
   navigation: ReactNode;
+  navigationEmpty?: boolean;
   navigationActions?: ReactNode;
   children: ReactNode;
   createLabel: string;
@@ -46,6 +47,7 @@ function readSplitWidth(): number {
 
 export function WorkbenchSplitPage({
   navigation,
+  navigationEmpty = false,
   navigationActions,
   children,
   createLabel,
@@ -115,7 +117,13 @@ export function WorkbenchSplitPage({
             className="workbench-split-navigation-list"
             aria-label={t("workbenchHub.split.navigation")}
           >
-            {navigation}
+            {navigationEmpty ? (
+              <div className="workbench-navigation-empty">
+                {t("workbenchHub.split.empty")}
+              </div>
+            ) : (
+              navigation
+            )}
           </nav>
         )}
         <footer className="workbench-split-navigation-tools">
@@ -127,7 +135,7 @@ export function WorkbenchSplitPage({
                   variant="ghost"
                   aria-label={createLabel}
                   onClick={onCreate}
-                  title={t("tooltip.add")}
+                  title={t("tooltip.create")}
                 >
                   <Plus size={16} aria-hidden="true" />
                 </IconButton>

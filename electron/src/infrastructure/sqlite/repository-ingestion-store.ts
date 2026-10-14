@@ -8,7 +8,9 @@ import {
 } from '../../../../domain/knowledge-source'
 import type {
   RepositorySnapshot,
+  RepositorySnapshotDocument,
   RepositorySnapshotFile,
+  RepositorySnapshotSkippedFile,
   RepositorySource,
   RepositorySourceMode
 } from '../../../../domain/repository-source'
@@ -74,9 +76,25 @@ type SnapshotRow = {
 
 type FileRow = {
   relative_path: string
+  content: string | null
+  content_checksum: string
+  byte_size: number
+}
+
+type DocumentRow = {
+  source_path: string
+  unit_key: string
+  title: string
   content: string
   content_checksum: string
   byte_size: number
+  metadata_json: string | null
+}
+
+type SkippedFileRow = {
+  relative_path: string
+  reason: RepositorySnapshotSkippedFile['reason']
+  byte_size: number | null
 }
 
 type CommandRow = {
@@ -532,9 +550,42 @@ export class SqliteRepositoryIngestionStore
         snapshot.sourceId,
         snapshot.version,
         file.relativePath,
-        file.content,
+        file.content ?? null,
         file.contentChecksum,
         file.byteSize
+      )
+    }
+    const insertDocument = this.database.prepare(
+      `INSERT INTO repository_snapshot_documents (
+        snapshot_id, source_path, unit_key, title, content, content_checksum,
+        byte_size, metadata_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    for (const document of snapshot.documents) {
+      insertDocument.run(
+        snapshot.id,
+        document.sourcePath,
+        document.unitKey,
+        document.title,
+        document.content,
+        document.checksum,
+        document.byteSize,
+        document.metadata ? JSON.stringify(document.metadata) : null
+      )
+    }
+    const insertSkippedFile = this.database.prepare(
+      `INSERT INTO repository_snapshot_skipped_files (
+        snapshot_id, source_id, version, relative_path, reason, byte_size
+      ) VALUES (?, ?, ?, ?, ?, ?)`
+    )
+    for (const file of snapshot.skippedFiles ?? []) {
+      insertSkippedFile.run(
+        snapshot.id,
+        snapshot.sourceId,
+        snapshot.version,
+        file.relativePath,
+        file.reason,
+        file.byteSize ?? null
       )
     }
   }
@@ -678,6 +729,25 @@ export class SqliteRepositoryIngestionStore
         )
         .all(row.id) as FileRow[]
     ).map(mapSnapshotFile)
+    const skippedFiles = (
+      this.database
+        .prepare(
+          `SELECT relative_path, reason, byte_size
+           FROM repository_snapshot_skipped_files
+           WHERE snapshot_id = ? ORDER BY relative_path`
+        )
+        .all(row.id) as SkippedFileRow[]
+    ).map(mapSkippedFile)
+    const documents = (
+      this.database
+        .prepare(
+          `SELECT source_path, unit_key, title, content, content_checksum,
+             byte_size, metadata_json
+           FROM repository_snapshot_documents
+           WHERE snapshot_id = ? ORDER BY source_path, unit_key`
+        )
+        .all(row.id) as DocumentRow[]
+    ).map(mapSnapshotDocument)
     return {
       id: row.id,
       sourceId: row.source_id,
@@ -688,6 +758,8 @@ export class SqliteRepositoryIngestionStore
       fileCount: row.file_count,
       totalBytes: row.total_bytes,
       files,
+      documents,
+      skippedFiles,
       scannedAt: row.scanned_at
     }
   }
@@ -763,9 +835,35 @@ function mapRepository(row: RepositoryRow): RepositorySource {
 function mapSnapshotFile(row: FileRow): RepositorySnapshotFile {
   return {
     relativePath: row.relative_path,
-    content: row.content,
+    ...(row.content === null ? {} : { content: row.content }),
     contentChecksum: row.content_checksum,
     byteSize: row.byte_size
+  }
+}
+
+function mapSnapshotDocument(row: DocumentRow): RepositorySnapshotDocument {
+  return {
+    sourcePath: row.source_path,
+    unitKey: row.unit_key,
+    title: row.title,
+    content: row.content,
+    checksum: row.content_checksum,
+    byteSize: row.byte_size,
+    ...(row.metadata_json === null
+      ? {}
+      : {
+          metadata: JSON.parse(
+            row.metadata_json
+          ) as RepositorySnapshotDocument['metadata']
+        })
+  }
+}
+
+function mapSkippedFile(row: SkippedFileRow): RepositorySnapshotSkippedFile {
+  return {
+    relativePath: row.relative_path,
+    reason: row.reason,
+    ...(row.byte_size === null ? {} : { byteSize: row.byte_size })
   }
 }
 

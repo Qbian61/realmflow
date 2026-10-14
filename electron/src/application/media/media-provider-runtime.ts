@@ -16,6 +16,7 @@ import type {
   PluginContributionAvailability,
   PluginContributionRegistry,
 } from '../plugins/plugin-contribution-registry'
+import { assertDescribedStrictObjectSchema } from '../tools/tool-contract-schema-metadata'
 
 const HANDLER = 'media-provider-runtime'
 const RISK_RANK = { low: 0, medium: 1, high: 2, critical: 3 } as const
@@ -236,7 +237,7 @@ function createDefinition(input: {
     adapterVersion: input.adapter.version,
     costDisclosure: input.costDisclosure,
   }
-  return {
+  const definition: ToolDefinition = {
     schemaVersion: 1,
     id: input.operation,
     version: '1.0.0',
@@ -260,13 +261,27 @@ function createDefinition(input: {
     inputSchema: inputSchema(input.operation),
     outputSchema: {
       type: 'object',
+      description: 'Generated media artifact metadata returned by the provider.',
       additionalProperties: false,
       required: ['path', 'mediaType', 'sizeBytes', 'provenance'],
       properties: {
-        path: { type: 'string' },
-        mediaType: { type: 'string' },
-        sizeBytes: { type: 'integer', minimum: 0 },
-        provenance: { type: 'object' },
+        path: {
+          type: 'string',
+          description: 'Absolute local file path of the generated artifact.',
+        },
+        mediaType: {
+          type: 'string',
+          description: 'MIME media type reported for the generated artifact.',
+        },
+        sizeBytes: {
+          type: 'integer',
+          minimum: 0,
+          description: 'Size of the generated artifact in bytes.',
+        },
+        provenance: {
+          type: 'object',
+          description: 'Local provenance for the provider, operation and usage.',
+        },
       },
     },
     capabilities: [...new Set(input.capabilities)].sort(),
@@ -288,6 +303,15 @@ function createDefinition(input: {
       contexts: ['general', 'space', 'requirement', 'workflow'],
     },
   }
+  assertDescribedStrictObjectSchema(
+    definition.inputSchema,
+    'Media Provider input',
+  )
+  assertDescribedStrictObjectSchema(
+    definition.outputSchema,
+    'Media Provider output',
+  )
+  return definition
 }
 
 function hasPermissionCeiling(
@@ -460,16 +484,39 @@ function mediaDescription(operation: MediaProviderOperation): string {
 }
 
 function inputSchema(operation: MediaProviderOperation): JsonObject {
+  const example = { prompt: promptExample(operation) }
   return {
     type: 'object',
+    description: `${mediaName(operation)} request.`,
     additionalProperties: false,
     required: ['prompt'],
+    examples: [example],
     properties: {
       prompt: {
         type: 'string',
+        description: promptDescription(operation),
+        examples: [example.prompt],
         minLength: 1,
         maxLength: operation === 'tts' ? 20_000 : 4_000,
       },
     },
   }
+}
+
+function promptDescription(operation: MediaProviderOperation): string {
+  return {
+    image_generate: 'Required. Text prompt describing the image to generate.',
+    video_generate: 'Required. Text prompt describing the video to generate.',
+    music_generate: 'Required. Text prompt describing the music to generate.',
+    tts: 'Required. Text content to synthesize into speech.',
+  }[operation]
+}
+
+function promptExample(operation: MediaProviderOperation): string {
+  return {
+    image_generate: 'Create a product screenshot mockup.',
+    video_generate: 'Create a ten second onboarding video.',
+    music_generate: 'Create a short upbeat theme.',
+    tts: 'Read the release notes aloud.',
+  }[operation]
 }

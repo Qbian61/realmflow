@@ -53,6 +53,7 @@ import {
 } from '../../../../domain/tool-definition'
 import type { JsonObject } from '../../../../domain/tool-protocol-validation'
 import type { PendingManagedDirectory } from '../ports/business-repositories'
+import { assertDescribedStrictObjectSchema } from './tool-contract-schema-metadata'
 
 const DEFAULT_MAX_FILES = 1_000
 const DEFAULT_MAX_FILE_BYTES = 16 * 1024 * 1024
@@ -533,6 +534,15 @@ export class ExtensionPackageService {
         if (definition.executor.kind !== 'sandbox') {
           throw new Error('Local Extension Tool executor must use the sandbox')
         }
+        assertDescribedStrictObjectSchema(
+          definition.inputSchema,
+          `Tool ${definition.id} input`,
+          {
+            requirePropertyExamples: true,
+            requireFieldUsageGuidance: true,
+            rejectTrustedContextFields: true,
+          },
+        )
         compileSchema(definition.inputSchema, 'Tool input')
         compileSchema(definition.outputSchema, 'Tool output')
         return definition
@@ -558,6 +568,17 @@ export class ExtensionPackageService {
             origin: 'local_upload',
           }),
         })
+        assertDescribedStrictObjectSchema(
+          definition.inputSchema,
+          `Skill ${definition.id} input`,
+          {
+            requireExamples: true,
+            examples: definition.examples,
+            requirePropertyExamples: true,
+            requireFieldUsageGuidance: true,
+            rejectTrustedContextFields: true,
+          },
+        )
         compileSchema(definition.inputSchema, 'Skill input')
         compileSchema(definition.outputSchema, 'Skill output')
         return definition
@@ -769,6 +790,11 @@ export class ExtensionPackageService {
         configurationSchema,
         `Plugin ${label} configuration`,
       )
+      assertDescribedStrictObjectSchema(
+        configurationSchema,
+        `Plugin ${label} configuration`,
+        { requireExamples: true },
+      )
       const descriptorMediaOperations =
         kind === 'media_provider'
           ? requireStringArray(
@@ -934,6 +960,14 @@ function createLegacyPythonToolSource(
     ...manifest.permissions,
     ...(manifest.network.required ? ['network.connect'] : []),
   ].sort()
+  const inputSchema = describedLegacyObjectSchema(
+    manifest.inputSchema,
+    `${manifest.name} input.`,
+  )
+  const outputSchema = describedLegacyObjectSchema(
+    manifest.outputSchema,
+    `${manifest.name} output.`,
+  )
   return {
     schemaVersion: 1,
     id: `${manifest.id}.execute`,
@@ -946,8 +980,8 @@ function createLegacyPythonToolSource(
       runtime: 'python',
       entryPath: manifest.entry.path,
     },
-    inputSchema: manifest.inputSchema,
-    outputSchema: manifest.outputSchema,
+    inputSchema,
+    outputSchema,
     capabilities,
     effects: [
       ...new Set(
@@ -985,6 +1019,14 @@ function createLegacySkillDefinitionSource(
   instructionsPath: string,
   toolId?: string,
 ): JsonObject {
+  const inputSchema = describedLegacyObjectSchema(
+    manifest.inputSchema,
+    `${manifest.name} input.`,
+  )
+  const outputSchema = describedLegacyObjectSchema(
+    manifest.outputSchema,
+    `${manifest.name} output.`,
+  )
   return {
     schemaVersion: 1,
     id: manifest.id,
@@ -1004,8 +1046,9 @@ function createLegacySkillDefinitionSource(
           ],
         }
       : { kind: 'instruction' },
-    inputSchema: manifest.inputSchema,
-    outputSchema: manifest.outputSchema,
+    inputSchema,
+    outputSchema,
+    examples: [minimalObjectExample(inputSchema)],
     requiredTools: toolId
       ? [
           {
@@ -1024,6 +1067,125 @@ function createLegacySkillDefinitionSource(
       timeoutMs: manifest.resources.timeoutMs,
     },
   }
+}
+
+function describedLegacyObjectSchema(
+  schema: JsonObject,
+  description: string,
+): JsonObject {
+  const value = structuredClone(schema) as Record<string, unknown>
+  if (value.type !== 'object') {
+    return {
+      type: 'object',
+      description,
+      additionalProperties: false,
+      properties: {},
+    }
+  }
+  value.description =
+    typeof value.description === 'string' && value.description.trim()
+      ? value.description
+      : description
+  value.additionalProperties = false
+  if (!Array.isArray(value.examples) || value.examples.length === 0) {
+    value.examples = [minimalObjectExample(value as JsonObject)]
+  }
+  if (
+    value.properties &&
+    typeof value.properties === 'object' &&
+    !Array.isArray(value.properties)
+  ) {
+    const required = new Set(
+      Array.isArray(value.required)
+        ? value.required.filter(
+            (item): item is string => typeof item === 'string',
+          )
+        : [],
+    )
+    for (const [name, property] of Object.entries(value.properties)) {
+      if (!property || typeof property !== 'object' || Array.isArray(property)) {
+        continue
+      }
+      const propertySchema = property as Record<string, unknown>
+      propertySchema.description = legacyPropertyDescription(
+        name,
+        propertySchema,
+        required.has(name),
+        description,
+      )
+      if (
+        !Array.isArray(propertySchema.examples) ||
+        propertySchema.examples.length === 0
+      ) {
+        propertySchema.examples = [sampleValue(propertySchema)]
+      }
+    }
+  }
+  return value as JsonObject
+}
+
+function legacyPropertyDescription(
+  name: string,
+  schema: Record<string, unknown>,
+  required: boolean,
+  parentDescription: string,
+): string {
+  const base =
+    typeof schema.description === 'string' && schema.description.trim()
+      ? schema.description.trim()
+      : `${name} value for ${parentDescription}`
+  const usage = required
+    ? `Required. Provide ${name} because this legacy Skill requires it.`
+    : `Optional. Provide ${name} when this legacy Skill needs it; omit it otherwise.`
+  const enumValues = Array.isArray(schema.enum)
+    ? schema.enum
+        .filter(
+          (value): value is string | number | boolean =>
+            typeof value === 'string' ||
+            typeof value === 'number' ||
+            typeof value === 'boolean',
+        )
+        .map(String)
+    : []
+  const enumText =
+    enumValues.length > 0
+      ? ` Allowed values: ${enumValues.join(', ')}.`
+      : ''
+  return `${usage} ${base}${enumText}`
+}
+
+function minimalObjectExample(schema: JsonObject): JsonObject {
+  const properties =
+    schema.properties &&
+    typeof schema.properties === 'object' &&
+    !Array.isArray(schema.properties)
+      ? schema.properties as Record<string, unknown>
+      : {}
+  const required = Array.isArray(schema.required)
+    ? schema.required.filter((item): item is string => typeof item === 'string')
+    : []
+  const example: JsonObject = {}
+  for (const name of required) {
+    example[name] = sampleValue(properties[name])
+  }
+  return example
+}
+
+function sampleValue(schema: unknown): unknown {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
+    return null
+  }
+  const values = (schema as Record<string, unknown>).enum
+  if (Array.isArray(values) && values.length > 0) {
+    return values[0]
+  }
+  const type = (schema as Record<string, unknown>).type
+  if (type === 'string') return 'example'
+  if (type === 'integer' || type === 'number') return 1
+  if (type === 'boolean') return true
+  if (type === 'array') return []
+  if (type === 'object') return {}
+  return null
 }
 
 async function readJson(

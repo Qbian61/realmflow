@@ -50,6 +50,32 @@ describe('ArchiveAdapter', () => {
   )
 
   it.each([
+    ['zip', () => zip({ 'docs/readme.txt': 'hello' })],
+    ['tar', () => tar([{ path: 'docs/readme.txt', content: 'hello' }])],
+    ['tgz', () => gzip(tar([{ path: 'docs/readme.txt', content: 'hello' }]))],
+    ['gz', () => gzip(Buffer.from('hello'))]
+  ] as const)(
+    'reads immutable %s entry bytes without a destination directory',
+    async (format, fixture) => {
+      const content = await fixture()
+
+      await expect(
+        adapter.readEntries({
+          format,
+          archiveName: `bundle.${format}`,
+          content,
+          signal: new AbortController().signal
+        })
+      ).resolves.toEqual([
+        {
+          path: format === 'gz' ? 'bundle' : 'docs/readme.txt',
+          bytes: Uint8Array.from(Buffer.from('hello'))
+        }
+      ])
+    }
+  )
+
+  it.each([
     '../escape.txt',
     '/absolute.txt',
     'C:\\escape.txt',

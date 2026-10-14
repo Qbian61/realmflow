@@ -42,7 +42,7 @@ describe('conversation input', () => {
     })
   })
 
-  it('rejects archives before parsing and enforces the media limit', () => {
+  it('accepts supported archives for bounded local extraction and enforces the media limit', () => {
     expect(
       probeConversationAttachment({
         fileName: 'bundle.zip',
@@ -50,9 +50,11 @@ describe('conversation input', () => {
         sizeBytes: 8,
         prefix: Buffer.from('PK\u0003\u0004data')
       })
-    ).toMatchObject({
-      outcome: 'rejected',
-      code: 'unsupported_archive'
+    ).toEqual({
+      outcome: 'accepted',
+      mimeType: 'application/zip',
+      mediaKind: 'document',
+      maxSizeBytes: 20 * 1024 * 1024
     })
 
     expect(
@@ -65,6 +67,37 @@ describe('conversation input', () => {
     ).toMatchObject({
       outcome: 'rejected',
       code: 'size_limit_exceeded'
+    })
+  })
+
+  it.each([
+    [
+      'orders.xlsx',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    ],
+    [
+      'briefing.pptx',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+    ],
+    ['mail.eml', 'message/rfc822'],
+    ['book.epub', 'application/epub+zip'],
+    ['drawing.ofd', 'application/ofd']
+  ])('accepts shared extractable attachment format %s', (fileName, mimeType) => {
+    const prefix = fileName.endsWith('.ofd')
+      ? Buffer.from('OFD')
+      : Buffer.from([0x50, 0x4b, 0x03, 0x04])
+
+    expect(
+      probeConversationAttachment({
+        fileName,
+        declaredMimeType: mimeType,
+        sizeBytes: prefix.byteLength,
+        prefix
+      })
+    ).toMatchObject({
+      outcome: 'accepted',
+      mimeType,
+      mediaKind: 'document'
     })
   })
 

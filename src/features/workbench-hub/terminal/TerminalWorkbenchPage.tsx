@@ -25,7 +25,6 @@ import {
   beginNativeDrag,
   finishNativeDrag
 } from '../../drag/native-drag-feedback'
-import { DragHandle } from '../../drag/DragHandle'
 import type { TerminalSurfaceProps } from '../../workbench/TerminalSurface'
 import { useTerminalDisplayPreferences } from '../../workbench/terminal-display-preferences'
 import { WorkbenchNavigationItem } from '../WorkbenchNavigationItem'
@@ -150,6 +149,7 @@ export function TerminalWorkbenchPage({
 
   return (
     <WorkbenchSplitPage
+      navigationEmpty={state.sessions.length === 0}
       navigation={
         <div className="terminal-session-list">
           {state.sessions.map((session, index) => (
@@ -175,7 +175,8 @@ export function TerminalWorkbenchPage({
               ) : (
                 <button
                   type="button"
-                  className="terminal-session-select"
+                  className="terminal-session-select workbench-navigation-drag-source"
+                  draggable
                   aria-label={`${session.title}, ${session.shell}, ${t(
                     session.status === 'running'
                       ? 'workbenchHub.terminal.running'
@@ -198,6 +199,24 @@ export function TerminalWorkbenchPage({
                     setRenamingId(session.id)
                     setRenameValue(session.title)
                   }}
+                  onDragStart={(event) => {
+                    beginNativeDrag(
+                      event,
+                      event.currentTarget.closest(
+                        '.workbench-navigation-item'
+                      )!
+                    )
+                    setDraggedSessionId(session.id)
+                  }}
+                  onDragEnd={(event) => {
+                    finishNativeDrag(
+                      event.currentTarget.closest<HTMLElement>(
+                        '.workbench-navigation-item'
+                      )
+                    )
+                    setDraggedSessionId(undefined)
+                    setDropTargetSessionId(undefined)
+                  }}
                 >
                   <SquareTerminal size={15} />
                   <span>
@@ -207,29 +226,6 @@ export function TerminalWorkbenchPage({
                 </button>
               )}
               actions={
-                <>
-                  <DragHandle
-                    name={session.title}
-                    draggable
-                    onDragStart={(event) => {
-                      beginNativeDrag(
-                        event,
-                        event.currentTarget.closest(
-                          '.workbench-navigation-item'
-                        )!
-                      )
-                      setDraggedSessionId(session.id)
-                    }}
-                    onDragEnd={(event) => {
-                      finishNativeDrag(
-                        event.currentTarget.closest<HTMLElement>(
-                          '.workbench-navigation-item'
-                        )
-                      )
-                      setDraggedSessionId(undefined)
-                      setDropTargetSessionId(undefined)
-                    }}
-                  />
                   <button
                     type="button"
                     className="terminal-session-close danger"
@@ -241,7 +237,6 @@ export function TerminalWorkbenchPage({
                   >
                     <Trash2 size={13} />
                   </button>
-                </>
               }
               onDragOver={(event) => {
                 event.preventDefault()
@@ -278,6 +273,7 @@ export function TerminalWorkbenchPage({
       <div
         className="terminal-workbench-content"
         aria-busy={creating}
+        data-empty={!activeSession || undefined}
         data-terminal-color-scheme={preferences.colorScheme}
       >
         {error ? (
@@ -395,13 +391,7 @@ export function TerminalWorkbenchPage({
               ))}
             </div>
           </>
-        ) : (
-          <div className="terminal-workbench-empty">
-            <SquareTerminal size={28} />
-            <strong>{t('workbenchHub.terminal.empty')}</strong>
-            <span>{t('workbenchHub.terminal.emptyHint')}</span>
-          </div>
-        )}
+        ) : null}
       </div>
     </WorkbenchSplitPage>
   )

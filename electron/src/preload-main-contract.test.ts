@@ -1275,6 +1275,10 @@ describe('preload and main IPC contract', () => {
       expectedRevision: 1,
       decision: 'deny'
     })
+    await api.workbenchHub.attachments.readExtracted({
+      attachmentId: 'attachment-1',
+      purpose: 'preview'
+    })
     api.appLifecycle?.onCloseRequested(vi.fn())
     api.nativeOverlay?.onEvent(vi.fn())
     api.aiRuns.onEvent(vi.fn())
@@ -1531,7 +1535,7 @@ async function invokeEveryApiCommand(api: RealmFlowApi): Promise<void> {
     api.workbenchHub.layout.update({
       requestId: 'request-workbench-layout',
       expectedRevision: 0,
-      moduleOrder: ['tasks', 'sites', 'memos', 'terminal', 'system'],
+      moduleOrder: ['tasks', 'sites', 'memos', 'terminal', 'schedules'],
       hiddenModules: []
     }),
     api.workbenchHub.dashboard.getSnapshot({ rangeHours: 168 }),

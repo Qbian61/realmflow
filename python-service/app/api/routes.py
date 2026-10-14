@@ -307,6 +307,7 @@ class SpreadsheetComputeRequest(BaseModel):
 
     format: Literal["csv", "tsv", "xlsx", "xls"]
     operation: Literal[
+        "extract_text",
         "inspect",
         "read_range",
         "insert_rows",
@@ -335,6 +336,17 @@ class LegacyOfficeConversionRequest(BaseModel):
         "ppt",
         "pps",
         "pot",
+        "odt",
+        "rtf",
+        "ods",
+        "odp",
+        "pages",
+        "numbers",
+        "key",
+        "vsd",
+        "vsdx",
+        "pub",
+        "mpp",
     ]
     documentBase64: str = Field(min_length=1, max_length=40_000_000)
 
@@ -405,6 +417,7 @@ class PresentationComputeRequest(BaseModel):
 
     format: Literal["pptx"]
     operation: Literal[
+        "extract_text",
         "inspect",
         "update_text",
         "replace_image",
@@ -706,6 +719,11 @@ async def convert_legacy_office(
         "outputFormat": result.target_format,
         "converter": result.converter,
     }
+
+
+@router.get("/api/v1/office/conversion-capabilities", tags=["office"])
+def get_office_conversion_capabilities() -> dict[str, object]:
+    return {"formats": legacy_office_converter.capabilities()}
 
 
 @router.post("/api/v1/office/safe-copy", tags=["office"])

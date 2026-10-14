@@ -72,6 +72,10 @@ export type AiRunToolResult =
       errorCode: string
       message: string
       toolExecutionId?: string
+      retryable?: boolean
+      category?: string
+      recoveryHint?: string
+      diagnosticId?: string
     }
 
 export type AiRunEventData = {
@@ -106,6 +110,9 @@ export type AiRunEventData = {
   retryCount?: number
   retryable?: boolean
   retryAfterMs?: number
+  remainingAttempts?: number
+  recoveryHint?: string
+  diagnosticId?: string
   errorCode?: ModelCallErrorCode
   recoveryReason?: string
   recoveryActions?: Array<'resume' | 'branch' | 'cancel'>

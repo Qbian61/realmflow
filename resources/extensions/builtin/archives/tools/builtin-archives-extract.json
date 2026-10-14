@@ -24,25 +24,54 @@
     "properties": {
       "path": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Authorized local path as a relative path under the authorized root. Do not invent or pass absolute local paths.",
+        "examples": [
+          "docs/example.md"
+        ]
       },
       "expectedChecksum": {
         "type": "string",
-        "pattern": "^[a-f0-9]{64}$"
+        "pattern": "^[a-f0-9]{64}$",
+        "description": "SHA-256 checksum of the authorized prior file content.",
+        "examples": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ]
       },
       "outputPath": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Authorized new output path as a relative path under the authorized root; it must not overwrite existing content. Do not invent or pass absolute local paths.",
+        "examples": [
+          "exports/result.pdf"
+        ]
       },
       "expectedAbsent": {
         "type": "boolean",
-        "const": true
+        "const": true,
+        "description": "Must be true to confirm the target path does not already exist.",
+        "examples": [
+          true
+        ]
       },
       "scopeRoot": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Optional authorized root override. Omit or pass \".\" to use the current authorized root.",
+        "examples": [
+          "."
+        ]
       }
-    }
+    },
+    "examples": [
+      {
+        "path": "docs/example.md",
+        "expectedChecksum": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "outputPath": "exports/result.pdf",
+        "expectedAbsent": true,
+        "scopeRoot": "."
+      }
+    ]
   },
   "outputSchema": {
     "type": "object",

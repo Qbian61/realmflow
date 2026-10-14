@@ -50,6 +50,37 @@ describe('KnowledgeRefreshService', () => {
     expect(dependencies.onIndexQueued).toHaveBeenCalledOnce()
   })
 
+  it('refreshes a source without current content before enqueueing its first index', async () => {
+    const dependencies = createDependencies()
+    dependencies.reader.readCurrentIdentity
+      .mockRejectedValueOnce(new Error('Knowledge source has no current content'))
+      .mockResolvedValueOnce(identity('b', 4))
+    dependencies.coordinator.enqueue.mockResolvedValue({
+      status: 'enqueued',
+      job: { id: 'job-1', generationId: 'generation-1' }
+    })
+    const service = new KnowledgeRefreshService(dependencies)
+
+    await expect(service.runClaimed('run-1')).resolves.toMatchObject({
+      status: 'queued',
+      beforeChecksum: null,
+      afterChecksum: `sha256:${'b'.repeat(64)}`,
+      indexJobId: 'job-1'
+    })
+
+    expect(dependencies.refreshers.file).toHaveBeenCalledWith({
+      sourceId: 'source-1',
+      expectedRevision: 3,
+      idempotencyKey: 'refresh:run-1'
+    })
+    expect(dependencies.repository.completeQueued).toHaveBeenCalledWith({
+      runId: 'run-1',
+      beforeChecksum: null,
+      afterChecksum: `sha256:${'b'.repeat(64)}`,
+      indexJobId: 'job-1',
+      at: 20
+    })
+  })
   it('short-circuits an unchanged source probe before invoking its refresher', async () => {
     const dependencies = createDependencies()
     dependencies.probes.file.mockResolvedValue({
@@ -73,6 +104,68 @@ describe('KnowledgeRefreshService', () => {
     })
   })
 
+  it('queues an index job for unchanged refreshes when the current index is missing', async () => {
+    const dependencies = createDependencies()
+    dependencies.indexes.hasCurrentIndex.mockResolvedValue(false)
+    dependencies.probes.file.mockResolvedValue({
+      status: 'unchanged',
+      checksum: `sha256:${'a'.repeat(64)}`
+    })
+    dependencies.coordinator.enqueue.mockResolvedValue({
+      status: 'enqueued',
+      job: { id: 'job-1', generationId: 'generation-1' }
+    })
+    const service = new KnowledgeRefreshService(dependencies)
+
+    await expect(service.runClaimed('run-1')).resolves.toMatchObject({
+      status: 'queued',
+      beforeChecksum: `sha256:${'a'.repeat(64)}`,
+      afterChecksum: `sha256:${'a'.repeat(64)}`,
+      indexJobId: 'job-1'
+    })
+
+    expect(dependencies.refreshers.file).not.toHaveBeenCalled()
+    expect(dependencies.coordinator.enqueue).toHaveBeenCalledWith({
+      sourceId: 'source-1',
+      triggerSource: 'source_event'
+    })
+    expect(dependencies.repository.completeQueued).toHaveBeenCalledWith({
+      runId: 'run-1',
+      beforeChecksum: `sha256:${'a'.repeat(64)}`,
+      afterChecksum: `sha256:${'a'.repeat(64)}`,
+      indexJobId: 'job-1',
+      at: 20
+    })
+    expect(dependencies.onIndexQueued).toHaveBeenCalledOnce()
+  })
+
+  it('fails an unchanged refresh without escaping when missing-index enqueue rejects', async () => {
+    const dependencies = createDependencies()
+    dependencies.indexes.hasCurrentIndex.mockResolvedValue(false)
+    dependencies.probes.file.mockResolvedValue({
+      status: 'unchanged',
+      checksum: `sha256:${'a'.repeat(64)}`
+    })
+    dependencies.coordinator.enqueue.mockRejectedValue(
+      Object.assign(new TypeError('Invalid UTF-8'), {
+        code: 'unsupported_format'
+      })
+    )
+    const service = new KnowledgeRefreshService(dependencies)
+
+    await expect(service.runClaimed('run-1')).resolves.toMatchObject({
+      status: 'failed',
+      errorCode: 'unsupported_format'
+    })
+    expect(dependencies.repository.fail).toHaveBeenCalledWith({
+      runId: 'run-1',
+      errorCode: 'unsupported_format',
+      at: 20
+    })
+    expect(dependencies.repository.completeQueued).not.toHaveBeenCalled()
+    expect(dependencies.onIndexQueued).not.toHaveBeenCalled()
+  })
+
   it('persists retryable failures with exponential backoff', async () => {
     const dependencies = createDependencies()
     dependencies.refreshers.file.mockRejectedValue(
@@ -89,6 +182,49 @@ describe('KnowledgeRefreshService', () => {
     expect(dependencies.repository.fail).toHaveBeenCalledWith({
       runId: 'run-1',
       errorCode: 'source_temporarily_unavailable',
+      nextAttemptAt: 60_020,
+      at: 20
+    })
+  })
+
+  it('does not schedule retries for a permanent extraction failure', async () => {
+    const dependencies = createDependencies()
+    dependencies.refreshers.file.mockRejectedValue(
+      Object.assign(new Error('Document is encrypted'), {
+        code: 'extraction_encrypted'
+      })
+    )
+    const service = new KnowledgeRefreshService(dependencies)
+
+    await expect(service.runClaimed('run-1')).resolves.toMatchObject({
+      status: 'failed',
+      nextAttemptAt: null,
+      errorCode: 'extraction_encrypted'
+    })
+    expect(dependencies.repository.fail).toHaveBeenCalledWith({
+      runId: 'run-1',
+      errorCode: 'extraction_encrypted',
+      at: 20
+    })
+  })
+
+  it('backs off an interrupted extraction before retrying', async () => {
+    const dependencies = createDependencies()
+    dependencies.refreshers.file.mockRejectedValue(
+      Object.assign(new Error('Extraction interrupted'), {
+        code: 'extraction_interrupted'
+      })
+    )
+    const service = new KnowledgeRefreshService(dependencies)
+
+    await expect(service.runClaimed('run-1')).resolves.toMatchObject({
+      status: 'retry_wait',
+      nextAttemptAt: 60_020,
+      errorCode: 'extraction_interrupted'
+    })
+    expect(dependencies.repository.fail).toHaveBeenCalledWith({
+      runId: 'run-1',
+      errorCode: 'extraction_interrupted',
       nextAttemptAt: 60_020,
       at: 20
     })
@@ -175,6 +311,9 @@ function createDependencies() {
     },
     reader: {
       readCurrentIdentity: vi.fn()
+    },
+    indexes: {
+      hasCurrentIndex: vi.fn().mockResolvedValue(true)
     },
     probes: {
       file: vi.fn().mockResolvedValue({ status: 'changed' }),

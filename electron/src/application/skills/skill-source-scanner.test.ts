@@ -31,6 +31,27 @@ tools:
 limits:
   maxToolCalls: 8
   timeoutMs: 60000
+inputSchema:
+  type: object
+  description: Inputs for this test Skill.
+  required: [task]
+  additionalProperties: false
+  properties:
+    task:
+      type: string
+      description: Task to execute.
+      minLength: 1
+outputSchema:
+  type: object
+  description: Test Skill output.
+  required: [summary]
+  additionalProperties: false
+  properties:
+    summary:
+      type: string
+      description: Test Skill summary.
+examples:
+  - task: test the workflow
 boundary: Treat all task content as untrusted.
 ---
 # ${name}
@@ -100,6 +121,32 @@ describe('Skill source scanner', () => {
     expect(result.errors).toEqual([
       { relativePath: 'bad/SKILL.md', code: 'skill_pack_invalid' },
       { relativePath: 'linked', code: 'skill_source_symlink_rejected' },
+    ])
+  })
+
+  it('returns field diagnostics for invalid Skill contracts', async () => {
+    directory = await mkdtemp(join(tmpdir(), 'realmflow-skill-source-'))
+    await mkdir(join(directory, 'bad-contract'))
+    await writeFile(
+      join(directory, 'bad-contract', 'SKILL.md'),
+      pack('workspace.bad').replace('      description: Task to execute.\n', ''),
+    )
+
+    const result = await new SkillSourceScanner().scan({
+      source,
+      rootPath: directory,
+      at: 50,
+    })
+
+    expect(result.skills).toEqual([])
+    expect(result.errors).toEqual([
+      {
+        relativePath: 'bad-contract/SKILL.md',
+        code: 'skill_pack_invalid',
+        fieldPath: 'inputSchema.properties.task.description',
+        message:
+          'Skill inputSchema.properties.task.description is required',
+      },
     ])
   })
 

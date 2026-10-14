@@ -30,6 +30,72 @@ export class FixedLayoutService {
     }
   ) {}
 
+  async inspectBytes(
+    bytes: Uint8Array,
+    signal: AbortSignal
+  ): Promise<FixedLayoutInspection> {
+    assertNotAborted(signal)
+    const inspection = await this.dependencies.adapter.inspect({
+      content: Uint8Array.from(bytes)
+    })
+    assertNotAborted(signal)
+    return {
+      ...inspection,
+      metadata: { ...inspection.metadata },
+      pages: inspection.pages.map((page) => ({ ...page }))
+    }
+  }
+
+  async ocrPageBytes(
+    bytes: Uint8Array,
+    pageNumber: number,
+    signal: AbortSignal,
+    options: {
+      language?: string
+      maxDimension?: number
+    } = {}
+  ): Promise<ImageOcrResult> {
+    if (!this.dependencies.localOcr) {
+      throw new FixedLayoutError(
+        'fixed_layout_ocr_unavailable',
+        'Local OFD OCR is unavailable'
+      )
+    }
+    assertNotAborted(signal)
+    const inspection = await this.dependencies.adapter.inspect({
+      content: Uint8Array.from(bytes)
+    })
+    const page = inspection.pages[pageNumber - 1]
+    if (!page || page.pageNumber !== pageNumber) {
+      throw new FixedLayoutError(
+        'fixed_layout_page_invalid',
+        'OFD page number is invalid'
+      )
+    }
+    const rendered = await this.dependencies.adapter.renderPage({
+      content: Uint8Array.from(bytes),
+      pageNumber,
+      maxDimension: options.maxDimension
+    })
+    const result = await this.dependencies.localOcr.recognize(
+      {
+        content: rendered.content,
+        sourcePath: `bytes#page=${pageNumber}`,
+        language: options.language
+      },
+      signal
+    )
+    validateOcr(result, rendered)
+    assertNotAborted(signal)
+    return {
+      language: result.language,
+      blocks: result.blocks.map((block) => ({
+        ...block,
+        bounds: { ...block.bounds }
+      }))
+    }
+  }
+
   async inspect(input: {
     sourceCanonicalPath: string
     sourceRelativePath: string

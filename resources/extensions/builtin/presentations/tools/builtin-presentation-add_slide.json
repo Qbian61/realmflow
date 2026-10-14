@@ -18,24 +18,48 @@
     "properties": {
       "sessionId": {
         "type": "string",
-        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$",
+        "description": "Stable local editing or browser session ID returned by an inspect/create tool.",
+        "examples": [
+          "12345678-1234-4234-9234-123456789abc"
+        ]
       },
       "expectedRevision": {
         "type": "integer",
-        "minimum": 0
+        "minimum": 0,
+        "description": "Expected revision used for optimistic concurrency control. Copy this value from the latest RealmFlow UI/API state; do not invent it.",
+        "examples": [
+          1
+        ]
       },
       "afterSlideId": {
         "type": "string",
-        "pattern": "^slide-[0-9]+$"
+        "pattern": "^slide-[0-9]+$",
+        "description": "Stable slide ID after which the copied or new slide is inserted.",
+        "examples": [
+          "slide-1"
+        ]
       },
       "notes": {
         "type": "string",
-        "maxLength": 100000
+        "maxLength": 100000,
+        "description": "Speaker notes text to attach to the new slide.",
+        "examples": [
+          ""
+        ]
       }
     },
     "required": [
       "sessionId",
       "expectedRevision"
+    ],
+    "examples": [
+      {
+        "sessionId": "12345678-1234-4234-9234-123456789abc",
+        "expectedRevision": 1,
+        "afterSlideId": "slide-1",
+        "notes": ""
+      }
     ]
   },
   "outputSchema": {

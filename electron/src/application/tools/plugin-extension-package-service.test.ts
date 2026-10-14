@@ -91,6 +91,22 @@ describe('ExtensionPackageService Plugin SDK', () => {
     )
   })
 
+  it('rejects a Plugin Tool whose model input field lacks contract metadata', async () => {
+    const tool = toolDefinition()
+    tool.inputSchema.properties.query = {
+      type: 'string',
+      description: 'Search query text.'
+    }
+    await writeFile(
+      join(sourcePath, 'tools', 'search.json'),
+      JSON.stringify(tool, null, 2)
+    )
+
+    await expect(service().prepare(sourcePath)).rejects.toThrow(
+      'Tool research.search input schema.properties.query.description must explain when the required field is required'
+    )
+  })
+
   it('compiles untrusted provider and Hook schemas in Main', async () => {
     const path = join(sourcePath, 'providers', 'web.json')
     const descriptor = providerDescriptor('research.web')
@@ -115,6 +131,27 @@ describe('ExtensionPackageService Plugin SDK', () => {
     )
     await expect(service().prepare(sourcePath)).rejects.toThrow(
       'Plugin Hook filter schema is invalid'
+    )
+  })
+
+  it('rejects provider configuration schema without contract metadata', async () => {
+    const path = join(sourcePath, 'providers', 'web.json')
+    await writeFile(path, JSON.stringify({
+      ...providerDescriptor('research.web'),
+      configurationSchema: {
+        type: 'object',
+        description: 'Configuration for the research web provider.',
+        additionalProperties: false,
+        required: ['endpoint'],
+        examples: [{ endpoint: 'https://api.example.com' }],
+        properties: {
+          endpoint: { type: 'string' }
+        }
+      }
+    }))
+
+    await expect(service().prepare(sourcePath)).rejects.toThrow(
+      'Plugin Web Provider configuration schema.properties.endpoint.description is required'
     )
   })
 
@@ -316,8 +353,31 @@ function toolDefinition() {
       runtime: 'process',
       entryPath: 'runtime/search.js'
     },
-    inputSchema: { type: 'object' },
-    outputSchema: { type: 'object' },
+    inputSchema: {
+      type: 'object',
+      description: 'Input for running a research search.',
+      additionalProperties: false,
+      required: ['query'],
+      properties: {
+        query: {
+          type: 'string',
+          description:
+            'Required. Search query supplied by the user for the configured research provider.',
+        },
+        limit: {
+          type: 'number',
+          description:
+            'Optional. Omit when no result limit is requested; otherwise provide the maximum number of results requested by the user.',
+        },
+      },
+      examples: [{ query: 'local-first workflow', limit: 3 }],
+    },
+    outputSchema: {
+      type: 'object',
+      description: 'Output from the research search.',
+      additionalProperties: false,
+      properties: {},
+    },
     capabilities: ['filesystem.read', 'network.connect'],
     effects: ['external.read'],
     risk: 'medium',
@@ -349,8 +409,32 @@ function skillDefinition() {
     description: 'Run a grounded research workflow.',
     instructionsPath: 'instructions/research.md',
     runtime: { kind: 'instruction' },
-    inputSchema: { type: 'object' },
-    outputSchema: { type: 'object' },
+    inputSchema: {
+      type: 'object',
+      description: 'Input for the research workflow.',
+      additionalProperties: false,
+      required: ['query'],
+      properties: {
+        query: {
+          type: 'string',
+          description:
+            'Required. Research question supplied by the user for the workflow to investigate.',
+        },
+      },
+    },
+    outputSchema: {
+      type: 'object',
+      description: 'Output from the research workflow.',
+      additionalProperties: false,
+      required: ['summary'],
+      properties: {
+        summary: {
+          type: 'string',
+          description: 'Grounded research summary.',
+        },
+      },
+    },
+    examples: [{ query: 'Summarize the local research context.' }],
     requiredTools: [{
       toolId: 'research.search',
       versionRange: '1.0.0',
@@ -376,7 +460,9 @@ function providerDescriptor(id: string, credentialRefs: string[] = ['web-token']
     credentialRefs,
     configurationSchema: {
       type: 'object',
+      description: `${id} configuration.`,
       additionalProperties: false,
+      examples: [{}],
       properties: {}
     }
   }

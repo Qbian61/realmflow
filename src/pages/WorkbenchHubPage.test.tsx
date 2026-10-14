@@ -38,6 +38,24 @@ describe("WorkbenchHubPage", () => {
     );
   });
 
+  it("uses the canonical module order and removes system status", () => {
+    render(<WorkbenchHubPage />);
+
+    expect(
+      within(screen.getByRole("tablist", { name: "工作台模块" }))
+        .getAllByRole("tab")
+        .map((tab) => tab.textContent),
+    ).toEqual([
+      "工作台",
+      "任务待办",
+      "常用网站",
+      "定时任务",
+      "备忘录",
+      "终端",
+    ]);
+    expect(screen.queryByRole("tab", { name: "系统状态" })).toBeNull();
+  });
+
   it("switches modules and lets configurable tabs be hidden and restored", () => {
     render(<WorkbenchHubPage />);
 
@@ -74,12 +92,12 @@ describe("WorkbenchHubPage", () => {
       "true",
     );
 
-    const addModule = screen.getByRole("button", {
-      name: "添加工作台模块",
-    });
-    expect(addModule).toHaveAttribute("title", "新增");
-    fireEvent.click(addModule);
-    fireEvent.click(screen.getByRole("menuitem", { name: "任务待办" }));
+    expect(
+      screen.queryByRole("button", { name: "添加工作台模块" }),
+    ).toBeNull();
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "恢复任务待办" }),
+    );
 
     expect(screen.getByRole("tab", { name: "任务待办" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "任务待办" })).toHaveAttribute(
@@ -132,7 +150,7 @@ describe("WorkbenchHubPage", () => {
       within(screen.getByRole("tablist", { name: "工作台模块" }))
         .getAllByRole("tab")
         .map((tab) => tab.textContent),
-    ).toEqual(["工作台", "终端", "任务待办", "常用网站", "备忘录", "系统状态"]);
+    ).toEqual(["工作台", "终端", "任务待办", "常用网站", "定时任务", "备忘录"]);
   });
 
   it("keeps configurable tab ordering drag-only", () => {
@@ -153,7 +171,7 @@ describe("WorkbenchHubPage", () => {
     const layout = createLayoutApi({
       get: vi.fn().mockResolvedValue({
         revision: 4,
-        moduleOrder: ["system", "terminal", "tasks", "sites", "memos"],
+        moduleOrder: ["schedules", "terminal", "tasks", "sites", "memos"],
         hiddenModules: ["sites"],
       }),
     });
@@ -165,7 +183,7 @@ describe("WorkbenchHubPage", () => {
         within(screen.getByRole("tablist", { name: "工作台模块" }))
           .getAllByRole("tab")
           .map((tab) => tab.textContent),
-      ).toEqual(["工作台", "系统状态", "终端", "任务待办", "备忘录"]),
+      ).toEqual(["工作台", "定时任务", "终端", "任务待办", "备忘录"]),
     );
   });
 
@@ -194,7 +212,7 @@ describe("WorkbenchHubPage", () => {
       ok: true,
       layout: {
         revision: 1,
-        moduleOrder: ["tasks", "sites", "memos", "terminal", "system"],
+        moduleOrder: ["tasks", "sites", "memos", "terminal", "schedules"],
         hiddenModules: ["tasks"],
       },
     });
@@ -204,7 +222,7 @@ describe("WorkbenchHubPage", () => {
     );
   });
 
-  it("keeps the current UI on failure and reloads Main state on conflict", async () => {
+  it("keeps the current UI on failure and rebases once on a revision conflict", async () => {
     const layout = createLayoutApi({
       update: vi
         .fn()
@@ -214,8 +232,16 @@ describe("WorkbenchHubPage", () => {
           code: "revision_conflict",
           current: {
             revision: 3,
-            moduleOrder: ["terminal", "tasks", "sites", "memos", "system"],
+            moduleOrder: ["terminal", "tasks", "sites", "memos", "schedules"],
             hiddenModules: ["memos"],
+          },
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          layout: {
+            revision: 4,
+            moduleOrder: ["terminal", "tasks", "sites", "memos", "schedules"],
+            hiddenModules: ["memos", "sites"],
           },
         }),
     });
@@ -235,9 +261,53 @@ describe("WorkbenchHubPage", () => {
         within(screen.getByRole("tablist", { name: "工作台模块" }))
           .getAllByRole("tab")
           .map((tab) => tab.textContent),
-      ).toEqual(["工作台", "终端", "任务待办", "常用网站", "系统状态"]),
+      ).toEqual(["工作台", "终端", "任务待办", "定时任务"]),
     );
-    expect(screen.getByRole("alert")).toHaveTextContent("布局已在其他窗口更新");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(layout.update).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        expectedRevision: 3,
+        hiddenModules: ["memos", "sites"],
+      }),
+    );
+  });
+
+  it("shows the latest Main layout when the rebased update also conflicts", async () => {
+    const layout = createLayoutApi({
+      update: vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: false,
+          code: "revision_conflict",
+          current: {
+            revision: 2,
+            moduleOrder: ["terminal", "tasks", "sites", "memos", "schedules"],
+            hiddenModules: [],
+          },
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          code: "revision_conflict",
+          current: {
+            revision: 3,
+            moduleOrder: ["terminal", "tasks", "sites", "memos", "schedules"],
+            hiddenModules: ["sites"],
+          },
+        }),
+    });
+    render(<WorkbenchHubPage layoutApi={layout} />);
+    await waitFor(() => expect(layout.get).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole("button", { name: "管理工作台 Tab" }));
+    fireEvent.click(screen.getByRole("button", { name: "隐藏任务待办" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "布局已在其他窗口更新",
+      ),
+    );
+    expect(screen.queryByRole("tab", { name: "常用网站" })).toBeNull();
+    expect(screen.getByRole("tab", { name: "任务待办" })).toBeInTheDocument();
   });
 
   it("localizes the complete hub surface in English", () => {
@@ -264,7 +334,7 @@ function createLayoutApi(
   return {
     get: vi.fn().mockResolvedValue({
       revision: 0,
-      moduleOrder: ["tasks", "sites", "memos", "terminal", "system"],
+      moduleOrder: ["tasks", "sites", "memos", "terminal", "schedules"],
       hiddenModules: [],
     }),
     update: vi.fn(),

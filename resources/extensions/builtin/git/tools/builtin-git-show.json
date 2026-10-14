@@ -21,14 +21,28 @@
     "properties": {
       "scopeRoot": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Optional authorized root override. Omit or pass \".\" to use the current authorized root.",
+        "examples": [
+          "."
+        ]
       },
       "ref": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 200
+        "maxLength": 200,
+        "description": "Current browser snapshot reference for the target element.",
+        "examples": [
+          "ref-1"
+        ]
       }
-    }
+    },
+    "examples": [
+      {
+        "scopeRoot": ".",
+        "ref": "ref-1"
+      }
+    ]
   },
   "outputSchema": {
     "type": "object",

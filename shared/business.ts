@@ -878,7 +878,9 @@ export type KnowledgeSourceDto = {
     generationId?: string
     sourceVersion?: string
     indexedAt?: number
+    errorCode?: string
   }
+  repository?: RepositorySourceSummaryDto
 }
 
 export type KnowledgeRuntimeHealthDto = {
@@ -1071,12 +1073,30 @@ export type RepositorySnapshotDto = {
     byteSize: number
     indexStatus?: RepositoryFileIndexStatusDto
   }>
+  skippedFiles?: Array<{
+    relativePath: string
+    reason:
+      | 'file_too_large'
+      | 'binary'
+      | 'invalid_utf8'
+      | 'repository_text_limit_exceeded'
+      | 'file_count_limit_exceeded'
+    byteSize?: number
+  }>
   scannedAt: number
 }
 
 export type RepositorySnapshotViewDto = {
   repository: RepositorySourceSummaryDto
   snapshot?: RepositorySnapshotDto
+  indexJobStatus?:
+    | 'pending'
+    | 'running'
+    | 'qdrant_written'
+    | 'completed'
+    | 'failed'
+    | 'cancelled'
+    | 'interrupted'
 }
 
 export type RepositorySyncResultDto = RepositorySnapshotViewDto & {
@@ -1117,10 +1137,24 @@ export type OnlineDocumentSnapshotDto = {
   id: string
   sourceId: string
   version: number
-  content: string
   mediaType: string
   contentChecksum: string
   byteSize: number
+  documents: Array<{
+    unitKey: string
+    title: string
+    content: string
+    checksum: string
+    byteSize: number
+    metadata?: {
+      format: string
+      extraction: string
+      page?: number
+      sheet?: string
+      slide?: number
+      archiveEntry?: string
+    }
+  }>
   etag?: string
   lastModified?: string
   fetchedAt: number

@@ -22,7 +22,6 @@ import type { ReasoningPreference } from "../../domain/reasoning-router";
 import type { ConversationAttachmentSubmission } from "../../shared/conversation-attachments";
 import type { SendFollowUpSuggestionCommand } from "../../shared/business";
 import RequirementDetailPage from "../pages/RequirementDetailPage";
-import SchedulePage from "../pages/SchedulePage";
 import SettingsPage from "../pages/SettingsPage";
 import SpaceDetailPage from "../pages/SpaceDetailPage";
 import UpdatesPage from "../pages/UpdatesPage";
@@ -119,7 +118,6 @@ export function AppRoutes({
                   />
                 }
               />
-              <Route path="/schedules" element={<SchedulePage />} />
               <Route path="/capabilities" element={<CapabilitiesPage />} />
               <Route path="/analytics" element={<AnalyticsPage />} />
               <Route path="/workflows" element={<WorkflowTemplatesPage />} />
@@ -185,7 +183,6 @@ export function AppRoutes({
                   ({ path }) =>
                     path !== "/" &&
                     path !== "/chat/new" &&
-                    path !== "/schedules" &&
                     path !== "/capabilities" &&
                     path !== "/analytics" &&
                     path !== "/workflows" &&

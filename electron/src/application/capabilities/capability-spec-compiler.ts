@@ -80,14 +80,17 @@ function compileRuntime(
   }
   const operation = spec.runtime.externalWrite ? 'write' : 'read'
   const credentialRef = spec.runtime.credentialRefs[0]
+  const pathParameters = httpPathParameterNames(spec.runtime.path)
   return {
     kind: 'connector',
     connectorKind: 'http',
     credentialRefs: spec.runtime.credentialRefs,
     configurationSchema: {
       type: 'object',
+      description: 'Configuration accepted by this generated Connector.',
       additionalProperties: false,
-      properties: {}
+      properties: {},
+      examples: [{}]
     },
     actions: [
       {
@@ -95,20 +98,18 @@ function compileRuntime(
         name: spec.name,
         description: spec.description,
         operation,
-        inputSchema: {
-          type: 'object',
-          additionalProperties: true
-        },
-        outputSchema: {
-          type: 'object',
-          additionalProperties: true
-        },
         risk: spec.permissions.maximumRisk,
         effects: [
           operation === 'write' ? 'external.write' : 'external.read'
         ],
         timeoutMs: 30_000,
         maxOutputBytes: 1_048_576,
+        inputSchema: httpInputSchema(spec.name, pathParameters),
+        outputSchema: {
+          type: 'object',
+          description: `JSON object returned by the ${spec.name} HTTP action.`,
+          additionalProperties: true
+        },
         ...(operation === 'write'
           ? {
               idempotency: {
@@ -133,6 +134,56 @@ function compileRuntime(
       }
     ]
   }
+}
+
+function httpInputSchema(
+  name: string,
+  pathParameters: readonly string[]
+): {
+  type: 'object'
+  description: string
+  additionalProperties: false
+  properties: Record<
+    string,
+    { type: 'string'; minLength: 1; description: string }
+  >
+  required: string[]
+  examples: Array<Record<string, string>>
+} {
+  return {
+    type: 'object',
+    description: `Arguments accepted by the ${name} HTTP action.`,
+    additionalProperties: false,
+    properties: Object.fromEntries(
+      pathParameters.map((parameter) => [
+        parameter,
+        {
+          type: 'string',
+          minLength: 1,
+          description: `Required. HTTP path parameter "${parameter}" taken from the user request or selected external record.`
+        }
+      ])
+    ),
+    required: [...pathParameters],
+    examples: [
+      Object.fromEntries(
+        pathParameters.map((parameter) => [
+          parameter,
+          `example-${parameter}`
+        ])
+      )
+    ]
+  }
+}
+
+function httpPathParameterNames(pathTemplate: string): string[] {
+  return [
+    ...new Set(
+      [...pathTemplate.matchAll(/\{([A-Za-z0-9._:-]+)\}/g)].map(
+        (match) => match[1]
+      )
+    )
+  ].sort((left, right) => left.localeCompare(right))
 }
 
 function readme(spec: CapabilitySpec): string {

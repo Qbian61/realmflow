@@ -1,5 +1,12 @@
+import { createHash } from 'node:crypto'
 import { readFile, readdir, stat } from 'node:fs/promises'
+import {
+  CONTENT_EXTRACTION_LIMITS,
+  type ExtractedContentBundle
+} from '../../../../domain/content-extraction'
+import { classifyLocalFileCapability } from '../../../../domain/local-file-capability'
 import type { JsonObject } from '../../../../domain/tool-protocol-validation'
+import type { LocalContentExtractionService } from '../content-extraction/local-content-extraction-service'
 import type { BuiltinToolHandlerInput } from './builtin-tool-adapter'
 import {
   assertNotAborted,
@@ -11,9 +18,14 @@ import {
 
 const MAX_SEARCH_RESULTS = 200
 const MAX_SEARCH_FILE_BYTES = 1024 * 1024
+const MAX_SEARCH_CHARACTERS = 1_000_000
 
 export async function searchFiles(
-  input: BuiltinToolHandlerInput
+  input: BuiltinToolHandlerInput,
+  contentExtractor: Pick<
+    LocalContentExtractionService,
+    'extract' | 'getCached'
+  >
 ): Promise<JsonObject> {
   const resolved = await resolveExisting(
     input.scopeRoots,
@@ -27,6 +39,16 @@ export async function searchFiles(
   if (mode !== 'name' && mode !== 'content') {
     throw new Error('File Tool search mode is invalid')
   }
+  const contentMode =
+    requireString(input.arguments, 'contentMode', { optional: true }) ??
+    'text_only'
+  if (
+    contentMode !== 'text_only' &&
+    contentMode !== 'structured_cached' &&
+    contentMode !== 'structured_extract'
+  ) {
+    throw new Error('File Tool contentMode is invalid')
+  }
   const maximum = requireInteger(
     input.arguments,
     'maxResults',
@@ -39,6 +61,8 @@ export async function searchFiles(
     relativePath: resolved.relativePath,
     query,
     mode,
+    contentMode,
+    contentExtractor,
     maximum,
     matches,
     signal: input.signal
@@ -51,6 +75,11 @@ async function walkSearch(input: {
   relativePath: string
   query: string
   mode: 'name' | 'content'
+  contentMode: 'text_only' | 'structured_cached' | 'structured_extract'
+  contentExtractor: Pick<
+    LocalContentExtractionService,
+    'extract' | 'getCached'
+  >
   maximum: number
   matches: JsonObject[]
   signal: AbortSignal
@@ -82,10 +111,53 @@ async function searchFileContent(
   relativePath: string
 ): Promise<void> {
   const metadata = await stat(absolutePath)
-  if (metadata.size > MAX_SEARCH_FILE_BYTES) return
+  if (metadata.size > CONTENT_EXTRACTION_LIMITS.maxSourceBytes) return
   const bytes = await readFile(absolutePath)
-  if (bytes.includes(0)) return
-  const lines = bytes.toString('utf8').split(/\r?\n/)
+  const capability = classifyLocalFileCapability({
+    fileName: relativePath,
+    head: bytes.subarray(0, Math.min(bytes.byteLength, 8 * 1024))
+  })
+  if (capability.readMode === 'text') {
+    if (metadata.size > MAX_SEARCH_FILE_BYTES || bytes.includes(0)) return
+    searchText(input, relativePath, bytes.toString('utf8'))
+    return
+  }
+  if (
+    input.contentMode === 'text_only' ||
+    capability.readMode === 'unsupported'
+  ) {
+    return
+  }
+  const sourceChecksum = `sha256:${createHash('sha256')
+    .update(bytes)
+    .digest('hex')}`
+  const extractionInput = {
+    bytes: Uint8Array.from(bytes),
+    fileName: relativePath,
+    sourceChecksum,
+    signal: input.signal,
+    depth: 0,
+    policy: {
+      consumer: 'file_search' as const,
+      allowLocalOcr: input.contentMode === 'structured_extract',
+      allowLocalConversion: input.contentMode === 'structured_extract',
+      maxCharacters: MAX_SEARCH_CHARACTERS,
+      maxUnits: CONTENT_EXTRACTION_LIMITS.maxArchiveEntries
+    }
+  }
+  const bundle =
+    input.contentMode === 'structured_cached'
+      ? await input.contentExtractor.getCached(extractionInput)
+      : await input.contentExtractor.extract(extractionInput)
+  if (bundle) searchStructured(input, relativePath, bundle)
+}
+
+function searchText(
+  input: Parameters<typeof walkSearch>[0],
+  relativePath: string,
+  text: string
+): void {
+  const lines = text.split(/\r?\n/)
   for (const [index, line] of lines.entries()) {
     if (input.matches.length >= input.maximum) return
     if (line.toLowerCase().includes(input.query.toLowerCase())) {
@@ -94,6 +166,27 @@ async function searchFileContent(
         line: index + 1,
         preview: line.slice(0, 500)
       })
+    }
+  }
+}
+
+function searchStructured(
+  input: Parameters<typeof walkSearch>[0],
+  relativePath: string,
+  bundle: ExtractedContentBundle
+): void {
+  for (const unit of bundle.units) {
+    for (const [index, line] of unit.text.split(/\r?\n/).entries()) {
+      if (input.matches.length >= input.maximum) return
+      if (line.toLowerCase().includes(input.query.toLowerCase())) {
+        input.matches.push({
+          path: relativePath,
+          unitKey: unit.key,
+          title: unit.title,
+          line: index + 1,
+          preview: line.slice(0, 500)
+        })
+      }
     }
   }
 }

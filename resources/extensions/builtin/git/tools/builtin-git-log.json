@@ -18,14 +18,28 @@
     "properties": {
       "scopeRoot": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Optional authorized root override. Omit or pass \".\" to use the current authorized root.",
+        "examples": [
+          "."
+        ]
       },
       "maxCount": {
         "type": "integer",
         "minimum": 1,
-        "maximum": 500
+        "maximum": 500,
+        "description": "Maximum number of history entries returned.",
+        "examples": [
+          20
+        ]
       }
-    }
+    },
+    "examples": [
+      {
+        "scopeRoot": ".",
+        "maxCount": 20
+      }
+    ]
   },
   "outputSchema": {
     "type": "object",

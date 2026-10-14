@@ -317,12 +317,17 @@ describe("frontend component system", () => {
     expect(nodeTodoDialog).not.toContain("<Dialog");
   });
 
-  it("keeps sortable feature surfaces on the shared drag-only handle", () => {
-    const sortableSources = [
+  it("keeps sortable feature surfaces on their approved drag targets", () => {
+    const dragHandleSources = [
       "pages/WorkbenchHubPage.tsx",
-      "features/navigation/WorkspaceSidebar.tsx",
-      "features/workbench-hub/tasks/TaskTableNavigation.tsx",
       "features/workbench-hub/tasks/TaskTableGrid.tsx",
+    ].map((path) => ({
+      path,
+      source: readFileSync(resolve(process.cwd(), "src", path), "utf8"),
+    }));
+    const nameDragSources = [
+      "features/navigation/WorkspaceSpaceEntry.tsx",
+      "features/workbench-hub/tasks/TaskTableNavigation.tsx",
       "features/workbench-hub/memos/MemoWorkbenchPage.tsx",
       "features/workbench-hub/sites/SiteWorkbenchPage.tsx",
       "features/workbench-hub/terminal/TerminalWorkbenchPage.tsx",
@@ -331,12 +336,17 @@ describe("frontend component system", () => {
       source: readFileSync(resolve(process.cwd(), "src", path), "utf8"),
     }));
 
-    for (const { path, source } of sortableSources) {
+    for (const { path, source } of dragHandleSources) {
       expect(source, path).toContain("<DragHandle");
       expect(source, path).not.toContain("<ReorderMenu");
     }
+    for (const { path, source } of nameDragSources) {
+      expect(source, path).toContain("draggable");
+      expect(source, path).not.toContain("<DragHandle");
+      expect(source, path).not.toContain("<ReorderMenu");
+    }
 
-    const taskGrid = sortableSources.find(
+    const taskGrid = dragHandleSources.find(
       ({ path }) =>
         path === "features/workbench-hub/tasks/TaskTableGrid.tsx",
     )!.source;
@@ -890,7 +900,6 @@ describe("frontend component system", () => {
       readFileSync(resolve(process.cwd(), "src", path), "utf8");
 
     for (const path of [
-      "pages/WorkbenchHubPage.tsx",
       "features/settings/ModelSettings.tsx",
       "components/Composer.tsx",
     ]) {
@@ -907,7 +916,6 @@ describe("frontend component system", () => {
     expect(taskTags).toContain('className="ui-menu-item"');
 
     for (const privateSelector of [
-      ".workbench-hub-module-menu button",
       ".model-profile-bulk-menu > button",
       ".model-profile-bulk-menu [role^='menuitem']",
       ".attachment-menu button",
@@ -930,7 +938,6 @@ describe("frontend component system", () => {
 
     for (const path of [
       "pages/SpaceDetailPage.tsx",
-      "pages/SchedulePage.tsx",
       "pages/WorkflowTemplatesPage.tsx",
       "pages/SettingsPage.tsx",
       "pages/WorkbenchHubPage.tsx",
@@ -961,7 +968,6 @@ describe("frontend component system", () => {
 
     for (const selector of [
       "space-detail-header",
-      "schedule-page-header",
       "workflow-templates-page-header",
       "settings-page-header",
       "workbench-hub-header",
@@ -993,13 +999,18 @@ describe("frontend component system", () => {
       "features/sessions/RecentSessions.tsx",
       "features/conversation/AssistantExecutionTimeline.tsx",
       "features/resources/KnowledgeNotesPanel.tsx",
-      "features/resources/SpaceKnowledgePanel.tsx",
       "features/capabilities/InstalledCapabilityList.tsx",
       "features/capabilities/ToolCatalogPanel.tsx",
     ]) {
       expect(readSource(path)).toContain("useListPagination");
       expect(readSource(path)).toContain("<ListPagination");
     }
+    expect(readSource("features/resources/SpaceKnowledgePanel.tsx")).toContain(
+      "useListPagination",
+    );
+    expect(
+      readSource("features/resources/SpaceKnowledgeResourceTable.tsx"),
+    ).toContain("<ListPagination");
 
     const taskPage = readSource(
       "features/workbench-hub/tasks/TaskWorkbenchPage.tsx",
@@ -1016,7 +1027,6 @@ describe("frontend component system", () => {
       "pages/SpaceDetailPage.tsx",
       "pages/WorkflowTemplatesPage.tsx",
       "pages/CapabilitiesPage.tsx",
-      "pages/SchedulePage.tsx",
       "features/capabilities/ToolCatalogPanel.tsx",
       "features/capabilities/ConnectorCatalogPanel.tsx",
       "features/resources/SpaceKnowledgePanel.tsx",
@@ -1028,7 +1038,6 @@ describe("frontend component system", () => {
     for (const path of [
       "pages/WorkflowTemplatesPage.tsx",
       "pages/CapabilitiesPage.tsx",
-      "pages/SchedulePage.tsx",
     ]) {
       expect(readSource(path)).not.toMatch(
         /useState<[^>]*>\(\s*["'](?:published|tools|templates)["']/,
@@ -1091,12 +1100,8 @@ describe("frontend component system", () => {
       /<WorkspaceHeaderPortal>[\s\S]*?<h1 className="sr-only">[\s\S]*?<h2 className="settings-page-header-title">/,
     );
 
-    const schedule = readSource("pages/SchedulePage.tsx");
-    expect(schedule).toContain(
-      '<h2 className="sr-only">{t("schedule.tab.templates")}</h2>',
-    );
-    expect(schedule).toContain(
-      '<h2 className="sr-only">{t("schedule.tab.active", { count: schedules.length })}</h2>',
+    expect(readSource("pages/SchedulePage.tsx")).not.toContain(
+      't("schedule.tab.templates")',
     );
   });
 

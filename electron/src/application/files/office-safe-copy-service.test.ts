@@ -11,6 +11,34 @@ import {
 } from './office-safe-copy-service'
 
 describe('OfficeSafeCopyService', () => {
+  it('sanitizes immutable bytes without writing or opening a session', async () => {
+    const storage = memoryStorage('docm')
+    const dependencies = createDependencies(storage, {
+      outputFormat: 'docx',
+      macrosRemoved: true,
+      templateMaterialized: false,
+      removedParts: ['word/vbaProject.bin']
+    })
+    const service = new OfficeSafeCopyService(dependencies)
+
+    await expect(
+      service.sanitizeBytes({
+        bytes: SOURCE_BYTES,
+        sourceFormat: 'docm',
+        signal: signal()
+      })
+    ).resolves.toEqual({
+      bytes: Uint8Array.from(SAFE_BYTES),
+      outputFormat: 'docx',
+      macrosRemoved: true,
+      templateMaterialized: false,
+      removedParts: ['word/vbaProject.bin']
+    })
+    expect(storage.read).not.toHaveBeenCalled()
+    expect(storage.commitNew).not.toHaveBeenCalled()
+    expect(dependencies.sessions.word.open).not.toHaveBeenCalled()
+  })
+
   it.each([
     ['dotx', 'docx', 'word', false, true],
     ['xltx', 'xlsx', 'spreadsheet', false, true],

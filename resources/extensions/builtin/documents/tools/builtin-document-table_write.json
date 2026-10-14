@@ -18,23 +18,43 @@
     "properties": {
       "sessionId": {
         "type": "string",
-        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$",
+        "description": "Stable local editing or browser session ID returned by an inspect/create tool.",
+        "examples": [
+          "12345678-1234-4234-9234-123456789abc"
+        ]
       },
       "expectedRevision": {
         "type": "integer",
-        "minimum": 0
+        "minimum": 0,
+        "description": "Expected revision used for optimistic concurrency control. Copy this value from the latest RealmFlow UI/API state; do not invent it.",
+        "examples": [
+          1
+        ]
       },
       "tableId": {
         "type": "string",
-        "pattern": "^table-[1-9][0-9]*$"
+        "pattern": "^table-[1-9][0-9]*$",
+        "description": "Stable document table ID.",
+        "examples": [
+          "table-1"
+        ]
       },
       "startRow": {
         "type": "integer",
-        "minimum": 1
+        "minimum": 1,
+        "description": "One-based starting row index.",
+        "examples": [
+          1
+        ]
       },
       "startColumn": {
         "type": "integer",
-        "minimum": 1
+        "minimum": 1,
+        "description": "One-based starting column index.",
+        "examples": [
+          1
+        ]
       },
       "values": {
         "type": "array",
@@ -46,9 +66,31 @@
           "maxItems": 100,
           "items": {
             "type": "string",
-            "maxLength": 100000
-          }
-        }
+            "maxLength": 100000,
+            "examples": [
+              [
+                [
+                  "Example value"
+                ]
+              ]
+            ]
+          },
+          "examples": [
+            [
+              [
+                "Example value"
+              ]
+            ]
+          ]
+        },
+        "description": "Two-dimensional value matrix written into the target range.",
+        "examples": [
+          [
+            [
+              "Example value"
+            ]
+          ]
+        ]
       }
     },
     "required": [
@@ -58,6 +100,20 @@
       "startRow",
       "startColumn",
       "values"
+    ],
+    "examples": [
+      {
+        "sessionId": "12345678-1234-4234-9234-123456789abc",
+        "expectedRevision": 1,
+        "tableId": "table-1",
+        "startRow": 1,
+        "startColumn": 1,
+        "values": [
+          [
+            "Example value"
+          ]
+        ]
+      }
     ]
   },
   "outputSchema": {

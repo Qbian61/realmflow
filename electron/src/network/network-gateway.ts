@@ -666,6 +666,11 @@ export class NetworkGateway {
                 providerResponse.headers.get('Retry-After')
               )
             : undefined
+        const remainingAttempts = RETRYABLE_STATUS_CODES.has(
+          providerResponse.status
+        )
+          ? Math.max(0, grant.model.maxRetries - retryCount)
+          : undefined
         await this.finishAudit(auditId, {
           status: 'failed',
           retryCount,
@@ -676,7 +681,8 @@ export class NetworkGateway {
           code,
           retryCount,
           providerFailureMessage(providerResponse.status),
-          retryAfterMs
+          retryAfterMs,
+          remainingAttempts
         )
         return
       }
@@ -806,7 +812,19 @@ export class NetworkGateway {
       response.destroy()
       return
     }
-    writeGatewayError(response, failure.code, failure.retryCount)
+    const remainingAttempts =
+      failure.code === 'provider_timeout' ||
+      failure.code === 'provider_unavailable'
+        ? 0
+        : undefined
+    writeGatewayError(
+      response,
+      failure.code,
+      failure.retryCount,
+      undefined,
+      undefined,
+      remainingAttempts
+    )
   }
 
   private async finishAudit(
@@ -954,6 +972,7 @@ export class NetworkGateway {
     const providerRequest = adapter.buildRequest(grant.model, command)
     while (true) {
       const timeout = AbortSignal.timeout(grant.model.timeoutMs)
+      let retryAfterMs: number | undefined
       try {
         const providerResponse = await this.request(providerRequest.url, {
           method: 'POST',
@@ -968,6 +987,9 @@ export class NetworkGateway {
         ) {
           return { providerResponse, retryCount }
         }
+        retryAfterMs = boundedRetryAfterMs(
+          providerResponse.headers.get('Retry-After')
+        )
       } catch {
         if (grant.controller.signal.aborted) {
           throw new GatewayExecutionError('request_cancelled', retryCount)
@@ -981,7 +1003,7 @@ export class NetworkGateway {
       }
       retryCount += 1
       await this.sleep(
-        Math.min(100 * 2 ** (retryCount - 1), MAX_RETRY_DELAY_MS),
+        providerRetryDelayMs(retryCount, retryAfterMs),
         grant.controller.signal
       )
     }
@@ -1593,7 +1615,8 @@ function writeGatewayError(
   code: GatewayErrorCode,
   retryCount: number,
   message = 'Provider request failed',
-  retryAfterMs?: number
+  retryAfterMs?: number,
+  remainingAttempts?: number
 ): void {
   const status =
     code === 'invalid_request'
@@ -1620,7 +1643,8 @@ function writeGatewayError(
         code === 'provider_unavailable' ||
         code === 'provider_timeout',
       retryCount,
-      ...(retryAfterMs === undefined ? {} : { retryAfterMs })
+      ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+      ...(remainingAttempts === undefined ? {} : { remainingAttempts })
     }
   })
 }
@@ -1630,6 +1654,19 @@ function boundedRetryAfterMs(value: string | null): number | undefined {
   const seconds = Number(value)
   if (!Number.isFinite(seconds) || seconds < 0) return undefined
   return Math.min(30_000, Math.round(seconds * 1_000))
+}
+
+function providerRetryDelayMs(
+  retryCount: number,
+  retryAfterMs: number | undefined
+): number {
+  const exponential = Math.min(
+    100 * 2 ** (retryCount - 1),
+    MAX_RETRY_DELAY_MS
+  )
+  return retryAfterMs === undefined
+    ? exponential
+    : Math.max(exponential, retryAfterMs)
 }
 
 function providerFailureMessage(status: number): string {

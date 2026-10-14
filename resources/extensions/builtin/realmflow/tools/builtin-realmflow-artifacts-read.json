@@ -22,14 +22,28 @@
       "requirementId": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 200
+        "maxLength": 200,
+        "description": "Stable requirement ID whose data should be read or changed.",
+        "examples": [
+          "requirement-1"
+        ]
       },
       "artifactId": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 200
+        "maxLength": 200,
+        "description": "Stable artifact ID for the generated RealmFlow artifact to read.",
+        "examples": [
+          "example"
+        ]
       }
-    }
+    },
+    "examples": [
+      {
+        "requirementId": "requirement-1",
+        "artifactId": "example"
+      }
+    ]
   },
   "outputSchema": {
     "type": "object",

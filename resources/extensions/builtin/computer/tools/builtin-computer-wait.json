@@ -18,26 +18,50 @@
     "properties": {
       "bundleId": {
         "type": "string",
-        "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]{1,199}$"
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]{1,199}$",
+        "description": "macOS application bundle identifier for the authorized target app.",
+        "examples": [
+          "com.realmflow.App"
+        ]
       },
       "contains": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 500
+        "maxLength": 500,
+        "description": "Visible text expected to appear in the authorized app while waiting.",
+        "examples": [
+          "example"
+        ]
       },
       "role": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 100
+        "maxLength": 100,
+        "description": "Accessible role used while waiting for a native UI condition.",
+        "examples": [
+          "example"
+        ]
       },
       "timeoutMs": {
         "type": "integer",
         "minimum": 100,
-        "maximum": 30000
+        "maximum": 30000,
+        "description": "Maximum time in milliseconds before the operation times out.",
+        "examples": [
+          1000
+        ]
       }
     },
     "required": [
       "bundleId"
+    ],
+    "examples": [
+      {
+        "bundleId": "com.realmflow.App",
+        "contains": "example",
+        "role": "example",
+        "timeoutMs": 1000
+      }
     ]
   },
   "outputSchema": {

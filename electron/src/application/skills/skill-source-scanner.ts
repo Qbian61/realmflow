@@ -16,6 +16,8 @@ export type SkillSourceScanError = {
     | 'skill_pack_invalid'
     | 'skill_source_symlink_rejected'
     | 'skill_source_entry_invalid'
+  fieldPath?: string
+  message?: string
 }
 
 export type SkillSourceScanResult = {
@@ -109,10 +111,11 @@ export class SkillSourceScanner {
             maxBytes: this.maxBytes,
           }),
         )
-      } catch {
+      } catch (error) {
         errors.push({
           relativePath: candidate.relativePath,
           code: 'skill_pack_invalid',
+          ...skillPackDiagnostic(error),
         })
       }
     }
@@ -156,4 +159,15 @@ export class SkillSourceScanner {
     }
     candidates.push({ path, relativePath })
   }
+}
+
+function skillPackDiagnostic(
+  error: unknown,
+): Pick<SkillSourceScanError, 'fieldPath' | 'message'> {
+  const raw = error instanceof Error ? error.message : ''
+  const message = raw.replace(/^Skill definition /, 'Skill ')
+  const fieldPath = /^Skill ((?:inputSchema|outputSchema|examples)(?:[.\[\]\w-]+)?) /.exec(
+    message,
+  )?.[1]
+  return fieldPath ? { fieldPath, message } : {}
 }

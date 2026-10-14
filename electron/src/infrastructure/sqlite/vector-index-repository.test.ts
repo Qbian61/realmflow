@@ -451,6 +451,7 @@ describe('SqliteVectorIndexRepository', () => {
           checksum: `sha256:${'b'.repeat(64)}`
         }
       ],
+      retryFailed: false,
       at: 10
     })
 
@@ -485,6 +486,7 @@ describe('SqliteVectorIndexRepository', () => {
           checksum: `sha256:${'b'.repeat(64)}`
         }
       ],
+      retryFailed: false,
       at: 25
     })
     await expect(
@@ -512,6 +514,74 @@ describe('SqliteVectorIndexRepository', () => {
       expect.objectContaining({
         documentKey: 'src/broken.ts',
         status: 'failed'
+      })
+    ])
+  })
+
+  it('resets failed document states for a full repository rebuild', async () => {
+    await repository.ensureActiveProfile(1)
+    await repository.replaceDocumentStates({
+      sourceId: 'source-1',
+      profileId: DEFAULT_VECTOR_INDEX_PROFILE.id,
+      sourceVersion: 'repository:v1',
+      documents: [
+        {
+          documentKey: 'README.md',
+          checksum: `sha256:${'a'.repeat(64)}`
+        },
+        {
+          documentKey: 'src/broken.ts',
+          checksum: `sha256:${'b'.repeat(64)}`
+        }
+      ],
+      retryFailed: false,
+      at: 10
+    })
+    await repository.transitionDocumentState({
+      sourceId: 'source-1',
+      profileId: DEFAULT_VECTOR_INDEX_PROFILE.id,
+      documentKey: 'src/broken.ts',
+      expectedSourceVersion: 'repository:v1',
+      expectedChecksum: `sha256:${'b'.repeat(64)}`,
+      expectedStatus: 'pending',
+      status: 'failed',
+      errorCode: 'indexing_failed',
+      at: 20
+    })
+
+    await repository.replaceDocumentStates({
+      sourceId: 'source-1',
+      profileId: DEFAULT_VECTOR_INDEX_PROFILE.id,
+      sourceVersion: 'repository:v1',
+      documents: [
+        {
+          documentKey: 'README.md',
+          checksum: `sha256:${'a'.repeat(64)}`
+        },
+        {
+          documentKey: 'src/broken.ts',
+          checksum: `sha256:${'b'.repeat(64)}`
+        }
+      ],
+      retryFailed: true,
+      at: 30
+    })
+
+    await expect(
+      repository.listDocumentStates({
+        sourceId: 'source-1',
+        profileId: DEFAULT_VECTOR_INDEX_PROFILE.id
+      })
+    ).resolves.toEqual([
+      expect.objectContaining({
+        documentKey: 'README.md',
+        status: 'pending',
+        errorCode: null
+      }),
+      expect.objectContaining({
+        documentKey: 'src/broken.ts',
+        status: 'pending',
+        errorCode: null
       })
     ])
   })
@@ -730,6 +800,103 @@ describe('SqliteVectorIndexRepository', () => {
     await expect(repository.getJob('job-written')).resolves.toMatchObject({
       status: 'qdrant_written'
     })
+  })
+
+  it('cancels interrupted jobs when a pending successor already exists', async () => {
+    await repository.ensureActiveProfile(1)
+    await repository.enqueue(enqueueInput())
+    await repository.claimNext({
+      profileId: DEFAULT_VECTOR_INDEX_PROFILE.id,
+      at: 10
+    })
+    await repository.enqueue(
+      enqueueInput({
+        jobId: 'job-successor',
+        generationId: 'generation-successor',
+        targetRevision: 3,
+        targetVersion: 'file:v2',
+        targetChecksum: `sha256:${'b'.repeat(64)}`,
+        idempotencyKey: 'index-v2',
+        createdAt: 12
+      })
+    )
+
+    await expect(repository.recoverInterrupted({
+      profileId: DEFAULT_VECTOR_INDEX_PROFILE.id,
+      at: 20
+    })).resolves.toBe(1)
+    await expect(repository.getJob('job-1')).resolves.toMatchObject({
+      status: 'cancelled',
+      errorCode: 'superseded',
+      completedAt: 20
+    })
+    await expect(repository.getJob('job-successor')).resolves.toMatchObject({
+      status: 'pending',
+      lockedAt: null
+    })
+    await expect(
+      repository.claimNext({
+        profileId: DEFAULT_VECTOR_INDEX_PROFILE.id,
+        at: 21
+      })
+    ).resolves.toMatchObject({
+      id: 'job-successor',
+      status: 'running'
+    })
+  })
+
+  it('keeps only the newest interrupted job pending for each source', async () => {
+    await repository.ensureActiveProfile(1)
+    await repository.enqueue(enqueueInput())
+    await repository.claimNext({
+      profileId: DEFAULT_VECTOR_INDEX_PROFILE.id,
+      at: 10
+    })
+    await repository.transitionJob({
+      id: 'job-1',
+      expectedStatus: 'running',
+      nextStatus: 'interrupted',
+      errorCode: 'interrupted',
+      at: 11
+    })
+    await repository.enqueue(
+      enqueueInput({
+        jobId: 'job-successor',
+        generationId: 'generation-successor',
+        targetRevision: 3,
+        targetVersion: 'file:v2',
+        targetChecksum: `sha256:${'b'.repeat(64)}`,
+        idempotencyKey: 'index-v2',
+        createdAt: 12
+      })
+    )
+    await repository.claimNext({
+      profileId: DEFAULT_VECTOR_INDEX_PROFILE.id,
+      at: 13
+    })
+
+    await expect(repository.recoverInterrupted({
+      profileId: DEFAULT_VECTOR_INDEX_PROFILE.id,
+      at: 20
+    })).resolves.toBe(1)
+    await expect(repository.getJob('job-1')).resolves.toMatchObject({
+      status: 'cancelled',
+      errorCode: 'superseded',
+      completedAt: 20
+    })
+    await expect(repository.getGeneration('generation-1')).resolves.toMatchObject({
+      status: 'failed',
+      errorCode: 'superseded'
+    })
+    await expect(repository.getJob('job-successor')).resolves.toMatchObject({
+      status: 'pending',
+      triggerSource: 'startup_recovery',
+      lockedAt: null
+    })
+    await expect(repository.recoverInterrupted({
+      profileId: DEFAULT_VECTOR_INDEX_PROFILE.id,
+      at: 21
+    })).resolves.toBe(0)
   })
 
   it('recovers interrupted jobs only from the requested profile', async () => {
@@ -1103,6 +1270,62 @@ describe('SqliteVectorIndexRepository', () => {
           byteSize: 9,
           chunkCount: 1
         }
+      ]
+    })
+  })
+
+  it('appends staging generation manifest batches and keeps counts current', async () => {
+    await repository.ensureActiveProfile(1)
+    await repository.createGeneration(generation())
+
+    await repository.saveGenerationManifest({
+      generationId: 'generation-1',
+      documents: [
+        {
+          id: 'document-readme',
+          documentKey: 'README.md',
+          sourceEntityId: 'source-1',
+          sourceVersion: 'repository:v1',
+          checksum: `sha256:${'a'.repeat(64)}`,
+          byteSize: 12,
+          chunkCount: 2
+        }
+      ]
+    })
+    await repository.saveGenerationManifest({
+      generationId: 'generation-1',
+      documents: [
+        {
+          id: 'document-index',
+          documentKey: 'src/index.ts',
+          sourceEntityId: 'source-1',
+          sourceVersion: 'repository:v1',
+          checksum: `sha256:${'b'.repeat(64)}`,
+          byteSize: 9,
+          chunkCount: 1
+        }
+      ]
+    })
+
+    await expect(repository.getGeneration('generation-1')).resolves.toMatchObject({
+      documentCount: 2,
+      chunkCount: 3
+    })
+    await repository.transitionGeneration({
+      id: 'generation-1',
+      expectedStatus: 'staging',
+      nextStatus: 'current',
+      at: 20
+    })
+    await expect(
+      repository.getCurrentGenerationManifest({
+        sourceId: 'source-1',
+        profileId: DEFAULT_VECTOR_INDEX_PROFILE.id
+      })
+    ).resolves.toMatchObject({
+      documents: [
+        expect.objectContaining({ documentKey: 'README.md' }),
+        expect.objectContaining({ documentKey: 'src/index.ts' })
       ]
     })
   })

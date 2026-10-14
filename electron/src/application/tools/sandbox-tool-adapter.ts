@@ -201,6 +201,7 @@ export class SandboxToolAdapter implements ToolAdapter {
       if (
         handle.capabilities.some((capability) =>
           [
+            'process.inspect',
             'process.discover',
             'process.execute',
             'process.manage'
@@ -243,6 +244,7 @@ export class SandboxToolAdapter implements ToolAdapter {
             'filesystem.read',
             'filesystem.write',
             'filesystem.delete',
+            'process.inspect',
             'process.discover',
             'process.execute',
             'process.manage',

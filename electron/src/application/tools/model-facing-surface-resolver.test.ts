@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { SkillDefinition } from '../../../../domain/skill-definition'
 import type { ToolDefinition } from '../../../../domain/tool-definition'
 import type { ToolCatalogState } from '../../../../domain/tool-catalog'
 import { ModelFacingSurfaceResolver } from './model-facing-surface-resolver'
@@ -38,6 +39,56 @@ function input(policy: Record<string, unknown> = {}, tools = [read, write, web])
     })),
   }
   return { catalog, tools, requiredTools: [] as ToolDefinition[], skills: [], policy }
+}
+
+function skill(
+  id: string,
+  requiredTools: SkillDefinition['requiredTools'],
+): SkillDefinition {
+  return {
+    schemaVersion: 1,
+    id,
+    version: '1.0.0',
+    definitionDigest: 'c'.repeat(64),
+    package: {
+      packageId: 'test.skills',
+      packageVersion: '1.0.0',
+      packageDigest: 'd'.repeat(64),
+    },
+    origin: 'builtin',
+    name: id,
+    description: id,
+    instructionsPath: 'instructions/test.md',
+    runtime: { kind: 'instruction' },
+    inputSchema: {
+      type: 'object',
+      description: 'Inputs for this Skill.',
+      required: ['task'],
+      additionalProperties: false,
+      properties: {
+        task: {
+          type: 'string',
+          description: 'Task to execute.',
+        },
+      },
+    },
+    outputSchema: {
+      type: 'object',
+      description: 'Output from this Skill.',
+      required: ['summary'],
+      additionalProperties: false,
+      properties: {
+        summary: {
+          type: 'string',
+          description: 'Skill output summary.',
+        },
+      },
+    },
+    examples: [{ task: 'Run the Skill.' }],
+    requiredTools,
+    activation: { intents: [], contexts: ['general'] },
+    limits: { maxToolCalls: 4, timeoutMs: 60_000 },
+  }
 }
 
 function ids(value: ReturnType<typeof resolver.resolve>) {
@@ -274,6 +325,22 @@ describe('model-facing run policy', () => {
       ...input({ layers: [{ deny: [read.id] }] }),
       requiredTools: [read],
     })).toThrow(/Required Tool is denied.*builtin.files.read/)
+  })
+
+  it('hides Skills whose required Tool version is absent from the model surface', () => {
+    const available = skill('skill.available', [
+      { toolId: read.id, versionRange: '^1.0.0', required: true },
+    ])
+    const blocked = skill('skill.blocked', [
+      { toolId: read.id, versionRange: '^2.0.0', required: true },
+    ])
+
+    const result = resolver.resolve({
+      ...input({}, [read]),
+      skills: [available, blocked],
+    })
+
+    expect(result.skills.map(({ id }) => id)).toEqual(['skill.available'])
   })
 
   it('keeps a policy ceiling inherited from a parent run', () => {

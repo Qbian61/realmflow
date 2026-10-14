@@ -24,6 +24,7 @@ export type DialogProps = {
   children: ReactNode;
   onOpenChange: (open: boolean) => void;
   size?: DialogSize;
+  placement?: "center" | "workspace";
   closeOnBackdrop?: boolean;
   locked?: boolean;
   className?: string;
@@ -38,6 +39,7 @@ export function Dialog({
   children,
   onOpenChange,
   size = "default",
+  placement = "center",
   closeOnBackdrop = true,
   locked = false,
   className,
@@ -99,7 +101,11 @@ export function Dialog({
 
   return createPortal(
     <div
-      className={["ui-dialog-backdrop", backdropClassName]
+      className={[
+        "ui-dialog-backdrop",
+        placement === "workspace" ? "ui-dialog-backdrop--workspace" : null,
+        backdropClassName,
+      ]
         .filter(Boolean)
         .join(" ")}
       data-testid="ui-dialog-backdrop"

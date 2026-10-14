@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.files.delete_permanently",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "name": "Delete permanently",
   "description": "Permanently delete an authorized file or directory.",
   "tags": [
@@ -22,17 +22,36 @@
     "properties": {
       "path": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Authorized local path as a relative path under the authorized root. Do not invent or pass absolute local paths.",
+        "examples": [
+          "docs/example.md"
+        ]
       },
       "scopeRoot": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Optional authorized root override. Omit or pass \".\" to use the current authorized root.",
+        "examples": [
+          "."
+        ]
       },
       "expectedChecksum": {
         "type": "string",
-        "pattern": "^[a-f0-9]{64}$"
+        "pattern": "^[a-f0-9]{64}$",
+        "description": "SHA-256 checksum of the authorized prior file content.",
+        "examples": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ]
       }
-    }
+    },
+    "examples": [
+      {
+        "path": "docs/example.md",
+        "scopeRoot": ".",
+        "expectedChecksum": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
   },
   "outputSchema": {
     "type": "object",

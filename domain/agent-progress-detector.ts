@@ -6,6 +6,7 @@ import type {
 
 export type AgentProgressStopReason =
   | 'repeated_tool_call'
+  | 'deterministic_tool_failure'
   | 'consecutive_tool_failures'
   | 'capability_unavailable'
 
@@ -14,6 +15,29 @@ type ProgressResult = {
   blocked: boolean
   reason?: AgentProgressStopReason
 }
+
+export type ToolFailureProgressEvidence = {
+  toolName: string
+  errorCode: string
+  targetScope?: string
+  serializedArguments?: string
+  retryable?: boolean
+  category?: string
+}
+
+export type ToolSuccessProgressEvidence = {
+  toolName: string
+  targetScope?: string
+  serializedArguments?: string
+}
+
+const MAX_TRACKED_FINGERPRINTS = 32
+const DETERMINISTIC_FAILURE_CATEGORIES = new Set([
+  'invalid_input',
+  'unavailable',
+  'scope',
+  'conflict'
+])
 
 export function canonicalToolCallFingerprint(
   toolName: string,
@@ -37,14 +61,15 @@ export function recordToolRequest(
   fingerprint: string,
   policy: AgentExecutionPolicy
 ): ProgressResult {
-  const previousCount =
-    Object.keys(ledger.repeatedCallFingerprints).length === 1
-      ? ledger.repeatedCallFingerprints[fingerprint] ?? 0
-      : 0
+  const previousCount = ledger.repeatedCallFingerprints[fingerprint] ?? 0
   const count = previousCount + 1
   const next = cloneLedger(ledger, {
     toolRequests: ledger.toolRequests + 1,
-    repeatedCallFingerprints: { [fingerprint]: count }
+    repeatedCallFingerprints: bumpFingerprint(
+      ledger.repeatedCallFingerprints,
+      fingerprint,
+      count
+    )
   })
   return count >= policy.maxRepeatedEquivalentCalls
     ? { ledger: next, blocked: true, reason: 'repeated_tool_call' }
@@ -53,13 +78,37 @@ export function recordToolRequest(
 
 export function recordConsecutiveToolFailure(
   ledger: RunBudgetLedger,
-  policy: AgentExecutionPolicy
+  policy: AgentExecutionPolicy,
+  failure?: ToolFailureProgressEvidence
 ): ProgressResult {
   const consecutiveFailures = ledger.consecutiveFailures + 1
+  let deterministicFailureFingerprints =
+    ledger.deterministicFailureFingerprints
+  let deterministicCount = 0
+  if (failure && isDeterministicFailure(failure)) {
+    const fingerprint = deterministicFailureFingerprint(failure)
+    deterministicCount =
+      (ledger.deterministicFailureFingerprints[fingerprint] ?? 0) + 1
+    deterministicFailureFingerprints = bumpFingerprint(
+      ledger.deterministicFailureFingerprints,
+      fingerprint,
+      deterministicCount
+    )
+  }
   const next = cloneLedger(ledger, {
     toolExecutions: ledger.toolExecutions + 1,
-    consecutiveFailures
+    consecutiveFailures,
+    deterministicFailureFingerprints
   })
+  if (
+    deterministicCount >= policy.maxRepeatedDeterministicFailures
+  ) {
+    return {
+      ledger: next,
+      blocked: true,
+      reason: 'deterministic_tool_failure'
+    }
+  }
   return consecutiveFailures >= policy.maxConsecutiveFailures
     ? {
         ledger: next,
@@ -70,11 +119,19 @@ export function recordConsecutiveToolFailure(
 }
 
 export function recordSuccessfulToolExecution(
-  ledger: RunBudgetLedger
+  ledger: RunBudgetLedger,
+  success?: ToolSuccessProgressEvidence
 ): RunBudgetLedger {
+  const deterministicFailureFingerprints = success
+    ? clearMatchingDeterministicFailures(
+        ledger.deterministicFailureFingerprints,
+        success
+      )
+    : ledger.deterministicFailureFingerprints
   return cloneLedger(ledger, {
     toolExecutions: ledger.toolExecutions + 1,
-    consecutiveFailures: 0
+    consecutiveFailures: 0,
+    deterministicFailureFingerprints
   })
 }
 
@@ -87,8 +144,104 @@ function cloneLedger(
     repeatedCallFingerprints: {
       ...ledger.repeatedCallFingerprints
     },
+    deterministicFailureFingerprints: {
+      ...ledger.deterministicFailureFingerprints
+    },
     ...patch
   }
+}
+
+function isDeterministicFailure(failure: ToolFailureProgressEvidence): boolean {
+  const category = failure.category?.trim()
+  if (failure.retryable === true || category === 'transient') {
+    return false
+  }
+  if (category && DETERMINISTIC_FAILURE_CATEGORIES.has(category)) {
+    return true
+  }
+  return /(?:arguments?_invalid|input_invalid|schema_invalid|not_repository|outside_scope|scope_mismatch|unavailable|dependency_unavailable|credential_unavailable|permission_denied|policy_denied|definition_unavailable|tool_not_found|effects_unresolved)$/.test(
+    failure.errorCode.trim()
+  )
+}
+
+function deterministicFailureFingerprint(
+  failure: ToolFailureProgressEvidence
+): string {
+  const root = deterministicFailureRoot({
+    toolName: failure.toolName,
+    targetScope: failure.targetScope,
+    serializedArguments: failure.serializedArguments
+  })
+  const error = digest(failure.errorCode.trim().toLowerCase())
+  return `${root}:${error}`
+}
+
+function clearMatchingDeterministicFailures(
+  fingerprints: Record<string, number>,
+  success: ToolSuccessProgressEvidence
+): Record<string, number> {
+  const root = deterministicFailureRoot(success)
+  return Object.fromEntries(
+    Object.entries(fingerprints).filter(([fingerprint]) =>
+      !fingerprint.startsWith(`${root}:`)
+    )
+  )
+}
+
+function deterministicFailureRoot(input: {
+  toolName: string
+  targetScope?: string
+  serializedArguments?: string
+}): string {
+  return digest(
+    [
+      input.toolName.trim(),
+      input.targetScope?.trim() ?? '',
+      argumentShape(input.serializedArguments)
+    ].join('\n')
+  )
+}
+
+function argumentShape(serializedArguments: string | undefined): string {
+  if (!serializedArguments?.trim()) return 'undefined'
+  try {
+    return shapeOf(JSON.parse(serializedArguments))
+  } catch {
+    return 'invalid-json'
+  }
+}
+
+function shapeOf(value: unknown): string {
+  if (Array.isArray(value)) {
+    const itemShapes = [...new Set(value.map(shapeOf))].sort()
+    return `[${itemShapes.join('|')}]`
+  }
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${shapeOf(record[key])}`)
+      .join(',')}}`
+  }
+  return typeof value
+}
+
+function bumpFingerprint(
+  fingerprints: Record<string, number>,
+  fingerprint: string,
+  count: number
+): Record<string, number> {
+  const next: Record<string, number> = {}
+  for (const [key, value] of Object.entries(fingerprints)) {
+    if (key !== fingerprint) next[key] = value
+  }
+  next[fingerprint] = count
+  const entries = Object.entries(next)
+  return Object.fromEntries(entries.slice(-MAX_TRACKED_FINGERPRINTS))
+}
+
+function digest(value: string): string {
+  return createHash('sha256').update(value).digest('hex')
 }
 
 function canonicalJson(value: unknown): string {

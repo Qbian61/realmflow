@@ -18,29 +18,53 @@
     "properties": {
       "sessionId": {
         "type": "string",
-        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$",
+        "description": "Stable local editing or browser session ID returned by an inspect/create tool.",
+        "examples": [
+          "12345678-1234-4234-9234-123456789abc"
+        ]
       },
       "expectedRevision": {
         "type": "integer",
-        "minimum": 0
+        "minimum": 0,
+        "description": "Expected revision used for optimistic concurrency control. Copy this value from the latest RealmFlow UI/API state; do not invent it.",
+        "examples": [
+          1
+        ]
       },
       "pageNumber": {
         "type": "integer",
         "minimum": 1,
-        "maximum": 100000
+        "maximum": 100000,
+        "description": "One-based page number.",
+        "examples": [
+          1
+        ]
       },
       "text": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 2000
+        "maxLength": 2000,
+        "description": "Text content used by the requested operation.",
+        "examples": [
+          "Example text."
+        ]
       },
       "x": {
         "type": "number",
-        "minimum": 0
+        "minimum": 0,
+        "description": "Horizontal screen coordinate.",
+        "examples": [
+          120
+        ]
       },
       "y": {
         "type": "number",
-        "minimum": 0
+        "minimum": 0,
+        "description": "Vertical screen coordinate.",
+        "examples": [
+          160
+        ]
       }
     },
     "required": [
@@ -50,6 +74,16 @@
       "text",
       "x",
       "y"
+    ],
+    "examples": [
+      {
+        "sessionId": "12345678-1234-4234-9234-123456789abc",
+        "expectedRevision": 1,
+        "pageNumber": 1,
+        "text": "Example text.",
+        "x": 120,
+        "y": 160
+      }
     ]
   },
   "outputSchema": {

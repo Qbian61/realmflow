@@ -23,15 +23,27 @@
     "properties": {
       "outputPath": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Authorized new output path as a relative path under the authorized root; it must not overwrite existing content. Do not invent or pass absolute local paths.",
+        "examples": [
+          "exports/result.pdf"
+        ]
       },
       "expectedAbsent": {
         "type": "boolean",
-        "const": true
+        "const": true,
+        "description": "Must be true to confirm the target path does not already exist.",
+        "examples": [
+          true
+        ]
       },
       "scopeRoot": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Optional authorized root override. Omit or pass \".\" to use the current authorized root.",
+        "examples": [
+          "."
+        ]
       },
       "document": {
         "type": "object",
@@ -44,7 +56,11 @@
           "title": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 1000
+            "maxLength": 1000,
+            "description": "User-visible title.",
+            "examples": [
+              "Quarterly update"
+            ]
           },
           "blocks": {
             "type": "array",
@@ -62,19 +78,38 @@
                   ],
                   "properties": {
                     "kind": {
-                      "const": "heading"
+                      "const": "heading",
+                      "description": "Discriminator selecting the schema variant for this object.",
+                      "examples": [
+                        "heading"
+                      ]
                     },
                     "level": {
                       "type": "integer",
                       "minimum": 1,
-                      "maximum": 9
+                      "maximum": 9,
+                      "description": "Heading level for a structured document heading block.",
+                      "examples": [
+                        1
+                      ]
                     },
                     "text": {
                       "type": "string",
                       "minLength": 1,
-                      "maxLength": 100000
+                      "maxLength": 100000,
+                      "description": "Text content used by the requested operation.",
+                      "examples": [
+                        "Example text."
+                      ]
                     }
-                  }
+                  },
+                  "examples": [
+                    {
+                      "kind": "heading",
+                      "level": 1,
+                      "text": "Example text."
+                    }
+                  ]
                 },
                 {
                   "type": "object",
@@ -85,14 +120,28 @@
                   ],
                   "properties": {
                     "kind": {
-                      "const": "paragraph"
+                      "const": "paragraph",
+                      "description": "Discriminator selecting the schema variant for this object.",
+                      "examples": [
+                        "paragraph"
+                      ]
                     },
                     "text": {
                       "type": "string",
                       "minLength": 1,
-                      "maxLength": 100000
+                      "maxLength": 100000,
+                      "description": "Text content used by the requested operation.",
+                      "examples": [
+                        "Example text."
+                      ]
                     }
-                  }
+                  },
+                  "examples": [
+                    {
+                      "kind": "paragraph",
+                      "text": "Example text."
+                    }
+                  ]
                 },
                 {
                   "type": "object",
@@ -103,7 +152,11 @@
                   ],
                   "properties": {
                     "kind": {
-                      "const": "bullet_list"
+                      "const": "bullet_list",
+                      "description": "Discriminator selecting the schema variant for this object.",
+                      "examples": [
+                        "bullet_list"
+                      ]
                     },
                     "items": {
                       "type": "array",
@@ -112,10 +165,27 @@
                       "items": {
                         "type": "string",
                         "minLength": 1,
-                        "maxLength": 100000
-                      }
+                        "maxLength": 100000,
+                        "examples": [
+                          "example"
+                        ]
+                      },
+                      "description": "Ordered list item text values for a bullet list block.",
+                      "examples": [
+                        [
+                          "example"
+                        ]
+                      ]
                     }
-                  }
+                  },
+                  "examples": [
+                    {
+                      "kind": "bullet_list",
+                      "items": [
+                        "example"
+                      ]
+                    }
+                  ]
                 },
                 {
                   "type": "object",
@@ -126,7 +196,11 @@
                   ],
                   "properties": {
                     "kind": {
-                      "const": "table"
+                      "const": "table",
+                      "description": "Discriminator selecting the schema variant for this object.",
+                      "examples": [
+                        "table"
+                      ]
                     },
                     "rows": {
                       "type": "array",
@@ -138,18 +212,99 @@
                         "maxItems": 100,
                         "items": {
                           "type": "string",
-                          "maxLength": 100000
-                        }
-                      }
+                          "maxLength": 100000,
+                          "examples": [
+                            [
+                              [
+                                "Name",
+                                "Value"
+                              ]
+                            ]
+                          ]
+                        },
+                        "examples": [
+                          [
+                            [
+                              "Name",
+                              "Value"
+                            ]
+                          ]
+                        ]
+                      },
+                      "description": "Two-dimensional table rows written into a document, slide, or sheet.",
+                      "examples": [
+                        [
+                          [
+                            "Name",
+                            "Value"
+                          ]
+                        ]
+                      ]
                     }
-                  }
+                  },
+                  "examples": [
+                    {
+                      "kind": "table",
+                      "rows": [
+                        [
+                          "Name",
+                          "Value"
+                        ]
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "examples": [
+                {
+                  "kind": "heading",
+                  "level": 1,
+                  "text": "Example text."
                 }
               ]
-            }
+            },
+            "description": "Ordered structured document blocks used to build or inspect the document.",
+            "examples": [
+              [
+                {
+                  "kind": "heading",
+                  "level": 1,
+                  "text": "Example text."
+                }
+              ]
+            ]
           }
+        },
+        "description": "Structured document payload used to create a DOCX, including the title and ordered content blocks.",
+        "examples": [
+          {
+            "title": "Project brief",
+            "blocks": [
+              {
+                "kind": "paragraph",
+                "text": "Summary"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "examples": [
+      {
+        "outputPath": "exports/result.pdf",
+        "expectedAbsent": true,
+        "scopeRoot": ".",
+        "document": {
+          "title": "Project brief",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "Summary"
+            }
+          ]
         }
       }
-    }
+    ]
   },
   "outputSchema": {
     "type": "object",

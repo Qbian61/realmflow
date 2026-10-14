@@ -4,7 +4,7 @@ import {
   McpDiscoveryService,
   type SyntheticMcpCatalog
 } from './mcp-discovery-service'
-import type { McpClientConnection } from './mcp-tool-adapter'
+import type { McpClientConnection, McpRemoteTool } from './mcp-tool-adapter'
 
 describe('McpDiscoveryService', () => {
   it('maps tools/list to a deterministic synthetic package and publishes it', async () => {
@@ -96,21 +96,71 @@ describe('McpDiscoveryService', () => {
       service.discoverAndPublish(enabled, 'duplicate-import')
     ).rejects.toThrow('MCP tools/list contains duplicate names')
   })
+
+  it('rejects remote input schemas without field descriptions before publishing', async () => {
+    const publish = vi.fn<
+      (catalog: SyntheticMcpCatalog, idempotencyKey: string) => Promise<void>
+    >().mockResolvedValue(undefined)
+    const connection = createConnection([
+      {
+        name: 'search',
+        description: 'Search',
+        inputSchema: {
+          type: 'object',
+          description: 'Search input.',
+          additionalProperties: false,
+          required: ['query'],
+          properties: { query: { type: 'string' } }
+        }
+      }
+    ])
+    const service = new McpDiscoveryService({
+      clients: { connect: vi.fn().mockResolvedValue(connection) },
+      publisher: { publish }
+    })
+    const server = normalizeMcpServerConfiguration({
+      id: 'local-search',
+      name: 'Local Search',
+      enabled: true,
+      transport: {
+        kind: 'stdio',
+        command: '/usr/bin/node',
+        arguments: [],
+        environmentCredentialIds: {}
+      }
+    })
+
+    await expect(
+      service.discoverAndPublish(server, 'invalid-schema-import')
+    ).rejects.toThrow(
+      'MCP Tool search input schema.properties.query.description is required'
+    )
+    expect(publish).not.toHaveBeenCalled()
+    expect(connection.close).toHaveBeenCalledOnce()
+  })
 })
 
-function tool(name: string, description: string) {
+function tool(name: string, description: string): McpRemoteTool {
   return {
     name,
     description,
     inputSchema: {
       type: 'object',
-      properties: { query: { type: 'string' } }
+      description: `${description} input.`,
+      additionalProperties: false,
+      required: ['query'],
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Search query sent to the remote MCP server.'
+        }
+      }
     }
   }
 }
 
 function createConnection(
-  tools = [tool('search', 'Search')]
+  tools: McpRemoteTool[] = [tool('search', 'Search')]
 ): McpClientConnection & { close: ReturnType<typeof vi.fn> } {
   return {
     serverIdentity: {

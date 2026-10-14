@@ -9,7 +9,6 @@ import {
   beginNativeDrag,
   finishNativeDrag,
 } from "../../drag/native-drag-feedback";
-import { DragHandle } from "../../drag/DragHandle";
 
 type TaskTableNavigationProps = {
   tables: WorkbenchTaskTableSummary[];
@@ -162,20 +161,10 @@ export function TaskTableNavigation({
             <div className="workbench-task-table-primary">
               <button
                 type="button"
-                className="workbench-task-table-select"
+                className="workbench-task-table-select workbench-navigation-drag-source"
+                draggable
                 onClick={() => onSelect(table.id)}
                 onDoubleClick={() => beginRename(table)}
-              >
-                <span>{table.name}</span>
-              </button>
-            </div>
-          )}
-          {editingId === table.id ? null : (
-            <div className="workbench-task-table-actions">
-              <DragHandle
-                className="workbench-task-drag-handle"
-                name={table.name}
-                draggable
                 onDragStart={(event) => {
                   const row = event.currentTarget.closest<HTMLElement>(
                     ".workbench-task-table-item",
@@ -199,7 +188,13 @@ export function TaskTableNavigation({
                   setDraggedTableId(undefined);
                   setDropTargetTableId(undefined);
                 }}
-              />
+              >
+                <span>{table.name}</span>
+              </button>
+            </div>
+          )}
+          {editingId === table.id ? null : (
+            <div className="workbench-task-table-actions">
               <button
                 ref={copyMenuId === table.id ? copyTriggerRef : undefined}
                 type="button"

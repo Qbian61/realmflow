@@ -117,6 +117,50 @@ describe('ExtensionPackageService', () => {
     await prepared.pending.rollback()
   })
 
+  it('enriches legacy Skill input schemas before applying the upload contract gate', async () => {
+    await rm(sourcePath, { recursive: true })
+    await writeLegacyPythonSkill(sourcePath, {
+      inputSchema: {
+        type: 'object',
+        required: ['topic'],
+        properties: {
+          topic: { type: 'string' },
+          mode: {
+            type: 'string',
+            enum: ['summary', 'detail'],
+          },
+        },
+      },
+    })
+    const service = createService()
+
+    const prepared = await service.prepare(sourcePath)
+
+    expect(prepared.tools[0].inputSchema).toMatchObject({
+      examples: [{ topic: 'example' }],
+      properties: {
+        topic: {
+          description: expect.stringMatching(/Required/i),
+        },
+        mode: {
+          description: expect.stringMatching(/Optional/i),
+        },
+      },
+    })
+    expect(prepared.skills[0].inputSchema).toMatchObject({
+      examples: [{ topic: 'example' }],
+      properties: {
+        topic: {
+          description: expect.stringMatching(/Required/i),
+        },
+        mode: {
+          description: expect.stringMatching(/Optional/i),
+        },
+      },
+    })
+    await prepared.pending.rollback()
+  })
+
   it('rejects unsafe manifests and removes the staging directory', async () => {
     await writeFile(
       join(sourcePath, 'extension.json'),
@@ -145,6 +189,30 @@ describe('ExtensionPackageService', () => {
     await expect(
       createService({ maxFiles: 2 }).prepare(sourcePath),
     ).rejects.toThrow('Extension package contains too many files')
+  })
+
+  it('rejects local upload Skill inputs whose optional fields omit usage guidance', async () => {
+    const skill = skillDefinitionSource() as ReturnType<
+      typeof skillDefinitionSource
+    > & { examples: Array<Record<string, unknown>> }
+    ;(skill.inputSchema.properties as Record<string, unknown>).context = {
+      type: 'string',
+      description: 'Extra planning context.',
+    }
+    skill.examples = [
+      {
+        requirement: 'Design a local-first workflow.',
+        context: 'Use existing architecture.',
+      },
+    ]
+    await writeFile(
+      join(sourcePath, 'skills', 'planning.json'),
+      JSON.stringify(skill, null, 2),
+    )
+
+    await expect(createService().prepare(sourcePath)).rejects.toThrow(
+      'Skill com.example.planning.create input schema.properties.context.description must explain when to provide or omit the optional field',
+    )
   })
 
   it('rejects an executable Skill whose fixed entry is missing', async () => {
@@ -285,8 +353,31 @@ function skillDefinitionSource() {
     description: 'Create an implementation plan.',
     instructionsPath: 'instructions/plan.md',
     runtime: { kind: 'instruction' },
-    inputSchema: { type: 'object' },
-    outputSchema: { type: 'object' },
+    inputSchema: {
+      type: 'object',
+      description: 'Planning Skill input.',
+      additionalProperties: false,
+      required: ['requirement'],
+      properties: {
+        requirement: {
+          type: 'string',
+          description: 'Required. Requirement to turn into a plan.',
+        },
+      },
+    },
+    outputSchema: {
+      type: 'object',
+      description: 'Planning Skill output.',
+      additionalProperties: false,
+      required: ['plan'],
+      properties: {
+        plan: {
+          type: 'string',
+          description: 'Grounded implementation plan.',
+        },
+      },
+    },
+    examples: [{ requirement: 'Design a local-first workflow.' }],
     requiredTools: [],
     activation: {
       intents: ['create implementation plan'],
@@ -299,7 +390,10 @@ function skillDefinitionSource() {
   }
 }
 
-async function writeLegacyPythonSkill(path: string): Promise<void> {
+async function writeLegacyPythonSkill(
+  path: string,
+  overrides: Record<string, unknown> = {},
+): Promise<void> {
   await mkdir(path, { recursive: true })
   await writeFile(
     join(path, 'skill.json'),
@@ -319,6 +413,7 @@ async function writeLegacyPythonSkill(path: string): Promise<void> {
         maxMemoryMb: 256,
         maxOutputBytes: 1_048_576,
       },
+      ...overrides,
     }),
   )
   await writeFile(join(path, 'main.py'), 'print("legacy")\n')

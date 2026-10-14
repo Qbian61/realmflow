@@ -306,8 +306,9 @@ function catalogSkillDefinition() {
     description: 'Summarize one file.',
     instructionsPath: 'skills/summarize.md',
     runtime: { kind: 'instruction' },
-    inputSchema: { type: 'object' },
-    outputSchema: { type: 'object' },
+    inputSchema: emptyContractSchema('Summarization request.'),
+    outputSchema: emptyContractSchema('Summarization result.'),
+    examples: [{}],
     requiredTools: [
       {
         toolId: 'builtin.files.read',
@@ -323,6 +324,14 @@ function catalogSkillDefinition() {
       maxToolCalls: 4,
       timeoutMs: 60_000
     }
+  }
+}
+
+function emptyContractSchema(description: string) {
+  return {
+    type: 'object',
+    description,
+    additionalProperties: false,
   }
 }
 

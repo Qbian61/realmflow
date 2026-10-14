@@ -1285,13 +1285,15 @@ def test_run_service_emits_bounded_rate_limit_retry_guidance():
         async def failing_stream(_request):
             if False:
                 yield ProviderDelta("")
-            raise providers.ProviderExecutionError(
+            error = providers.ProviderExecutionError(
                 error_code="provider_rate_limited",
                 duration_ms=50,
                 retry_count=1,
                 retryable=True,
                 retry_after_ms=45_000,
             )
+            error.remaining_attempts = 0
+            raise error
 
         service._stream_provider = failing_stream
         run_id = await service.create(RUN_INPUT)
@@ -1313,6 +1315,7 @@ def test_run_service_emits_bounded_rate_limit_retry_guidance():
     assert events[-1]["data"]["errorCode"] == "provider_rate_limited"
     assert events[-1]["data"]["retryable"] is True
     assert events[-1]["data"]["retryAfterMs"] == 30_000
+    assert events[-1]["data"].get("remainingAttempts") == 0
 
 
 def test_run_service_emits_quota_recovery_guidance():

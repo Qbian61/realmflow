@@ -94,6 +94,7 @@ const CAPABILITIES = new Set<ToolCapability>([
   'filesystem.read',
   'filesystem.write',
   'filesystem.delete',
+  'process.inspect',
   'process.discover',
   'process.execute',
   'process.manage',

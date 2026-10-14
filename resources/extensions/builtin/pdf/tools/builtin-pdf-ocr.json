@@ -18,32 +18,61 @@
     "properties": {
       "sessionId": {
         "type": "string",
-        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$",
+        "description": "Stable local editing or browser session ID returned by an inspect/create tool.",
+        "examples": [
+          "12345678-1234-4234-9234-123456789abc"
+        ]
       },
       "expectedRevision": {
         "type": "integer",
-        "minimum": 0
+        "minimum": 0,
+        "description": "Expected revision used for optimistic concurrency control. Copy this value from the latest RealmFlow UI/API state; do not invent it.",
+        "examples": [
+          1
+        ]
       },
       "pageNumber": {
         "type": "integer",
         "minimum": 1,
-        "maximum": 100000
+        "maximum": 100000,
+        "description": "One-based page number.",
+        "examples": [
+          1
+        ]
       },
       "maxDimension": {
         "type": "integer",
         "minimum": 64,
-        "maximum": 2048
+        "maximum": 2048,
+        "description": "Maximum rendered image dimension in pixels.",
+        "examples": [
+          1024
+        ]
       },
       "language": {
         "type": "string",
         "minLength": 2,
         "maxLength": 32,
-        "pattern": "^[A-Za-z0-9_-]+$"
+        "pattern": "^[A-Za-z0-9_-]+$",
+        "description": "Language or locale code used by OCR, search, or content processing.",
+        "examples": [
+          "eng"
+        ]
       }
     },
     "required": [
       "sessionId",
       "pageNumber"
+    ],
+    "examples": [
+      {
+        "sessionId": "12345678-1234-4234-9234-123456789abc",
+        "expectedRevision": 1,
+        "pageNumber": 1,
+        "maxDimension": 1024,
+        "language": "eng"
+      }
     ]
   },
   "outputSchema": {

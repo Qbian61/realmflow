@@ -15,7 +15,10 @@
   "inputSchema": {
     "type": "object",
     "additionalProperties": false,
-    "properties": {}
+    "properties": {},
+    "examples": [
+      {}
+    ]
   },
   "outputSchema": {
     "type": "object",

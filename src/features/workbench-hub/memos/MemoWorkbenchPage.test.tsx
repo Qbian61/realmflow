@@ -34,6 +34,18 @@ const TestEditor: ComponentType<MemoEditorSurfaceProps> = ({
 )
 
 describe('MemoWorkbenchPage', () => {
+  it('shows the shared empty navigation hint and a blank detail area', async () => {
+    renderPage(
+      createMemoApi({ getMemos: vi.fn().mockResolvedValue([]) })
+    )
+
+    expect(
+      await screen.findByText('下方 + 新建')
+    ).toHaveClass('workbench-navigation-empty')
+    expect(screen.getByRole('region', { name: '工具内容' }))
+      .toHaveTextContent(/^$/)
+  })
+
   it('retries a failed memo load through the shared alert', async () => {
     const retry = deferred<WorkbenchMemo[]>()
     const api = createMemoApi({
@@ -86,7 +98,7 @@ describe('MemoWorkbenchPage', () => {
       )
   })
 
-  it('reorders memos from a hover drag handle', async () => {
+  it('reorders memos by dragging their names', async () => {
     const items = [
       memo('memo-1', '计划', ''),
       { ...memo('memo-2', '记录', ''), position: 20 }
@@ -99,10 +111,12 @@ describe('MemoWorkbenchPage', () => {
       })
     })
     renderPage(api)
-    const source = await screen.findByLabelText('拖拽排序 记录')
+    const source = await screen.findByRole('button', { name: /^记录 / })
     const target = screen.getByRole('button', { name: /^计划 / })
       .closest('.workbench-navigation-item')!
 
+    expect(source).toHaveAttribute('draggable', 'true')
+    expect(screen.queryByLabelText('拖拽排序 记录')).toBeNull()
     fireEvent.dragStart(source)
     fireEvent.dragOver(target)
     fireEvent.drop(target)
@@ -118,7 +132,7 @@ describe('MemoWorkbenchPage', () => {
     )
   })
 
-  it('does not open a reorder menu when the drag handle is clicked', async () => {
+  it('keeps the memo delete action separate from name dragging', async () => {
     const items = [
       memo('memo-1', '计划', ''),
       { ...memo('memo-2', '记录', ''), position: 20 }
@@ -131,12 +145,12 @@ describe('MemoWorkbenchPage', () => {
       })
     })
     renderPage(api)
-    const handle = await screen.findByLabelText('拖拽排序 计划')
+    const name = await screen.findByRole('button', { name: /^计划 / })
 
-    fireEvent.click(handle)
+    fireEvent.click(name)
 
-    expect(handle.tagName).toBe('SPAN')
-    expect(screen.queryByRole('menu')).toBeNull()
+    expect(name).toHaveAttribute('draggable', 'true')
+    expect(screen.queryByLabelText('拖拽排序 计划')).toBeNull()
     expect(api.updateMemo).not.toHaveBeenCalled()
   })
 

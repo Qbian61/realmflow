@@ -1,6 +1,12 @@
 import type { SchedulePlanner } from '../schedules/cron-schedule-planner'
 
 const MAX_TIMER_DELAY = 2_147_483_647
+const IDLE_REFRESH_POLL_DELAY = 60_000
+
+type ClaimRefreshRunResult = {
+  status: 'claimed' | 'replayed' | 'blocked'
+  run: { id: string }
+}
 
 type RefreshSchedulerStore = {
   listEnabledPolicies(): Promise<
@@ -53,12 +59,12 @@ type RefreshSchedulerStore = {
     scheduledFor: number
     nextDueAt: number
     at: number
-  }): Promise<{ run: { id: string } }>
+  }): Promise<ClaimRefreshRunResult>
   claimRetry(input: {
     runId: string
     expectedNextAttemptAt: number
     at: number
-  }): Promise<{ run: { id: string } }>
+  }): Promise<ClaimRefreshRunResult>
 }
 
 type KnowledgeRefreshSchedulerDependencies = {
@@ -150,7 +156,15 @@ export class KnowledgeRefreshScheduler {
   private async armNext(generation: number): Promise<void> {
     if (!this.isCurrent(generation)) return
     const wakeup = await this.dependencies.store.getNextWakeup()
-    if (!wakeup || !this.isCurrent(generation)) return
+    if (!this.isCurrent(generation)) return
+    if (!wakeup) {
+      this.timer = this.setTimer(() => {
+        if (!this.isCurrent(generation)) return
+        this.timer = undefined
+        void this.enqueueRefresh(true)
+      }, IDLE_REFRESH_POLL_DELAY)
+      return
+    }
     const delay = Math.max(0, wakeup.nextDueAt - this.now())
     this.timer = this.setTimer(() => {
       void this.handleWakeup(generation, wakeup)
@@ -174,6 +188,10 @@ export class KnowledgeRefreshScheduler {
               at: this.now()
             })
           : await this.claimPolicyWakeup(wakeup)
+      if (claimed.status === 'blocked') {
+        await this.armNext(generation)
+        return
+      }
       await this.armNext(generation)
       void this.dependencies
         .execute(claimed.run.id)
@@ -189,7 +207,7 @@ export class KnowledgeRefreshScheduler {
     sourceId: string
     policyRevision: number
     nextDueAt: number
-  }): Promise<{ run: { id: string } }> {
+  }): Promise<ClaimRefreshRunResult> {
     const policy = await this.dependencies.store.getPolicy(wakeup.sourceId)
     if (
       !policy?.enabled ||

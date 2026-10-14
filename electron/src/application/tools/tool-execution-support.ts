@@ -10,6 +10,15 @@ import type {
   ToolExecutionRecord
 } from './tool-execution-application-service'
 
+const TOOL_ERROR_CATEGORIES = new Set([
+  'transient',
+  'invalid_input',
+  'unavailable',
+  'scope',
+  'conflict',
+  'internal'
+])
+
 export function toolRuntimeContext(
   command: ToolExecutionCommand,
   causationId: string
@@ -82,6 +91,23 @@ export function toolExecutionRecord(
     error && typeof error.message === 'string'
       ? error.message
       : 'Tool execution failed'
+  const retryable =
+    error && typeof error.retryable === 'boolean'
+      ? error.retryable
+      : false
+  const publicMessage =
+    error && typeof error.publicMessage === 'string'
+      ? error.publicMessage
+      : undefined
+  const category = toolErrorCategory(error?.category)
+  const recoveryHint =
+    error && typeof error.recoveryHint === 'string'
+      ? error.recoveryHint
+      : undefined
+  const diagnosticId =
+    error && typeof error.diagnosticId === 'string'
+      ? error.diagnosticId
+      : undefined
   return {
     id: state.executionId,
     status:
@@ -94,11 +120,31 @@ export function toolExecutionRecord(
     ...(state.output
       ? { output: cloneJsonObject(state.output, 'Tool output') }
       : {}),
-    ...(error ? { error: { code, message } } : {}),
+    ...(error
+      ? {
+          error: {
+            code,
+            message,
+            retryable,
+            ...(publicMessage ? { publicMessage } : {}),
+            ...(category ? { category } : {}),
+            ...(recoveryHint ? { recoveryHint } : {}),
+            ...(diagnosticId ? { diagnosticId } : {})
+          }
+        }
+      : {}),
     ...(state.completedAt === undefined
       ? {}
       : { finishedAt: state.completedAt })
   }
+}
+
+function toolErrorCategory(
+  value: unknown
+): NonNullable<ToolExecutionRecord['error']>['category'] | undefined {
+  return typeof value === 'string' && TOOL_ERROR_CATEGORIES.has(value)
+    ? value as NonNullable<ToolExecutionRecord['error']>['category']
+    : undefined
 }
 
 export function toolExecutionDigest(value: unknown): string {

@@ -1,10 +1,13 @@
 import type {
   DeleteWorkbenchAttachmentCommand,
   PickWorkbenchAttachmentCommand,
+  ReadWorkbenchAttachmentContentQuery,
   WorkbenchAttachment,
   WorkbenchAttachmentMutationResult,
-  WorkbenchAttachmentOwnerType
+  WorkbenchAttachmentOwnerType,
+  WorkbenchExtractedContent
 } from '../../../../shared/workbench-attachments'
+import type { LocalContentExtractionService } from '../content-extraction/local-content-extraction-service'
 
 type AttachmentStore = {
   importFromPath(input: {
@@ -20,6 +23,13 @@ type AttachmentStore = {
   resolveForOpen(attachmentId: string): Promise<string>
   resolveForReveal(attachmentId: string): Promise<string>
   readImageDataUrl(attachmentId: string): Promise<string>
+  readForExtraction(attachmentId: string): Promise<{
+    bytes: Uint8Array
+    fileName: string
+    mimeType: string
+    sourceChecksum: string
+    version: number
+  }>
   softDelete(attachmentId: string): Promise<void>
 }
 
@@ -43,6 +53,7 @@ export class ManageWorkbenchAttachments {
       store: AttachmentStore
       picker: AttachmentPicker
       shell: AttachmentShell
+      contentExtractor: Pick<LocalContentExtractionService, 'extract'>
     }
   ) {}
 
@@ -99,6 +110,38 @@ export class ManageWorkbenchAttachments {
 
   readImage(attachmentId: string): Promise<string> {
     return this.dependencies.store.readImageDataUrl(attachmentId)
+  }
+
+  async readExtracted(
+    query: ReadWorkbenchAttachmentContentQuery
+  ): Promise<WorkbenchExtractedContent> {
+    const source = await this.dependencies.store.readForExtraction(
+      query.attachmentId
+    )
+    const preview = query.purpose === 'preview'
+    const bundle = await this.dependencies.contentExtractor.extract({
+      bytes: source.bytes,
+      fileName: source.fileName,
+      mimeType: source.mimeType,
+      sourceChecksum: source.sourceChecksum,
+      signal: new AbortController().signal,
+      depth: 0,
+      policy: {
+        consumer: 'workbench',
+        allowLocalOcr: true,
+        allowLocalConversion: true,
+        maxCharacters: preview ? 100_000 : 200_000,
+        maxUnits: preview ? 100 : 1_000
+      }
+    })
+    return {
+      format: bundle.format,
+      extractorVersion: bundle.extractorVersion,
+      units: bundle.units.map((unit) => ({
+        ...unit,
+        ...(unit.metadata ? { metadata: { ...unit.metadata } } : {})
+      }))
+    }
   }
 
   async reveal(attachmentId: string): Promise<void> {

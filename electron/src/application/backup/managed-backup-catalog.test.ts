@@ -39,6 +39,13 @@ afterEach(async () => {
 
 describe('ManagedBackupCatalog', () => {
   it('lists only the database, managed manifests and primary formal artifacts', async () => {
+    const extractionCachePath = join(
+      directory,
+      'content-extraction-cache',
+      'cached.json'
+    )
+    await mkdir(join(directory, 'content-extraction-cache'))
+    await writeFile(extractionCachePath, '{"rebuildable":true}')
     const catalog = new ManagedBackupCatalog(
       database,
       new SecurePathService()
@@ -105,6 +112,9 @@ describe('ManagedBackupCatalog', () => {
     )
     expect(result.entries.map((entry) => entry.sourcePath)).not.toContain(
       join(rootPath, 'unregistered.md')
+    )
+    expect(result.entries.map((entry) => entry.sourcePath)).not.toContain(
+      extractionCachePath
     )
   })
 

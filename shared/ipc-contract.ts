@@ -6,6 +6,7 @@ export const IPC_QUERY_CHANNELS = {
   workbenchSystemGet: 'workbench-system:get',
   workbenchAttachmentList: 'workbench-attachment:list',
   workbenchAttachmentReadImage: 'workbench-attachment:read-image',
+  workbenchAttachmentReadExtracted: 'workbench-attachment:read-extracted',
   workbenchSiteSnapshotGet: 'workbench-site:get-snapshot',
   workbenchMemoList: 'workbench-memo:list',
   workbenchMemoDeletedList: 'workbench-memo:list-deleted',

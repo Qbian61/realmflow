@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto'
 import { isAbsolute, posix, win32 } from 'node:path'
+import type { ExtractedContentUnit } from './content-extraction'
 
 export const MAX_REPOSITORY_FILES = 10_000
-export const MAX_REPOSITORY_FILE_BYTES = 1024 * 1024
+export const MAX_REPOSITORY_FILE_BYTES = 5 * 1024 * 1024
 export const MAX_REPOSITORY_TEXT_BYTES = 20 * 1024 * 1024
 
 export type RepositorySourceMode = 'local' | 'remote'
@@ -43,9 +44,32 @@ export type RepositorySource = LocalRepositorySource | RemoteRepositorySource
 
 export type RepositorySnapshotFile = {
   relativePath: string
-  content: string
+  content?: string
   contentChecksum: string
   byteSize: number
+}
+
+export type RepositorySnapshotDocument = {
+  sourcePath: string
+  unitKey: string
+  title: string
+  content: string
+  checksum: string
+  byteSize: number
+  metadata?: ExtractedContentUnit['metadata']
+}
+
+export type RepositorySnapshotSkippedFileReason =
+  | 'file_too_large'
+  | 'binary'
+  | 'invalid_utf8'
+  | 'repository_text_limit_exceeded'
+  | 'file_count_limit_exceeded'
+
+export type RepositorySnapshotSkippedFile = {
+  relativePath: string
+  reason: RepositorySnapshotSkippedFileReason
+  byteSize?: number
 }
 
 export type RepositorySnapshot = {
@@ -58,12 +82,17 @@ export type RepositorySnapshot = {
   fileCount: number
   totalBytes: number
   files: RepositorySnapshotFile[]
+  documents: RepositorySnapshotDocument[]
+  skippedFiles?: RepositorySnapshotSkippedFile[]
   scannedAt: number
 }
 
 export type RemoteRepositoryManifest = {
   revision: string
-  files: Array<{ path: string; content: string }>
+  files: Array<
+    | { path: string; content: string }
+    | { path: string; contentBytes: Uint8Array; mediaType: string }
+  >
 }
 
 type CreateRepositorySourceInput =
@@ -240,20 +269,12 @@ export function parseRemoteRepositoryManifest(input: {
     throw invalidManifest()
   }
   const revision = normalizeRevision(parsed.revision)
-  if (
-    !Array.isArray(parsed.files) ||
-    parsed.files.length > MAX_REPOSITORY_FILES
-  ) {
+  if (!Array.isArray(parsed.files)) {
     throw invalidManifest()
   }
   const paths = new Set<string>()
   const files = parsed.files.map((file) => {
-    if (
-      !isRecord(file) ||
-      !hasExactKeys(file, ['path', 'content']) ||
-      typeof file.path !== 'string' ||
-      typeof file.content !== 'string'
-    ) {
+    if (!isRecord(file) || typeof file.path !== 'string') {
       throw invalidManifest()
     }
     let path: string
@@ -264,9 +285,24 @@ export function parseRemoteRepositoryManifest(input: {
     }
     if (paths.has(path)) throw invalidManifest()
     paths.add(path)
-    const byteSize = new TextEncoder().encode(file.content).byteLength
-    if (byteSize > MAX_REPOSITORY_FILE_BYTES) throw invalidManifest()
-    return { path, content: file.content }
+    if (
+      hasExactKeys(file, ['path', 'content']) &&
+      typeof file.content === 'string'
+    ) {
+      return { path, content: file.content }
+    }
+    if (
+      hasExactKeys(file, ['path', 'contentBase64', 'mediaType']) &&
+      typeof file.contentBase64 === 'string' &&
+      typeof file.mediaType === 'string'
+    ) {
+      return {
+        path,
+        contentBytes: decodeBase64(file.contentBase64),
+        mediaType: normalizeManifestMediaType(file.mediaType)
+      }
+    }
+    throw invalidManifest()
   })
   files.sort((left, right) => left.path.localeCompare(right.path))
   return { revision, files }
@@ -297,6 +333,33 @@ export function createRepositorySnapshotFile(input: {
   }
 }
 
+export function createRepositorySnapshotBinaryFile(input: {
+  relativePath: string
+  content: Uint8Array
+}): RepositorySnapshotFile {
+  const relativePath = normalizeRepositoryPath(input.relativePath)
+  if (input.content.byteLength > MAX_REPOSITORY_FILE_BYTES) {
+    throw new Error('Repository file is too large')
+  }
+  return {
+    relativePath,
+    contentChecksum: checksum(input.content),
+    byteSize: input.content.byteLength
+  }
+}
+
+export function repositorySnapshotDocumentKey(
+  document: Pick<RepositorySnapshotDocument, 'sourcePath' | 'unitKey'>
+): string {
+  const sourcePath = normalizeRepositoryPath(document.sourcePath)
+  if (!document.unitKey) {
+    throw new Error('Repository snapshot document unit key is invalid')
+  }
+  return document.unitKey === 'content'
+    ? sourcePath
+    : `${sourcePath}#${document.unitKey}`
+}
+
 export function createRepositorySnapshot(input: {
   id: string
   sourceId: string
@@ -304,6 +367,8 @@ export function createRepositorySnapshot(input: {
   branch: string
   revisionLabel: string
   files: RepositorySnapshotFile[]
+  documents?: RepositorySnapshotDocument[]
+  skippedFiles?: RepositorySnapshotSkippedFile[]
   scannedAt: number
 }): RepositorySnapshot {
   validateIdentifier(input.id, 'Repository snapshot id')
@@ -321,6 +386,10 @@ export function createRepositorySnapshot(input: {
   const files = [...input.files].sort((left, right) =>
     left.relativePath.localeCompare(right.relativePath)
   )
+  const skippedFiles = [...(input.skippedFiles ?? [])].sort((left, right) =>
+    left.relativePath.localeCompare(right.relativePath)
+  )
+  const documents = [...(input.documents ?? [])]
   let totalBytes = 0
   for (const file of files) {
     normalizeRepositoryPath(file.relativePath)
@@ -329,6 +398,70 @@ export function createRepositorySnapshot(input: {
     }
     paths.add(file.relativePath)
     totalBytes += file.byteSize
+    if (
+      !file.contentChecksum.startsWith('sha256:') ||
+      !Number.isSafeInteger(file.byteSize) ||
+      file.byteSize < 0
+    ) {
+      throw new Error('Repository snapshot file metadata is invalid')
+    }
+    if (
+      file.content !== undefined &&
+      checksum(new TextEncoder().encode(file.content)) !== file.contentChecksum
+    ) {
+      throw new Error('Repository snapshot file checksum is invalid')
+    }
+    if (
+      file.content !== undefined &&
+      !documents.some(({ sourcePath }) => sourcePath === file.relativePath)
+    ) {
+      documents.push({
+        sourcePath: file.relativePath,
+        unitKey: 'content',
+        title: file.relativePath,
+        content: file.content,
+        checksum: file.contentChecksum,
+        byteSize: file.byteSize
+      })
+    }
+  }
+  documents.sort(
+    (left, right) =>
+      left.sourcePath.localeCompare(right.sourcePath) ||
+      left.unitKey.localeCompare(right.unitKey)
+  )
+  const documentKeys = new Set<string>()
+  for (const document of documents) {
+    const sourcePath = normalizeRepositoryPath(document.sourcePath)
+    const key = `${sourcePath}\0${document.unitKey}`
+    if (
+      !paths.has(sourcePath) ||
+      documentKeys.has(key) ||
+      !document.unitKey ||
+      !document.title.trim() ||
+      !document.content.trim() ||
+      !document.checksum.startsWith('sha256:') ||
+      !Number.isSafeInteger(document.byteSize) ||
+      document.byteSize < 0
+    ) {
+      throw new Error('Repository snapshot document metadata is invalid')
+    }
+    documentKeys.add(key)
+  }
+  const skippedPaths = new Set<string>()
+  for (const file of skippedFiles) {
+    normalizeRepositoryPath(file.relativePath)
+    if (paths.has(file.relativePath) || skippedPaths.has(file.relativePath)) {
+      throw new Error('Repository snapshot paths must be unique')
+    }
+    skippedPaths.add(file.relativePath)
+    if (
+      !REPOSITORY_SNAPSHOT_SKIPPED_REASONS.has(file.reason) ||
+      (file.byteSize !== undefined &&
+        (!Number.isSafeInteger(file.byteSize) || file.byteSize < 0))
+    ) {
+      throw new Error('Repository skipped file metadata is invalid')
+    }
   }
   if (totalBytes > MAX_REPOSITORY_TEXT_BYTES) {
     throw new Error('Repository text exceeds the size limit')
@@ -336,11 +469,37 @@ export function createRepositorySnapshot(input: {
   const manifestChecksum = checksum(
     new TextEncoder().encode(
       JSON.stringify(
-        files.map(({ relativePath, contentChecksum, byteSize }) => ({
-          relativePath,
-          contentChecksum,
-          byteSize
-        }))
+        {
+          files: files.map(({ relativePath, contentChecksum, byteSize }) => ({
+            relativePath,
+            contentChecksum,
+            byteSize
+          })),
+          documents: documents.map(
+            ({
+              sourcePath,
+              unitKey,
+              title,
+              checksum: documentChecksum,
+              byteSize,
+              metadata
+            }) => ({
+              sourcePath,
+              unitKey,
+              title,
+              checksum: documentChecksum,
+              byteSize,
+              ...(metadata ? { metadata } : {})
+            })
+          ),
+          skippedFiles: skippedFiles.map(
+            ({ relativePath, reason, byteSize }) => ({
+              relativePath,
+              reason,
+              ...(byteSize === undefined ? {} : { byteSize })
+            })
+          )
+        }
       )
     )
   )
@@ -354,9 +513,20 @@ export function createRepositorySnapshot(input: {
     fileCount: files.length,
     totalBytes,
     files,
+    documents,
+    skippedFiles,
     scannedAt: input.scannedAt
   }
 }
+
+const REPOSITORY_SNAPSHOT_SKIPPED_REASONS =
+  new Set<RepositorySnapshotSkippedFileReason>([
+    'file_too_large',
+    'binary',
+    'invalid_utf8',
+    'repository_text_limit_exceeded',
+    'file_count_limit_exceeded'
+  ])
 
 function normalizeConnectorPath(value: string): string {
   const path = value.trim()
@@ -371,6 +541,29 @@ function normalizeConnectorPath(value: string): string {
     throw new Error('Remote repository path is invalid')
   }
   return path
+}
+
+function decodeBase64(value: string): Uint8Array {
+  if (
+    !value ||
+    value.length % 4 !== 0 ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+      value
+    )
+  ) {
+    throw invalidManifest()
+  }
+  const bytes = Buffer.from(value, 'base64')
+  if (bytes.toString('base64') !== value) throw invalidManifest()
+  return Uint8Array.from(bytes)
+}
+
+function normalizeManifestMediaType(value: string): string {
+  const mediaType = value.split(';', 1)[0]?.trim().toLowerCase() ?? ''
+  if (!/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/.test(mediaType)) {
+    throw invalidManifest()
+  }
+  return mediaType
 }
 
 function normalizeRevision(value: unknown): string {

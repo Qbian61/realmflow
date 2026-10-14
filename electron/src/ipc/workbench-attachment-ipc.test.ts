@@ -21,6 +21,10 @@ describe('workbench attachment IPC', () => {
       ...owner
     })
     await api.workbenchHub.attachments.readImage('attachment-1')
+    await api.workbenchHub.attachments.readExtracted({
+      attachmentId: 'attachment-1',
+      purpose: 'preview'
+    })
     await api.workbenchHub.attachments.open('attachment-1')
     await api.workbenchHub.attachments.reveal('attachment-1')
     await api.workbenchHub.attachments.delete({
@@ -35,6 +39,10 @@ describe('workbench attachment IPC', () => {
         { requestId: 'request-1', ...owner }
       ],
       [IPC_QUERY_CHANNELS.workbenchAttachmentReadImage, 'attachment-1'],
+      [
+        IPC_QUERY_CHANNELS.workbenchAttachmentReadExtracted,
+        { attachmentId: 'attachment-1', purpose: 'preview' }
+      ],
       [IPC_COMMAND_CHANNELS.workbenchAttachmentOpen, 'attachment-1'],
       [IPC_COMMAND_CHANNELS.workbenchAttachmentReveal, 'attachment-1'],
       [
@@ -50,6 +58,7 @@ describe('workbench attachment IPC', () => {
       list: vi.fn(),
       pickAndAttach: vi.fn(),
       readImage: vi.fn(),
+      readExtracted: vi.fn(),
       open: vi.fn(),
       reveal: vi.fn(),
       delete: vi.fn()

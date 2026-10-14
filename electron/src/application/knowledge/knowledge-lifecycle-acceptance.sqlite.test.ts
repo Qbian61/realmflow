@@ -365,6 +365,9 @@ function createNodeContextAssembler(
     attachments: {
       read: async () => {
         throw new Error('No attachment should be read')
+      },
+      extract: async () => {
+        throw new Error('No attachment should be extracted')
       }
     }
   })

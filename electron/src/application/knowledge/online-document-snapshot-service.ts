@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { CONTENT_EXTRACTION_LIMITS } from '../../../../domain/content-extraction'
 import { createKnowledgeSource } from '../../../../domain/knowledge-source'
 import {
   createOnlineDocumentSnapshot,
@@ -20,6 +21,7 @@ import type {
   OnlineDocumentStore,
   OnlineDocumentSyncResult
 } from './online-document-store'
+import type { LocalContentExtractionService } from '../content-extraction/local-content-extraction-service'
 
 type ConnectorPort = {
   get(id: string): Promise<ConnectorRecord>
@@ -30,6 +32,7 @@ type OnlineDocumentSnapshotServiceDependencies = {
   workspaces: Pick<WorkspaceRepository, 'get'>
   connectors: ConnectorPort
   store: OnlineDocumentStore
+  contentExtractor: Pick<LocalContentExtractionService, 'extract'>
   now?: () => number
   createId?: (kind: 'event' | 'snapshot') => string
 }
@@ -201,19 +204,8 @@ export class OnlineDocumentSnapshotService {
       this.probedResponses.delete(sourceId)
       return { status: 'unchanged', checksum: current.contentChecksum }
     }
-    const candidate = createOnlineDocumentSnapshot({
-      id: this.createId('snapshot'),
-      sourceId,
-      version: current.version + 1,
-      body: response.body,
-      mediaType: response.headers['content-type'] ?? '',
-      ...(response.headers.etag ? { etag: response.headers.etag } : {}),
-      ...(response.headers['last-modified']
-        ? { lastModified: response.headers['last-modified'] }
-        : {}),
-      fetchedAt: this.now()
-    })
-    if (candidate.contentChecksum === current.contentChecksum) {
+    const candidateChecksum = checksum(response.body)
+    if (candidateChecksum === current.contentChecksum) {
       this.probedResponses.delete(sourceId)
       return { status: 'unchanged', checksum: current.contentChecksum }
     }
@@ -269,12 +261,37 @@ export class OnlineDocumentSnapshotService {
 
     let snapshot
     try {
+      const mediaType = response.headers['content-type'] ?? ''
+      const sourceChecksum = checksum(response.body)
+      const bundle = await this.dependencies.contentExtractor.extract({
+        bytes: response.body,
+        fileName: begin.document.path,
+        ...(mediaType ? { mimeType: mediaType } : {}),
+        sourceChecksum,
+        policy: {
+          consumer: 'online_document',
+          allowLocalOcr: true,
+          allowLocalConversion: true,
+          maxCharacters: CONTENT_EXTRACTION_LIMITS.maxExtractedCharacters,
+          maxUnits: CONTENT_EXTRACTION_LIMITS.maxArchiveEntries
+        },
+        signal: new AbortController().signal,
+        depth: 0
+      })
       snapshot = createOnlineDocumentSnapshot({
         id: this.createId('snapshot'),
         sourceId: begin.source.id,
         version: begin.nextVersion,
         body: response.body,
-        mediaType: response.headers['content-type'] ?? '',
+        mediaType,
+        documents: bundle.units.map((unit) => ({
+          unitKey: unit.key,
+          title: unit.title,
+          content: unit.text,
+          checksum: unit.checksum,
+          byteSize: unit.byteSize,
+          ...(unit.metadata ? { metadata: unit.metadata } : {})
+        })),
         ...(response.headers.etag ? { etag: response.headers.etag } : {}),
         ...(response.headers['last-modified']
           ? { lastModified: response.headers['last-modified'] }
@@ -399,4 +416,8 @@ function validateRevision(value: number): void {
 
 function hashCommand(value: object): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex')
+}
+
+function checksum(bytes: Uint8Array): string {
+  return `sha256:${createHash('sha256').update(bytes).digest('hex')}`
 }

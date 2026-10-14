@@ -72,8 +72,8 @@ export const componentSystemGuardAllowlist = [
   baseline(
     "control-size",
     "src/styles.css",
-    46,
-    "4ab06f22e02615b7c06aa8e7ef6df25efb45bdadd683df5be1d0dae3406ee345",
+    38,
+    "be562b9fbc3009772d78673d5bfa7481cddac9aba7f72579916d5bbcede6d069",
   ),
   baseline(
     "error-color-only",
@@ -108,8 +108,8 @@ export const componentSystemGuardAllowlist = [
   baseline(
     "focus-visible",
     "src/styles.css",
-    43,
-    "ae322b400fed0cecdb4369f0ff9ac2db1e2c305261e4e8a8061c26331517d03b",
+    40,
+    "c090dcadd2f88b3b9e7b6afd23b19643908a8c1fc79af696f6b7629ba357f0d2",
   ),
   baseline(
     "named-layer",
@@ -133,7 +133,7 @@ export const componentSystemGuardAllowlist = [
     "named-layer",
     "src/styles.css",
     54,
-    "a2b5c386238b5ed64861ea712237f8aa8e041d7616b1f79f9784c3a3e7ba1412",
+    "0583cbbcc8334944958fc0779e1be515519ca6782f5c3cd474f3defbc69868b4",
   ),
   baseline(
     "primitive-visual-copy",
@@ -156,8 +156,8 @@ export const componentSystemGuardAllowlist = [
   baseline(
     "primitive-visual-copy",
     "src/styles.css",
-    127,
-    "38493614ea482d71775c7bdc6841db996c7bc49e21903aaba1e6d5055b5026f8",
+    126,
+    "528a1df8c84bf13eb82b44ad6603c18f920ec5566c062831a7858bb63c733dbb",
   ),
   baseline(
     "tone-token",

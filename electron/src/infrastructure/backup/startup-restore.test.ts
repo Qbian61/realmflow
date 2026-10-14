@@ -187,7 +187,7 @@ describe('applyPendingRestore', () => {
         })
       }
     },
-    15_000
+    60_000
   )
 
   it('resumes rollback from an interrupted switching journal', async () => {

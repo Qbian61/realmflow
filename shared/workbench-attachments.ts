@@ -37,6 +37,31 @@ export type WorkbenchAttachmentMutationResult = {
   attachmentId: string
 }
 
+export type ReadWorkbenchAttachmentContentQuery = {
+  attachmentId: string
+  purpose: 'preview' | 'ai_context'
+}
+
+export type WorkbenchExtractedContent = {
+  format: string
+  extractorVersion: string
+  units: Array<{
+    key: string
+    title: string
+    text: string
+    checksum: string
+    byteSize: number
+    metadata?: {
+      format: string
+      extraction: string
+      page?: number
+      sheet?: string
+      slide?: number
+      archiveEntry?: string
+    }
+  }>
+}
+
 export interface WorkbenchAttachmentApi {
   list(query: AttachmentOwnerQuery): Promise<WorkbenchAttachment[]>
   pickAndAttach(
@@ -45,6 +70,9 @@ export interface WorkbenchAttachmentApi {
     }
   ): Promise<WorkbenchAttachment | undefined>
   readImage(attachmentId: string): Promise<string>
+  readExtracted(
+    query: ReadWorkbenchAttachmentContentQuery
+  ): Promise<WorkbenchExtractedContent>
   open(attachmentId: string): Promise<void>
   reveal(attachmentId: string): Promise<void>
   delete(
@@ -93,6 +121,19 @@ export function parseAttachmentId(value: unknown): string {
     throw new Error('Invalid attachment command: attachmentId')
   }
   return result
+}
+
+export function parseReadWorkbenchAttachmentContentQuery(
+  value: unknown
+): ReadWorkbenchAttachmentContentQuery {
+  const input = record(value)
+  if (input.purpose !== 'preview' && input.purpose !== 'ai_context') {
+    throw new Error('Invalid attachment command: purpose')
+  }
+  return {
+    attachmentId: parseAttachmentId(input.attachmentId),
+    purpose: input.purpose
+  }
 }
 
 function ownerType(value: unknown): WorkbenchAttachmentOwnerType {

@@ -39,6 +39,41 @@ describe('LegacyOfficeRuntimeCapabilityProvider', () => {
     )
   })
 
+  it('reports PDF generation readiness without enabling legacy PDF by default', async () => {
+    const provider = new LegacyOfficeRuntimeCapabilityProvider({
+      platform: 'linux',
+      environment: { PATH: '/opt/tools' },
+      isExecutable: async (candidate) => candidate === '/opt/tools/soffice'
+    })
+
+    await expect(
+      provider.getPdfGenerationLibreOfficeReadiness()
+    ).resolves.toEqual({
+      libreoffice_docx_pdf: {
+        status: 'ready',
+        reasonCode: 'runtime_ready',
+        quality: 'print'
+      },
+      libreoffice_legacy_pdf: {
+        status: 'unavailable',
+        reasonCode: 'legacy_pdf_disabled',
+        quality: 'print'
+      }
+    })
+    await expect(
+      provider.getPdfGenerationLibreOfficeReadiness({
+        legacyPdfEnabled: true
+      })
+    ).resolves.toMatchObject({
+      libreoffice_legacy_pdf: {
+        status: 'ready',
+        reasonCode: 'runtime_ready',
+        quality: 'print'
+      }
+    })
+  })
+
+
   it('caches discovery until explicitly invalidated', async () => {
     let available = false
     const isExecutable = vi.fn(async () => available)

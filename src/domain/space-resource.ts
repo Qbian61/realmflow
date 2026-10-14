@@ -34,6 +34,21 @@ export type SpaceResource = {
     generationId?: string
     sourceVersion?: string
     indexedAt?: number
+    errorCode?: string
+  }
+  repository?: {
+    sourceId: string
+    workspaceId: string
+    mode: 'local' | 'remote'
+    locator: string
+    selectedBranch?: string
+    currentVersion: number
+    revisionLabel?: string
+    fileCount: number
+    totalBytes: number
+    lastScannedAt?: number
+    createdAt: number
+    updatedAt: number
   }
 }
 

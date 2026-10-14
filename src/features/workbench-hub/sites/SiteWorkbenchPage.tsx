@@ -23,7 +23,6 @@ import {
   beginNativeDrag,
   finishNativeDrag
 } from '../../drag/native-drag-feedback'
-import { DragHandle } from '../../drag/DragHandle'
 import { WorkbenchNavigationItem } from '../WorkbenchNavigationItem'
 import { WorkbenchSplitPage } from '../WorkbenchSplitPage'
 import { SiteDrawer, type SiteDraft } from './SiteDrawer'
@@ -369,6 +368,7 @@ export function SiteWorkbenchPage({
     <WorkbenchSplitPage
       createLabel={t('workbenchSites.createGroup')}
       createIconOnly
+      navigationEmpty={snapshot.groups.length === 0}
       onCreate={() => void createGroup()}
       floatingActionLabel={
         snapshot.groups.length > 0
@@ -405,39 +405,36 @@ export function SiteWorkbenchPage({
                 else groupButtonRefs.current.delete(group.id)
               }}
               type="button"
+              className="workbench-navigation-drag-source"
+              draggable
               aria-label={`${group.name} (${group.siteCount})`}
               onClick={() => setSelectedGroupId(group.id)}
               onDoubleClick={() =>
                 beginGroupRename(group)
               }
+              onDragStart={(event) => {
+                beginNativeDrag(
+                  event,
+                  event.currentTarget.closest(
+                    '.workbench-navigation-item'
+                  )!
+                )
+                setDraggedGroupId(group.id)
+              }}
+              onDragEnd={(event) => {
+                finishNativeDrag(
+                  event.currentTarget.closest<HTMLElement>(
+                    '.workbench-navigation-item'
+                  )
+                )
+                setDraggedGroupId(undefined)
+                setDropTargetGroupId(undefined)
+              }}
             >
               <span>{group.name}</span>
             </button>
           )}
           actions={
-            <>
-              <DragHandle
-                name={group.name}
-                draggable
-                onDragStart={(event) => {
-                  beginNativeDrag(
-                    event,
-                    event.currentTarget.closest(
-                      '.workbench-navigation-item'
-                    )!
-                  )
-                  setDraggedGroupId(group.id)
-                }}
-                onDragEnd={(event) => {
-                  finishNativeDrag(
-                    event.currentTarget.closest<HTMLElement>(
-                      '.workbench-navigation-item'
-                    )
-                  )
-                  setDraggedGroupId(undefined)
-                  setDropTargetGroupId(undefined)
-                }}
-              />
             <IconButton
               className="danger"
               label={t('workbenchSites.deleteGroup', { name: group.name })}
@@ -448,7 +445,6 @@ export function SiteWorkbenchPage({
             >
               <Trash2 size={13} />
             </IconButton>
-            </>
           }
           onDragOver={(event) => {
             event.preventDefault()

@@ -1,4 +1,3 @@
-import { Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { WorkbenchAttachmentApi } from "../../../../shared/workbench-attachments";
 import type {
@@ -12,7 +11,7 @@ import type {
   WorkbenchTaskTableSnapshot,
   WorkbenchTaskTableSummary,
 } from "../../../../shared/workbench-tasks";
-import { EmptyState, InlineAlert } from "../../../components/ui";
+import { InlineAlert } from "../../../components/ui";
 import { useLocalization } from "../../../localization/LocalizationProvider";
 import { WorkbenchSplitPage } from "../WorkbenchSplitPage";
 import { TaskRecordDrawer } from "./TaskRecordDrawer";
@@ -43,7 +42,6 @@ export function TaskWorkbenchPage({
   const {
     tables,
     selectedTableId,
-    selectedTable,
     snapshot,
     loading,
     error,
@@ -420,6 +418,7 @@ export function TaskWorkbenchPage({
   return (
     <>
       <WorkbenchSplitPage
+        navigationEmpty={!loading && tables.length === 0}
         navigation={
           <TaskTableNavigation
             tables={tables}
@@ -503,17 +502,7 @@ getSelectRecordLabel={(record) =>
                 onNextPage={() => void changePage(snapshot.page + 1)}
               />
             </>
-          ) : (
-            <EmptyState
-              className="workbench-task-empty"
-              icon={<Plus size={22} />}
-              title={
-                selectedTable
-                  ? t("workbenchTasks.loading")
-                  : t("workbenchTasks.empty")
-              }
-            />
-          )}
+          ) : null}
         </section>
       </WorkbenchSplitPage>
       {snapshot && recordDrawer && api && attachmentsApi ? (

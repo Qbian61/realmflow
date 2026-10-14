@@ -9,6 +9,13 @@ class WordTokenizer:
         count = len(self.token_offsets(text))
         return count + 2 if count else 0
 
+    def tokenize_with_offsets(
+        self,
+        text: str,
+    ) -> tuple[int, list[tuple[int, int]]]:
+        offsets = self.token_offsets(text)
+        return (len(offsets) + 2 if offsets else 0, offsets)
+
     def token_offsets(self, text: str) -> list[tuple[int, int]]:
         return [match.span() for match in re.finditer(r"\S+", text)]
 

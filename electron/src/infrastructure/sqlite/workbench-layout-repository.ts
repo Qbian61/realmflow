@@ -48,29 +48,41 @@ export class SqliteWorkbenchLayoutRepository
   ): Promise<WorkbenchLayout> {
     const command = parseUpdateWorkbenchLayoutCommand(input)
     const update = this.database.transaction(() => {
-      const result = this.database
+      // #region debug-point B-D:repository-before
+      void fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'workbench-layout-conflict', runId: 'post-fix', hypothesisId: 'B,D', location: 'workbench-layout-repository:update:before', msg: '[DEBUG] Repository executing layout update', data: { requestId: command.requestId, expectedRevision: command.expectedRevision, storedRevision: this.getSync().revision }, ts: Date.now() }) }).catch(() => {})
+      // #endregion
+      const moduleOrderJson = JSON.stringify(command.moduleOrder)
+      const hiddenModulesJson = JSON.stringify(command.hiddenModules)
+      const updatedAt = Date.now()
+      let result = this.database
         .prepare(
-          `INSERT INTO workbench_hub_layout (
-            singleton_id, module_order_json, hidden_modules_json,
-            revision, updated_at
-          )
-          SELECT 1, ?, ?, 1, ?
-          WHERE ? = 0
-          ON CONFLICT(singleton_id) DO UPDATE SET
-            module_order_json = excluded.module_order_json,
-            hidden_modules_json = excluded.hidden_modules_json,
-            revision = workbench_hub_layout.revision + 1,
-            updated_at = excluded.updated_at
-          WHERE workbench_hub_layout.revision = ?`
+          `UPDATE workbench_hub_layout
+           SET module_order_json = ?,
+               hidden_modules_json = ?,
+               revision = revision + 1,
+               updated_at = ?
+           WHERE singleton_id = 1 AND revision = ?`
         )
         .run(
-          JSON.stringify(command.moduleOrder),
-          JSON.stringify(command.hiddenModules),
-          Date.now(),
-          command.expectedRevision,
+          moduleOrderJson,
+          hiddenModulesJson,
+          updatedAt,
           command.expectedRevision
         )
+      if (result.changes === 0 && command.expectedRevision === 0) {
+        result = this.database
+          .prepare(
+            `INSERT OR IGNORE INTO workbench_hub_layout (
+              singleton_id, module_order_json, hidden_modules_json,
+              revision, updated_at
+            ) VALUES (1, ?, ?, 1, ?)`
+          )
+          .run(moduleOrderJson, hiddenModulesJson, updatedAt)
+      }
 
+      // #region debug-point B:repository-result
+      void fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'workbench-layout-conflict', runId: 'post-fix', hypothesisId: 'B', location: 'workbench-layout-repository:update:result', msg: '[DEBUG] Repository layout SQL completed', data: { requestId: command.requestId, expectedRevision: command.expectedRevision, changes: result.changes, storedRevision: this.getSync().revision }, ts: Date.now() }) }).catch(() => {})
+      // #endregion
       if (result.changes !== 1) {
         const current = this.getSync()
         throw new WorkbenchLayoutRevisionConflictError(current)

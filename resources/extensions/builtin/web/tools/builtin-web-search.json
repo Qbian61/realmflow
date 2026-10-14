@@ -22,22 +22,38 @@
       "query": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 500
+        "maxLength": 500,
+        "description": "Search or match query supplied by the user or current task.",
+        "examples": [
+          "release notes"
+        ]
       },
       "limit": {
         "type": "integer",
         "minimum": 1,
-        "maximum": 20
+        "maximum": 20,
+        "description": "Maximum number of bytes or results returned by the operation.",
+        "examples": [
+          1
+        ]
       },
       "language": {
         "type": "string",
         "minLength": 2,
-        "maxLength": 16
+        "maxLength": 16,
+        "description": "Language or locale code used by OCR, search, or content processing.",
+        "examples": [
+          "en"
+        ]
       },
       "locale": {
         "type": "string",
         "minLength": 2,
-        "maxLength": 32
+        "maxLength": 32,
+        "description": "Search locale such as en-US or zh-CN used by the configured web search provider.",
+        "examples": [
+          "example"
+        ]
       },
       "recency": {
         "type": "string",
@@ -47,6 +63,10 @@
           "month",
           "year",
           "any"
+        ],
+        "description": "Optional search freshness filter. Allowed values: day, week, month, year, any.",
+        "examples": [
+          "day"
         ]
       },
       "safeSearch": {
@@ -55,9 +75,23 @@
           "strict",
           "moderate",
           "off"
+        ],
+        "description": "Safe-search preference passed to the configured web search provider. Allowed values: strict, moderate, off.",
+        "examples": [
+          "strict"
         ]
       }
-    }
+    },
+    "examples": [
+      {
+        "query": "release notes",
+        "limit": 1,
+        "language": "en",
+        "locale": "example",
+        "recency": "day",
+        "safeSearch": "strict"
+      }
+    ]
   },
   "outputSchema": {
     "type": "object",

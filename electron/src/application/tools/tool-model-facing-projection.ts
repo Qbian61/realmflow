@@ -12,6 +12,7 @@ import type {
 } from '../../../../domain/tool-definition'
 import { DELEGATION_REQUEST_JSON_SCHEMA } from '../../../../domain/subagent'
 import { RUNTIME_COMMAND_DEFINITIONS } from '../agent-runtime/runtime-command-contract'
+import { compileModelFacingFacadeInputSchema } from './model-tool-contract-compiler'
 
 export type { ToolModelFacingMode } from '../../../../domain/tool-catalog'
 
@@ -852,54 +853,73 @@ export function projectModelFacingToolCatalog(
   catalog: ToolCatalogState,
   mode: ToolModelFacingMode
 ): ToolCatalogState {
+  const modelReadyCatalog = modelFacingReadyCatalog(catalog)
   if (mode === 'direct') {
     return {
-      packages: [...catalog.packages],
-      tools: catalog.tools.map((tool) => annotatePrimitive(tool, mode, 'direct')),
-      skills: [...catalog.skills]
+      packages: [...modelReadyCatalog.packages],
+      tools: modelReadyCatalog.tools.map((tool) =>
+        annotatePrimitive(tool, mode, 'direct')
+      ),
+      skills: [...modelReadyCatalog.skills]
     }
   }
 
   if (mode === 'directory') {
     return {
-      packages: [...catalog.packages],
+      packages: [...modelReadyCatalog.packages],
       tools: [
         ...DIRECTORY_TOOLS.map((tool) => createDirectoryControlTool(tool, mode)),
         ...RUNTIME_TOOLS.map((tool) => createRuntimeControlTool(tool, mode)),
-        ...catalog.tools.map((tool) =>
+        ...modelReadyCatalog.tools.map((tool) =>
           annotatePrimitive(tool, mode,
             tool.definition.discovery.requiresExplicitSelection ||
             ['high', 'critical'].includes(tool.definition.risk) ? 'direct' : 'directory_only')
         )
       ],
-      skills: [...catalog.skills]
+      skills: [...modelReadyCatalog.skills]
     }
   }
 
-  const byId = new Map(catalog.tools.map((tool) => [tool.id, tool]))
+  const byId = new Map(modelReadyCatalog.tools.map((tool) => [tool.id, tool]))
   const primitiveToFacade = new Map<string, string>()
-  const facadeTools = MODEL_FACING_FACADES.map((facade) => {
+  const facadeTools = MODEL_FACING_FACADES.flatMap((facade) => {
     const covered = facade.primitiveToolIds
       .map((id) => byId.get(id))
       .filter((tool): tool is ToolCatalogItem => Boolean(tool))
+    if (covered.length === 0) return []
     for (const tool of covered) primitiveToFacade.set(tool.id, facade.id)
-    return createFacadeTool(facade, covered, mode)
+    return [createFacadeTool(facade, covered, mode)]
   })
 
   return {
-    packages: [...catalog.packages],
+    packages: [...modelReadyCatalog.packages],
     tools: [
       ...RUNTIME_TOOLS.map((tool) => createRuntimeControlTool(tool, mode)),
       ...facadeTools,
-      ...catalog.tools.map((tool) => {
+      ...modelReadyCatalog.tools.map((tool) => {
         const facadeId = primitiveToFacade.get(tool.id)
         return facadeId
           ? annotatePrimitive(tool, mode, 'facade_backed', facadeId)
           : annotatePrimitive(tool, mode, 'direct')
       })
     ],
-    skills: [...catalog.skills]
+    skills: [...modelReadyCatalog.skills]
   }
+}
+
+function modelFacingReadyCatalog(catalog: ToolCatalogState): ToolCatalogState {
+  return {
+    packages: [...catalog.packages],
+    tools: catalog.tools.filter(isModelFacingReadyTool),
+    skills: catalog.skills.filter(({ status }) => status === 'enabled')
+  }
+}
+
+function isModelFacingReadyTool(tool: ToolCatalogItem): boolean {
+  return (
+    tool.status === 'enabled' &&
+    (tool.runtimeEligibility?.status ?? 'ready') === 'ready'
+  )
 }
 
 function createRuntimeControlTool(
@@ -1068,7 +1088,13 @@ function createFacadeTool(
   const maxRisk = maximumRisk(covered)
   const capabilities = mergeCapabilities(covered)
   const effects = [...new Set(covered.flatMap(({ definition }) => definition.effects))].sort()
-  const definition = createFacadeDefinition(facade, capabilities, effects, maxRisk)
+  const definition = createFacadeDefinition(
+    facade,
+    covered,
+    capabilities,
+    effects,
+    maxRisk
+  )
   return {
     kind: 'tool',
     id: facade.id,
@@ -1181,14 +1207,25 @@ function createDirectoryControlToolDefinition(
 
 function createFacadeDefinition(
   facade: FacadeDefinition,
+  covered: ToolCatalogItem[],
   capabilities: ToolCapability[],
   effects: string[],
   risk: ToolRisk
 ): ToolDefinition {
+  const inputSchema = compileModelFacingFacadeInputSchema(
+    Object.entries(MODEL_FACING_FACADE_ACTIONS[facade.id] ?? {})
+      .flatMap(([action, primitiveToolId]) => {
+        const primitive = covered.find(({ id }) => id === primitiveToolId)
+        return primitive
+          ? [{ action, inputSchema: primitive.definition.inputSchema }]
+          : []
+      })
+  )
   const partial = {
     id: facade.id,
     name: facade.name,
     description: facade.description,
+    inputSchema,
     capabilities,
     effects,
     risk
@@ -1215,21 +1252,7 @@ function createFacadeDefinition(
       handler: 'tool.facade',
       handlerVersion: '1.0.0'
     },
-    inputSchema: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['action', 'arguments'],
-      properties: {
-        action: {
-          type: 'string',
-          minLength: 1
-        },
-        arguments: {
-          type: 'object',
-          additionalProperties: true
-        }
-      }
-    },
+    inputSchema,
     outputSchema: {
       type: 'object',
       additionalProperties: true

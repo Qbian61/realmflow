@@ -18,15 +18,27 @@
     "properties": {
       "sessionId": {
         "type": "string",
-        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$",
+        "description": "Stable local editing or browser session ID returned by an inspect/create tool.",
+        "examples": [
+          "12345678-1234-4234-9234-123456789abc"
+        ]
       },
       "expectedRevision": {
         "type": "integer",
-        "minimum": 0
+        "minimum": 0,
+        "description": "Expected revision used for optimistic concurrency control. Copy this value from the latest RealmFlow UI/API state; do not invent it.",
+        "examples": [
+          1
+        ]
       },
       "slideId": {
         "type": "string",
-        "pattern": "^slide-[0-9]+$"
+        "pattern": "^slide-[0-9]+$",
+        "description": "Stable presentation slide ID.",
+        "examples": [
+          "slide-1"
+        ]
       },
       "rows": {
         "type": "array",
@@ -42,9 +54,34 @@
               "number",
               "boolean",
               "null"
+            ],
+            "examples": [
+              [
+                [
+                  "Name",
+                  "Value"
+                ]
+              ]
             ]
-          }
-        }
+          },
+          "examples": [
+            [
+              [
+                "Name",
+                "Value"
+              ]
+            ]
+          ]
+        },
+        "description": "Two-dimensional table rows written into a document, slide, or sheet.",
+        "examples": [
+          [
+            [
+              "Name",
+              "Value"
+            ]
+          ]
+        ]
       },
       "bounds": {
         "type": "object",
@@ -59,24 +96,49 @@
           "leftPt": {
             "type": "number",
             "minimum": 0,
-            "maximum": 2880
+            "maximum": 2880,
+            "description": "Left coordinate in points within the target slide.",
+            "examples": [
+              0
+            ]
           },
           "topPt": {
             "type": "number",
             "minimum": 0,
-            "maximum": 2880
+            "maximum": 2880,
+            "description": "Top coordinate in points within the target slide.",
+            "examples": [
+              0
+            ]
           },
           "widthPt": {
             "type": "number",
             "exclusiveMinimum": 0,
-            "maximum": 2880
+            "maximum": 2880,
+            "description": "Width in points.",
+            "examples": [
+              960
+            ]
           },
           "heightPt": {
             "type": "number",
             "exclusiveMinimum": 0,
-            "maximum": 2880
+            "maximum": 2880,
+            "description": "Height in points.",
+            "examples": [
+              720
+            ]
           }
-        }
+        },
+        "description": "Rectangle position and size in points within the target slide.",
+        "examples": [
+          {
+            "leftPt": 24,
+            "topPt": 24,
+            "widthPt": 320,
+            "heightPt": 180
+          }
+        ]
       }
     },
     "required": [
@@ -85,6 +147,25 @@
       "slideId",
       "rows",
       "bounds"
+    ],
+    "examples": [
+      {
+        "sessionId": "12345678-1234-4234-9234-123456789abc",
+        "expectedRevision": 1,
+        "slideId": "slide-1",
+        "rows": [
+          [
+            "Name",
+            "Value"
+          ]
+        ],
+        "bounds": {
+          "leftPt": 24,
+          "topPt": 24,
+          "widthPt": 320,
+          "heightPt": 180
+        }
+      }
     ]
   },
   "outputSchema": {

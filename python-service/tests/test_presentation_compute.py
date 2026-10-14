@@ -105,6 +105,39 @@ def test_inspects_ordered_slides_shapes_notes_and_boundaries() -> None:
     }
 
 
+def test_extracts_ordered_slide_text_tables_charts_and_notes() -> None:
+    payload = compute("extract_text")
+
+    assert payload["modified"] is False
+    slides = payload["result"]["slides"]
+    assert slides[0] == {
+        "number": 1,
+        "title": "RealmFlow",
+        "text": ["RealmFlow"],
+        "tables": [
+            ["Capability", "State"],
+            ["PPTX", "Ready"],
+        ],
+        "chartLabels": [
+            "Progress",
+            "Read",
+            "Write",
+            "Coverage",
+            "80.0",
+            "60.0",
+        ],
+        "notes": "Explain the architecture",
+    }
+    assert slides[1] == {
+        "number": 2,
+        "title": "",
+        "text": [],
+        "tables": [],
+        "chartLabels": [],
+        "notes": "",
+    }
+
+
 def test_updates_text_image_table_and_chart_by_stable_shape_id() -> None:
     original = compute("inspect")["result"]["slides"][0]["shapes"]
     ids = {shape["type"]: shape["shapeId"] for shape in original}

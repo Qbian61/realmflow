@@ -78,6 +78,45 @@ export class OfficeSafeCopyService {
     }
   ) {}
 
+  async sanitizeBytes(input: {
+    bytes: Uint8Array
+    sourceFormat: OfficeSafeCopyFormat
+    signal: AbortSignal
+  }): Promise<{
+    bytes: Uint8Array
+    outputFormat: ModernOfficeFormat
+    macrosRemoved: boolean
+    templateMaterialized: boolean
+    removedParts: string[]
+  }> {
+    assertNotAborted(input.signal)
+    const policy = safeCopyPolicy(input.sourceFormat)
+    const sanitized = await this.dependencies.sanitize(
+      {
+        sourceFormat: input.sourceFormat,
+        documentBase64: Buffer.from(input.bytes).toString('base64')
+      },
+      input.signal
+    )
+    assertSanitizerResult(sanitized, policy)
+    const bytes = Uint8Array.from(
+      Buffer.from(sanitized.documentBase64, 'base64')
+    )
+    if (bytes.byteLength === 0) {
+      throw new OfficeSafeCopyError(
+        'office_safe_copy_output_invalid',
+        'Office sanitizer returned an empty document'
+      )
+    }
+    return {
+      bytes,
+      outputFormat: sanitized.outputFormat,
+      macrosRemoved: sanitized.macrosRemoved,
+      templateMaterialized: sanitized.templateMaterialized,
+      removedParts: [...sanitized.removedParts]
+    }
+  }
+
   async create(input: {
     sourceCanonicalPath: string
     sourceRelativePath: string
@@ -112,21 +151,12 @@ export class OfficeSafeCopyService {
       input.sourceCanonicalPath,
       input.expectedSourceChecksum
     )
-    const sanitized = await this.dependencies.sanitize(
-      {
-        sourceFormat: input.sourceFormat,
-        documentBase64: source.toString('base64')
-      },
-      input.signal
-    )
-    assertSanitizerResult(sanitized, policy)
-    const candidate = Buffer.from(sanitized.documentBase64, 'base64')
-    if (candidate.byteLength === 0) {
-      throw new OfficeSafeCopyError(
-        'office_safe_copy_output_invalid',
-        'Office sanitizer returned an empty document'
-      )
-    }
+    const sanitized = await this.sanitizeBytes({
+      bytes: source,
+      sourceFormat: input.sourceFormat,
+      signal: input.signal
+    })
+    const candidate = Buffer.from(sanitized.bytes)
     if (
       sourceChecksum !==
       (await this.dependencies.storage.checksum(input.sourceCanonicalPath))

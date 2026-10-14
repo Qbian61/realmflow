@@ -18,17 +18,31 @@
     "properties": {
       "sessionId": {
         "type": "string",
-        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$",
+        "description": "Stable local editing or browser session ID returned by an inspect/create tool.",
+        "examples": [
+          "12345678-1234-4234-9234-123456789abc"
+        ]
       },
       "language": {
         "type": "string",
         "minLength": 2,
         "maxLength": 32,
-        "pattern": "^[A-Za-z0-9_-]+$"
+        "pattern": "^[A-Za-z0-9_-]+$",
+        "description": "Language or locale code used by OCR, search, or content processing.",
+        "examples": [
+          "eng"
+        ]
       }
     },
     "required": [
       "sessionId"
+    ],
+    "examples": [
+      {
+        "sessionId": "12345678-1234-4234-9234-123456789abc",
+        "language": "eng"
+      }
     ]
   },
   "outputSchema": {

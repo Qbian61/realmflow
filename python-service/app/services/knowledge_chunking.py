@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from bisect import bisect_left, bisect_right
 from typing import Protocol
 
 from app.services.local_embeddings import MODEL_NAME, MODEL_REVISION
@@ -27,6 +28,11 @@ _SENSITIVE_FILES = {".env", "credentials.json", ".npmrc", ".pypirc"}
 
 class KnowledgeTokenizer(Protocol):
     def count_tokens(self, text: str) -> int: ...
+
+    def tokenize_with_offsets(
+        self,
+        text: str,
+    ) -> tuple[int, list[tuple[int, int]]]: ...
 
     def token_offsets(self, text: str) -> list[tuple[int, int]]: ...
 
@@ -110,31 +116,55 @@ def chunk_text(
     if not content.strip():
         return []
 
+    content_token_count, token_offsets = tokenizer.tokenize_with_offsets(content)
+    token_offsets = [
+        (token_start, token_end)
+        for token_start, token_end in token_offsets
+        if token_end > token_start
+    ]
+    if content_token_count < 1 or not token_offsets:
+        raise ValueError("Tokenizer did not produce content tokens")
+    token_overhead = max(0, content_token_count - len(token_offsets))
+    token_starts = [token_start for token_start, _token_end in token_offsets]
+    token_ends = [token_end for _token_start, token_end in token_offsets]
+
     chunks: list[dict[str, object]] = []
     start = 0
     while start < len(content):
-        remaining = content[start:]
-        if tokenizer.count_tokens(remaining) <= MAX_TOKENS:
+        first_token = bisect_right(token_ends, start)
+        remaining_tokens = len(token_offsets) - first_token
+        max_content_tokens = max(1, MAX_TOKENS - token_overhead)
+        if remaining_tokens <= max_content_tokens:
             end = len(content)
         else:
             max_end = _token_budget_end(
                 content,
-                start,
+                first_token,
                 MAX_TOKENS,
-                tokenizer,
+                token_offsets,
+                token_overhead,
             )
             target_end = _token_budget_end(
                 content,
-                start,
+                first_token,
                 TARGET_TOKENS,
-                tokenizer,
+                token_offsets,
+                token_overhead,
             )
             end = _preferred_end(content, start, target_end, max_end)
         if end <= start:
             raise ValueError("Tokenizer did not produce a valid chunk boundary")
 
+        end, token_count = _fit_chunk_to_token_limit(
+            content,
+            start,
+            end,
+            first_token,
+            token_offsets,
+            token_starts,
+            tokenizer,
+        )
         text = content[start:end]
-        token_count = tokenizer.count_tokens(text)
         if token_count < 1 or token_count > MAX_TOKENS:
             raise ValueError("Knowledge chunk token count is invalid")
         chunks.append(
@@ -151,7 +181,14 @@ def chunk_text(
         )
         if end == len(content):
             break
-        next_start = _overlap_start(content, start, end, tokenizer)
+        next_start = _overlap_start(
+            content,
+            start,
+            end,
+            token_starts,
+            token_ends,
+            token_overhead,
+        )
         if next_start <= start or next_start >= end:
             next_start = end
         start = next_start
@@ -262,31 +299,49 @@ def _chunk_code_symbols(
 
 def _token_budget_end(
     content: str,
-    start: int,
+    first_token: int,
     budget: int,
-    tokenizer: KnowledgeTokenizer,
+    token_offsets: list[tuple[int, int]],
+    token_overhead: int,
 ) -> int:
-    relative_offsets = [
-        (token_start, token_end)
-        for token_start, token_end in tokenizer.token_offsets(content[start:])
-        if token_end > token_start
-    ]
-    if not relative_offsets:
-        raise ValueError("Tokenizer did not produce content tokens")
+    content_budget = max(1, budget - token_overhead)
+    last_token = min(
+        first_token + content_budget - 1,
+        len(token_offsets) - 1,
+    )
+    token_end = token_offsets[last_token][1]
+    next_start = (
+        token_offsets[last_token + 1][0]
+        if last_token + 1 < len(token_offsets)
+        else len(content)
+    )
+    return max(token_end, next_start)
 
-    valid_end = start + relative_offsets[0][1]
-    for index, (_token_start, token_end) in enumerate(relative_offsets):
-        candidate_end = start + token_end
-        next_start = (
-            start + relative_offsets[index + 1][0]
-            if index + 1 < len(relative_offsets)
-            else len(content)
-        )
-        candidate_end = max(candidate_end, next_start)
-        if tokenizer.count_tokens(content[start:candidate_end]) > budget:
-            break
-        valid_end = candidate_end
-    return valid_end
+
+def _fit_chunk_to_token_limit(
+    content: str,
+    start: int,
+    end: int,
+    first_token: int,
+    token_offsets: list[tuple[int, int]],
+    token_starts: list[int],
+    tokenizer: KnowledgeTokenizer,
+) -> tuple[int, int]:
+    token_count = tokenizer.count_tokens(content[start:end])
+    while token_count > MAX_TOKENS:
+        tokens_to_remove = max(1, token_count - MAX_TOKENS)
+        last_token = bisect_left(
+            token_starts,
+            end,
+            lo=first_token,
+        ) - 1
+        reduced_last_token = last_token - tokens_to_remove
+        if reduced_last_token < first_token:
+            raise ValueError("Knowledge chunk token count is invalid")
+        last_token = reduced_last_token
+        end = token_offsets[last_token][1]
+        token_count = tokenizer.count_tokens(content[start:end])
+    return end, token_count
 
 
 def _preferred_end(
@@ -322,18 +377,18 @@ def _overlap_start(
     content: str,
     chunk_start: int,
     chunk_end: int,
-    tokenizer: KnowledgeTokenizer,
+    token_starts: list[int],
+    token_ends: list[int],
+    token_overhead: int,
 ) -> int:
-    chunk = content[chunk_start:chunk_end]
-    offsets = tokenizer.token_offsets(chunk)
-    candidate = chunk_end
-    for token_start, _token_end in offsets:
-        absolute_start = chunk_start + token_start
-        if tokenizer.count_tokens(content[absolute_start:chunk_end]) <= (
-            OVERLAP_TOKENS
-        ):
-            candidate = absolute_start
-            break
+    first_token = bisect_right(token_ends, chunk_start)
+    after_last_token = bisect_left(token_starts, chunk_end, lo=first_token)
+    overlap_content_tokens = max(1, OVERLAP_TOKENS - token_overhead)
+    overlap_first_token = max(
+        first_token,
+        after_last_token - overlap_content_tokens,
+    )
+    candidate = token_starts[overlap_first_token]
 
     structural_starts = [
         position
@@ -343,8 +398,6 @@ def _overlap_start(
             chunk_end,
         )
         if position >= candidate
-        and tokenizer.count_tokens(content[position:chunk_end])
-        <= OVERLAP_TOKENS
     ]
     return min(structural_starts, default=candidate)
 

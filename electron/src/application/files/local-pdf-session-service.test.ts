@@ -96,6 +96,40 @@ describe('LocalPdfSessionService', () => {
     )
   })
 
+  it('inspects and OCRs immutable bytes without opening a session', async () => {
+    const adapter = adapterWith()
+    const storage = memoryStorage(Buffer.from('%PDF-storage'))
+    const recognize = vi.fn().mockResolvedValue({
+      language: 'eng',
+      blocks: [
+        {
+          text: 'BYTES',
+          confidence: 0.98,
+          bounds: { x: 1, y: 2, width: 20, height: 8 }
+        }
+      ]
+    })
+    const service = new LocalPdfSessionService({
+      adapter,
+      storage,
+      localOcr: { recognize }
+    })
+    const bytes = Uint8Array.from(Buffer.from('%PDF-bytes'))
+
+    await expect(service.inspectBytes(bytes, signal())).resolves.toMatchObject({
+      pageCount: 2
+    })
+    await expect(
+      service.ocrPageBytes(bytes, 2, signal(), { language: 'eng' })
+    ).resolves.toMatchObject({
+      language: 'eng',
+      blocks: [{ text: 'BYTES' }]
+    })
+    expect(adapter.inspect).toHaveBeenCalledWith(bytes)
+    expect(adapter.renderPage).toHaveBeenCalledWith(bytes, 2, undefined)
+    expect(storage.read).not.toHaveBeenCalled()
+  })
+
   it('blocks edit sessions for encrypted and signed PDFs', async () => {
     const encrypted = new LocalPdfSessionService({
       adapter: adapterWith({ encrypted: true }),

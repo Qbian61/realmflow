@@ -18,23 +18,43 @@
     "properties": {
       "sessionId": {
         "type": "string",
-        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$",
+        "description": "Stable local editing or browser session ID returned by an inspect/create tool.",
+        "examples": [
+          "12345678-1234-4234-9234-123456789abc"
+        ]
       },
       "expectedRevision": {
         "type": "integer",
-        "minimum": 0
+        "minimum": 0,
+        "description": "Expected revision used for optimistic concurrency control. Copy this value from the latest RealmFlow UI/API state; do not invent it.",
+        "examples": [
+          1
+        ]
       },
       "slideId": {
         "type": "string",
-        "pattern": "^slide-[0-9]+$"
+        "pattern": "^slide-[0-9]+$",
+        "description": "Stable presentation slide ID.",
+        "examples": [
+          "slide-1"
+        ]
       },
       "shapeId": {
         "type": "string",
-        "pattern": "^shape-[0-9]+-[0-9]+$"
+        "pattern": "^shape-[0-9]+-[0-9]+$",
+        "description": "Stable presentation shape ID.",
+        "examples": [
+          "shape-1-1"
+        ]
       },
       "imagePath": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Authorized local image path used by the presentation operation.",
+        "examples": [
+          "assets/image.png"
+        ]
       },
       "bounds": {
         "type": "object",
@@ -49,28 +69,57 @@
           "leftPt": {
             "type": "number",
             "minimum": 0,
-            "maximum": 2880
+            "maximum": 2880,
+            "description": "Left coordinate in points within the target slide.",
+            "examples": [
+              0
+            ]
           },
           "topPt": {
             "type": "number",
             "minimum": 0,
-            "maximum": 2880
+            "maximum": 2880,
+            "description": "Top coordinate in points within the target slide.",
+            "examples": [
+              0
+            ]
           },
           "widthPt": {
             "type": "number",
             "exclusiveMinimum": 0,
-            "maximum": 2880
+            "maximum": 2880,
+            "description": "Width in points.",
+            "examples": [
+              960
+            ]
           },
           "heightPt": {
             "type": "number",
             "exclusiveMinimum": 0,
-            "maximum": 2880
+            "maximum": 2880,
+            "description": "Height in points.",
+            "examples": [
+              720
+            ]
           }
-        }
+        },
+        "description": "Rectangle position and size in points within the target slide.",
+        "examples": [
+          {
+            "leftPt": 24,
+            "topPt": 24,
+            "widthPt": 320,
+            "heightPt": 180
+          }
+        ]
       },
       "scopeRoot": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Optional authorized root override. Omit or pass \".\" to use the current authorized root.",
+        "examples": [
+          "."
+        ]
       }
     },
     "required": [
@@ -79,6 +128,22 @@
       "slideId",
       "bounds",
       "imagePath"
+    ],
+    "examples": [
+      {
+        "sessionId": "12345678-1234-4234-9234-123456789abc",
+        "expectedRevision": 1,
+        "slideId": "slide-1",
+        "shapeId": "shape-1-1",
+        "imagePath": "assets/image.png",
+        "bounds": {
+          "leftPt": 24,
+          "topPt": 24,
+          "widthPt": 320,
+          "heightPt": 180
+        },
+        "scopeRoot": "."
+      }
     ]
   },
   "outputSchema": {

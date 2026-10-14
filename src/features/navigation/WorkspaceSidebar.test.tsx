@@ -60,26 +60,94 @@ function renderSidebar() {
 }
 
 describe("WorkspaceSidebar drag handles", () => {
-  it("keeps space ordering drag-only", () => {
-    const props = renderSidebar();
-    const handle = screen.getByLabelText("拖拽排序 产品");
+  it("keeps schedules out of the primary sidebar navigation", () => {
+    renderSidebar();
 
-    fireEvent.click(handle);
-
-    expect(handle.tagName).toBe("SPAN");
-    expect(handle).toHaveAttribute("title", "拖拽排序");
-    expect(screen.queryByRole("menu")).toBeNull();
-    expect(props.onMoveSpace).not.toHaveBeenCalled();
+    expect(screen.queryByRole("link", { name: "定时任务" })).toBeNull();
   });
 
-  it("keeps requirement ordering drag-only", () => {
+  it("drags spaces directly from their names without a drag icon", () => {
     const props = renderSidebar();
-    const handle = screen.getByLabelText("拖拽排序 规划");
+    const source = screen.getByRole("link", { name: "产品" });
+    const target = screen.getByRole("link", { name: "文档" });
 
-    fireEvent.click(handle);
+    expect(
+      screen.queryByLabelText("拖拽排序 产品"),
+    ).not.toBeInTheDocument();
+    expect(source).toHaveAttribute("draggable", "true");
 
-    expect(handle.tagName).toBe("SPAN");
-    expect(screen.queryByRole("menu")).toBeNull();
-    expect(props.onMoveRequirement).not.toHaveBeenCalled();
+    fireEvent.dragStart(source);
+    fireEvent.dragOver(target.closest(".space-entry")!);
+    fireEvent.drop(target.closest(".space-entry")!);
+
+    expect(props.onMoveSpace).toHaveBeenCalledWith("/spaces/product", 1);
+  });
+
+  it("places the requirements toggle before the space name", () => {
+    renderSidebar();
+
+    const spaceLink = screen.getByRole("link", { name: "产品" });
+    const toggle = screen.getByRole("button", { name: "折叠 产品需求" });
+    const leadingControl = toggle.closest(".space-leading-control");
+
+    expect(leadingControl).not.toBeNull();
+    expect(leadingControl?.nextElementSibling).toBe(spaceLink);
+    expect(
+      spaceLink.closest(".space-row")?.querySelector(".space-row-actions"),
+    ).not.toContainElement(toggle);
+
+    fireEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("link", { name: "规划" })).toBeNull();
+  });
+
+  it("clears a clicked requirements toggle focus when the pointer leaves the row", () => {
+    renderSidebar();
+
+    const toggle = screen.getByRole("button", { name: "折叠 产品需求" });
+    const row = toggle.closest(".space-row");
+
+    toggle.focus();
+    expect(document.activeElement).toBe(toggle);
+
+    fireEvent.mouseLeave(row!);
+
+    expect(document.activeElement).not.toBe(toggle);
+  });
+
+  it("portals a space actions menu outside the clipped sidebar row", () => {
+    renderSidebar();
+
+    fireEvent.click(screen.getByRole("button", { name: "产品操作" }));
+
+    const menu = screen.getByRole("menu", { name: "产品操作" });
+    expect(menu.parentElement).toBe(document.body);
+
+    fireEvent.mouseDown(
+      screen.getByRole("menuitem", { name: "新建需求" }),
+    );
+    expect(menu).toBeInTheDocument();
+  });
+
+  it("drags requirements directly from their names without a drag icon", () => {
+    const props = renderSidebar();
+    const source = screen.getByRole("link", { name: "规划" });
+    const target = screen.getByRole("link", { name: "交付" });
+
+    expect(
+      screen.queryByLabelText("拖拽排序 规划"),
+    ).not.toBeInTheDocument();
+    expect(source).toHaveAttribute("draggable", "true");
+
+    fireEvent.dragStart(source);
+    fireEvent.dragOver(target.closest("li")!);
+    fireEvent.drop(target.closest("li")!);
+
+    expect(props.onMoveRequirement).toHaveBeenCalledWith(
+      "/spaces/product",
+      "requirement-1",
+      1,
+    );
   });
 });

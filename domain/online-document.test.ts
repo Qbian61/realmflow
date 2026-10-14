@@ -24,13 +24,23 @@ describe('online document domain', () => {
     )
   })
 
-  it('creates an immutable UTF-8 text snapshot with normalized metadata', () => {
+  it('creates an immutable snapshot from response identity and extracted documents', () => {
     const snapshot = createOnlineDocumentSnapshot({
       id: 'snapshot-1',
       sourceId: 'source-1',
       version: 1,
       body: new TextEncoder().encode('# Brief'),
       mediaType: 'text/markdown; charset=utf-8',
+      documents: [
+        {
+          unitKey: 'content',
+          title: 'Brief',
+          content: '# Brief',
+          checksum:
+            'sha256:fd55350669a978d5a8cde0218d92baa5d6f8e1c9102f40cc42301a56543cc99d',
+          byteSize: 7
+        }
+      ],
       etag: '"revision-1"',
       lastModified: 'Sun, 20 Sep 2026 10:00:00 GMT',
       fetchedAt: 10
@@ -40,14 +50,59 @@ describe('online document domain', () => {
       id: 'snapshot-1',
       sourceId: 'source-1',
       version: 1,
-      content: '# Brief',
       mediaType: 'text/markdown',
       contentChecksum:
         'sha256:fd55350669a978d5a8cde0218d92baa5d6f8e1c9102f40cc42301a56543cc99d',
       byteSize: 7,
+      documents: [
+        {
+          unitKey: 'content',
+          title: 'Brief',
+          content: '# Brief',
+          checksum:
+            'sha256:fd55350669a978d5a8cde0218d92baa5d6f8e1c9102f40cc42301a56543cc99d',
+          byteSize: 7
+        }
+      ],
       etag: '"revision-1"',
       lastModified: 'Sun, 20 Sep 2026 10:00:00 GMT',
       fetchedAt: 10
+    })
+  })
+
+  it('accepts a non-UTF-8 PDF response after extraction', () => {
+    expect(
+      createOnlineDocumentSnapshot({
+        id: 'snapshot-1',
+        sourceId: 'source-1',
+        version: 1,
+        body: Uint8Array.from([0x25, 0x50, 0x44, 0x46, 0x2d, 0xff]),
+        mediaType: 'application/pdf',
+        documents: [
+          {
+            unitKey: 'page/000001',
+            title: 'Page 1',
+            content: 'Quarterly report',
+            checksum: 'sha256:document',
+            byteSize: 16,
+            metadata: {
+              format: 'pdf',
+              extraction: 'native',
+              page: 1
+            }
+          }
+        ],
+        fetchedAt: 10
+      })
+    ).toMatchObject({
+      mediaType: 'application/pdf',
+      byteSize: 6,
+      documents: [
+        {
+          unitKey: 'page/000001',
+          content: 'Quarterly report'
+        }
+      ]
     })
   })
 
@@ -55,19 +110,18 @@ describe('online document domain', () => {
     {
       body: new Uint8Array(),
       mediaType: 'text/plain',
+      documents: [],
       error: 'Online document response is empty'
     },
     {
-      body: Uint8Array.from([0xff]),
+      body: new TextEncoder().encode('content'),
       mediaType: 'text/plain',
-      error: 'Online document response is not valid UTF-8'
-    },
-    {
-      body: new TextEncoder().encode('binary'),
-      mediaType: 'application/octet-stream',
-      error: 'Online document media type is unsupported'
+      documents: [],
+      error: 'Online document snapshot documents are empty'
     }
-  ])('rejects an invalid response: $error', ({ body, mediaType, error }) => {
+  ])(
+    'rejects an invalid response: $error',
+    ({ body, mediaType, documents, error }) => {
     expect(() =>
       createOnlineDocumentSnapshot({
         id: 'snapshot-1',
@@ -75,10 +129,12 @@ describe('online document domain', () => {
         version: 1,
         body,
         mediaType,
+        documents,
         fetchedAt: 10
       })
     ).toThrow(error)
-  })
+    }
+  )
 
   it('creates a source with a non-sensitive Connector locator', () => {
     expect(

@@ -200,10 +200,14 @@ describe('SqliteArtifactRepository', () => {
           formal: boolean
         }>
       >
-      readContent: (artifact: {
+      readSource: (artifact: {
         requirementId: string
         relativePath: string
-      }) => Promise<string>
+      }) => Promise<{
+        bytes: Uint8Array
+        fileName: string
+        mimeType?: string
+      }>
     }
     await repository.commit({
       runId: 'run-1',
@@ -225,8 +229,10 @@ describe('SqliteArtifactRepository', () => {
         formal: true
       })
     ])
-    await expect(repository.readContent(artifacts[0] as never)).resolves.toBe(
-      '# Formal design'
+    const source = await repository.readSource(artifacts[0] as never)
+    expect(source.fileName).toBe('artifacts/design.md')
+    expect(Array.from(source.bytes)).toEqual(
+      Array.from(new TextEncoder().encode('# Formal design'))
     )
 
     database
@@ -243,6 +249,48 @@ describe('SqliteArtifactRepository', () => {
     expect(
       database.prepare('SELECT COUNT(*) FROM artifacts').pluck().get()
     ).toBe(1)
+  })
+
+  it('returns original binary bytes and media type for knowledge extraction', async () => {
+    const repository = new SqliteArtifactRepository(database)
+    const committed = await repository.commit({
+      runId: 'run-1',
+      requirementId: 'requirement-1',
+      stageId: 'design',
+      expectedArtifact: expectedDesignArtifact,
+      artifact: {
+        path: 'artifacts/design.md',
+        content: '# Formal design'
+      },
+      completionEvent
+    })
+    const bytes = Uint8Array.from([0x25, 0x50, 0x44, 0x46, 0x2d, 0xff])
+    await writeFile(join(workspaceRoot, 'artifacts', 'report.pdf'), bytes)
+    database
+      .prepare(
+        `UPDATE artifacts
+         SET relative_path = ?, media_type = ?, checksum = ?, byte_size = ?
+         WHERE id = ?`
+      )
+      .run(
+        'artifacts/report.pdf',
+        'application/pdf',
+        `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
+        bytes.byteLength,
+        committed.artifactId
+      )
+
+    const [artifact] = await repository.listByRequirement('requirement-1')
+
+    expect(artifact).toMatchObject({
+      relativePath: 'artifacts/report.pdf',
+      mediaType: 'application/pdf'
+    })
+    await expect(repository.readSource(artifact!)).resolves.toEqual({
+      bytes,
+      fileName: 'artifacts/report.pdf',
+      mimeType: 'application/pdf'
+    })
   })
 
   it('binds a node artifact to its current node run attempt', async () => {

@@ -14,6 +14,7 @@ import {
   type LocalFileCapability
 } from '../../../../domain/local-file-capability'
 import type { JsonObject } from '../../../../domain/tool-protocol-validation'
+import type { LocalContentExtractionService } from '../content-extraction/local-content-extraction-service'
 import { validateTextFileContent } from '../files/adapters/text-adapter'
 import { inspectLocalFileCapability } from '../files/local-file-capability-service'
 import type {
@@ -39,6 +40,10 @@ const MAX_READ_BYTES = 1024 * 1024
 
 export type FileToolDependencies = {
   trashItem(path: string): Promise<void>
+  contentExtractor: Pick<
+    LocalContentExtractionService,
+    'extract' | 'getCached'
+  >
 }
 
 export function createFileToolHandlers(
@@ -50,7 +55,8 @@ export function createFileToolHandlers(
   > = {
     'files.list': listFiles,
     'files.read': readText,
-    'files.search': searchFiles,
+    'files.search': (input) =>
+      searchFiles(input, dependencies.contentExtractor),
     'files.stat': inspectPath,
     'files.create_directory': createDirectory,
     'files.write': writeText,

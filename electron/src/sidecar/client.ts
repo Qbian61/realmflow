@@ -112,8 +112,23 @@ export type LegacyOfficeFormat =
   | 'ppt'
   | 'pps'
   | 'pot'
+  | 'odt'
+  | 'rtf'
+  | 'ods'
+  | 'odp'
 
 export type ModernOfficeFormat = 'docx' | 'xlsx' | 'pptx'
+
+export type OptionalOfficeFormat =
+  | 'pages'
+  | 'numbers'
+  | 'key'
+  | 'vsd'
+  | 'vsdx'
+  | 'pub'
+  | 'mpp'
+
+export type OptionalOfficeOutputFormat = ModernOfficeFormat | 'pdf'
 
 export type OfficeSafeCopyFormat =
   | 'dotx'
@@ -162,6 +177,16 @@ export type LegacyOfficeConversionResult = {
   converter: 'LibreOffice'
 }
 
+export type OfficeConversionCapabilities = Partial<
+  Record<OptionalOfficeFormat, OptionalOfficeOutputFormat>
+>
+
+export type OptionalOfficeConversionResult = {
+  documentBase64: string
+  outputFormat: OptionalOfficeOutputFormat
+  converter: 'LibreOffice'
+}
+
 export class SidecarLegacyOfficeError extends Error {
   readonly name = 'SidecarLegacyOfficeError'
 
@@ -176,6 +201,7 @@ export class SidecarLegacyOfficeError extends Error {
 export type SpreadsheetFormat = 'csv' | 'tsv' | 'xlsx' | 'xls'
 
 export type SpreadsheetComputeOperation =
+  | 'extract_text'
   | 'inspect'
   | 'read_range'
   | 'insert_rows'
@@ -256,6 +282,7 @@ export class SidecarWordError extends Error {
 }
 
 export type PresentationComputeOperation =
+  | 'extract_text'
   | 'inspect'
   | 'update_text'
   | 'replace_image'
@@ -802,6 +829,79 @@ export class SidecarClient {
       throw new Error('Invalid Sidecar legacy Office response')
     }
     return payload as LegacyOfficeConversionResult
+  }
+
+  async getOfficeConversionCapabilities(
+    signal: AbortSignal
+  ): Promise<OfficeConversionCapabilities> {
+    const response = await this.request(
+      `${this.baseUrl}/api/v1/office/conversion-capabilities`,
+      {
+        method: 'GET',
+        headers: this.authenticatedHeaders(),
+        signal: linkedTimeoutSignal(signal, this.timeoutMs)
+      }
+    )
+    const payload = await response.json() as unknown
+    if (
+      !response.ok ||
+      !hasExactKeys(payload, ['formats']) ||
+      !isRecord(payload.formats)
+    ) {
+      throw new Error('Invalid Sidecar Office capability response')
+    }
+    const allowed = new Set([
+      'pages', 'numbers', 'key', 'vsd', 'vsdx', 'pub', 'mpp'
+    ])
+    for (const [format, output] of Object.entries(payload.formats)) {
+      if (
+        !allowed.has(format) ||
+        !['docx', 'xlsx', 'pptx', 'pdf'].includes(String(output))
+      ) {
+        throw new Error('Invalid Sidecar Office capability response')
+      }
+    }
+    return payload.formats as OfficeConversionCapabilities
+  }
+
+  async convertOptionalOffice(
+    input: {
+      sourceFormat: OptionalOfficeFormat
+      documentBase64: string
+    },
+    signal: AbortSignal
+  ): Promise<OptionalOfficeConversionResult> {
+    const response = await this.request(
+      `${this.baseUrl}/api/v1/office/legacy/convert`,
+      {
+        method: 'POST',
+        headers: this.authenticatedHeaders({
+          'Content-Type': 'application/json'
+        }),
+        body: JSON.stringify(input),
+        signal: linkedTimeoutSignal(signal, 120_000)
+      }
+    )
+    const payload = await response.json() as unknown
+    if (!response.ok) {
+      throw parseSidecarLegacyOfficeError(payload, response.status)
+    }
+    if (
+      !hasExactKeys(payload, [
+        'documentBase64',
+        'outputFormat',
+        'converter'
+      ]) ||
+      typeof payload.documentBase64 !== 'string' ||
+      payload.documentBase64.length === 0 ||
+      !['docx', 'xlsx', 'pptx', 'pdf'].includes(
+        String(payload.outputFormat)
+      ) ||
+      payload.converter !== 'LibreOffice'
+    ) {
+      throw new Error('Invalid Sidecar optional Office response')
+    }
+    return payload as OptionalOfficeConversionResult
   }
 
   async createSafeOfficeCopy(
@@ -1798,11 +1898,13 @@ function legacyTargetFormat(
     format === 'doc' ||
     format === 'dot' ||
     format === 'wps' ||
-    format === 'wpt'
+    format === 'wpt' ||
+    format === 'odt' ||
+    format === 'rtf'
   ) {
     return 'docx'
   }
-  if (format === 'xls' || format === 'xlt') return 'xlsx'
+  if (format === 'xls' || format === 'xlt' || format === 'ods') return 'xlsx'
   return 'pptx'
 }
 

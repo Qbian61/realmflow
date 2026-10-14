@@ -342,6 +342,7 @@ function preparedPackage(
     validationReport: {
       compatible: true,
       dependencyStatus: 'resolved',
+      contract: { status: 'passed', diagnostics: [] },
       tests: [{ id: 'contract', status: 'passed' }]
     },
     source: { type: 'directory', displayName: '1' },
@@ -401,7 +402,13 @@ function generatedDefinition() {
           name: 'Issue lookup',
           description: 'Reads issue details.',
           operation: 'read',
-          inputSchema: { type: 'object' },
+          inputSchema: {
+            type: 'object',
+            properties: {
+              issueId: { type: 'string' }
+            },
+            required: ['issueId']
+          },
           outputSchema: { type: 'object' },
           risk: 'medium',
           effects: ['external.read'],

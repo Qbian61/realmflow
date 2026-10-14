@@ -14,7 +14,7 @@ const packageSpecs = [
   {
     directory: 'files',
     packageId: 'realmflow.builtin.files',
-    version: '1.3.1',
+    version: '1.3.2',
     name: 'Files',
     description: 'Authorized local file operations.',
     tools: [
@@ -113,6 +113,7 @@ const packageSpecs = [
     tools: [
       ['builtin.document.create', 'Create document', 'Create a deterministic DOCX from structured content at an authorized new path.', 'filesystem.write', 'medium'],
       ['builtin.document.export_pdf', 'Export document to PDF', 'Export a checksum-bound DOCX to a verified PDF at an authorized new path.', 'filesystem.write', 'medium'],
+      ['builtin.document.deliver_pdf', 'Deliver PDF', 'Generate a verified PDF directly from HTML, Markdown, structured document blocks, or a checksum-bound DOCX at an authorized new path.', 'filesystem.write', 'medium'],
       ['builtin.artifact.verify', 'Verify artifact', 'Read back and verify a DOCX or PDF artifact against explicit acceptance criteria.', 'filesystem.read', 'low'],
       ['builtin.document.inspect', 'Inspect document', 'Open and inspect an authorized DOCX file.', 'filesystem.read', 'low'],
       ['builtin.document.find', 'Find in document', 'Find text using stable document block locations.', 'filesystem.read', 'low'],
@@ -184,6 +185,7 @@ const packageSpecs = [
       ['builtin.pdf.form_fill', 'Fill PDF form', 'Fill standard AcroForm fields by name.', 'filesystem.write', 'medium'],
       ['builtin.pdf.annotation_add', 'Add PDF annotation', 'Add a visible text annotation to a PDF page.', 'filesystem.write', 'medium'],
       ['builtin.pdf.save', 'Save PDF', 'Atomically commit the current PDF revision.', 'filesystem.write', 'medium'],
+      ['builtin.pdf.save_as', 'Save PDF as', 'Save the current PDF editing session to an authorized new PDF path without overwriting the source file.', 'filesystem.write', 'medium'],
     ],
   },
   {
@@ -307,7 +309,7 @@ const packageSpecs = [
   {
     directory: 'process',
     packageId: 'realmflow.builtin.process',
-    version: '1.0.3',
+    version: '1.0.4',
     name: 'Processes',
     description: 'Local tool discovery and managed processes.',
     tools: [
@@ -336,7 +338,7 @@ const packageSpecs = [
         'builtin.process.list',
         'List processes',
         'List RealmFlow-managed processes.',
-        'process.manage',
+        'process.inspect',
         'low',
       ],
       [
@@ -453,7 +455,7 @@ const packageSpecs = [
   {
     directory: 'knowledge',
     packageId: 'realmflow.builtin.knowledge',
-    version: '1.0.2',
+    version: '1.0.3',
     name: 'Knowledge',
     description: 'Scoped local knowledge operations.',
     tools: [
@@ -472,9 +474,16 @@ const packageSpecs = [
         'low',
       ],
       [
-        'builtin.knowledge.note.save',
-        'Save knowledge note',
-        'Create or update a knowledge note.',
+        'builtin.knowledge.note.create',
+        'Create knowledge note',
+        'Create a durable knowledge note from the current conversation.',
+        'knowledge.write',
+        'medium',
+      ],
+      [
+        'builtin.knowledge.note.edit',
+        'Edit knowledge note',
+        'Update an existing knowledge note with optimistic revision protection.',
         'knowledge.write',
         'medium',
       ],
@@ -635,7 +644,8 @@ const skillSpecs = [
     'Retrieve, distill, and save durable project knowledge.',
     [
       'builtin.knowledge.search',
-      'builtin.knowledge.note.save',
+      'builtin.knowledge.note.create',
+      'builtin.knowledge.note.edit',
       'builtin.files.read',
       'builtin.realmflow.artifacts.read',
     ],
@@ -704,40 +714,42 @@ function buildToolPackage(spec) {
       description,
       capability,
       risk,
-      inputSchema:
+      inputSchema: describeModelVisibleInputSchema(
         spec.directory === 'browser'
           ? browserInputSchema(id)
-        : spec.directory === 'computer'
-          ? computerInputSchema(id.slice('builtin.computer.'.length))
-          : spec.directory === 'knowledge'
-            ? knowledgeInputSchema(id)
-            : spec.directory === 'realmflow'
-              ? realmflowInputSchema(id)
-              : spec.directory === 'documents'
-                ? documentInputSchema(id)
-              : spec.directory === 'images'
-                ? imageInputSchema(id)
-              : spec.directory === 'pdf'
-                ? pdfInputSchema(id)
-              : spec.directory === 'presentations'
-                ? presentationInputSchema(id)
-              : spec.directory === 'legacy-office'
-                ? legacyOfficeInputSchema(id)
-              : spec.directory === 'archives'
-                ? archiveInputSchema(id)
-              : spec.directory === 'fixed-layout'
-                ? fixedLayoutInputSchema(id)
-              : spec.directory === 'spreadsheets'
-                ? spreadsheetInputSchema(id)
-              : spec.directory === 'files'
-                ? fileInputSchema(id)
-              : spec.directory === 'git'
-                ? gitInputSchema(id)
-              : spec.directory === 'process'
-                ? processInputSchema(id)
-                : spec.directory === 'web'
-                  ? webInputSchema(id)
-                  : OBJECT_SCHEMA,
+          : spec.directory === 'computer'
+            ? computerInputSchema(id.slice('builtin.computer.'.length))
+            : spec.directory === 'knowledge'
+              ? knowledgeInputSchema(id)
+              : spec.directory === 'realmflow'
+                ? realmflowInputSchema(id)
+                : spec.directory === 'documents'
+                  ? documentInputSchema(id)
+                  : spec.directory === 'images'
+                    ? imageInputSchema(id)
+                    : spec.directory === 'pdf'
+                      ? pdfInputSchema(id)
+                      : spec.directory === 'presentations'
+                        ? presentationInputSchema(id)
+                        : spec.directory === 'legacy-office'
+                          ? legacyOfficeInputSchema(id)
+                          : spec.directory === 'archives'
+                            ? archiveInputSchema(id)
+                            : spec.directory === 'fixed-layout'
+                              ? fixedLayoutInputSchema(id)
+                              : spec.directory === 'spreadsheets'
+                                ? spreadsheetInputSchema(id)
+                                : spec.directory === 'files'
+                                  ? fileInputSchema(id)
+                                  : spec.directory === 'git'
+                                    ? gitInputSchema(id)
+                                    : spec.directory === 'process'
+                                      ? processInputSchema(id)
+                                      : spec.directory === 'web'
+                                        ? webInputSchema(id)
+                                        : OBJECT_SCHEMA,
+        id,
+      ),
       executor:
         spec.directory === 'computer'
           ? {
@@ -762,6 +774,586 @@ function buildToolPackage(spec) {
     tools,
     skills: [],
   })
+}
+
+function describeModelVisibleInputSchema(schema, toolId) {
+  const described = describeSchemaProperties(cloneJson(schema), toolId)
+  return addModelVisibleExamples(described)
+}
+
+function describeSchemaProperties(schema, toolId) {
+  if (!isPlainObject(schema)) return schema
+  const described = { ...schema }
+  if (isPlainObject(described.properties)) {
+    described.properties = Object.fromEntries(
+      Object.entries(described.properties).map(([name, property]) => {
+        if (!isPlainObject(property)) return [name, property]
+        const currentDescription =
+          typeof property.description === 'string'
+            ? property.description.trim()
+            : ''
+        return [
+          name,
+          describeSchemaProperties(
+            {
+              ...property,
+              description: withEnumDescription(
+                currentDescription || inputPropertyDescription(toolId, name),
+                property,
+              ),
+            },
+            toolId,
+          ),
+        ]
+      }),
+    )
+  }
+  if (isPlainObject(described.items)) {
+    described.items = describeSchemaProperties(described.items, toolId)
+  }
+  for (const key of ['oneOf', 'anyOf', 'allOf']) {
+    if (Array.isArray(described[key])) {
+      described[key] = described[key].map((item) =>
+        describeSchemaProperties(item, toolId),
+      )
+    }
+  }
+  return described
+}
+
+function addModelVisibleExamples(schema, propertyName) {
+  if (!isPlainObject(schema)) return schema
+  const withExamples = { ...schema }
+  if (isPlainObject(withExamples.properties)) {
+    withExamples.properties = Object.fromEntries(
+      Object.entries(withExamples.properties).map(([name, property]) => [
+        name,
+        addModelVisibleExamples(property, name),
+      ]),
+    )
+  }
+  if (isPlainObject(withExamples.items)) {
+    withExamples.items = addModelVisibleExamples(withExamples.items, propertyName)
+  }
+  for (const key of ['oneOf', 'anyOf', 'allOf']) {
+    if (Array.isArray(withExamples[key])) {
+      withExamples[key] = withExamples[key].map((item) =>
+        addModelVisibleExamples(item, propertyName),
+      )
+    }
+  }
+  if (!Array.isArray(withExamples.examples) || withExamples.examples.length === 0) {
+    const example = schemaExampleFor(withExamples, propertyName)
+    if (example !== undefined) {
+      withExamples.examples = [example]
+    }
+  }
+  return withExamples
+}
+
+function schemaExampleFor(schema, propertyName) {
+  if (!isPlainObject(schema)) return undefined
+  if (Object.hasOwn(schema, 'const')) return schema.const
+  if (Array.isArray(schema.enum) && schema.enum.length > 0) return schema.enum[0]
+  if (Array.isArray(schema.oneOf) && schema.oneOf.length > 0) {
+    return variantSchemaExample(schema, schema.oneOf[0], propertyName)
+  }
+  if (Array.isArray(schema.anyOf) && schema.anyOf.length > 0) {
+    return variantSchemaExample(schema, schema.anyOf[0], propertyName)
+  }
+  const namedExample = namedSchemaExample(propertyName, schema)
+  if (namedExample !== undefined) return namedExample
+
+  const types = schemaTypes(schema)
+  if (types.includes('object') || isPlainObject(schema.properties)) {
+    return objectSchemaExample(schema)
+  }
+  if (types.includes('array')) {
+    return [schemaExampleFor(schema.items, singularName(propertyName))]
+  }
+  if (types.includes('integer')) return numericSchemaExample(schema, 1)
+  if (types.includes('number')) return numericSchemaExample(schema, 1)
+  if (types.includes('string') || typeof schema.pattern === 'string') {
+    return stringSchemaExample(schema)
+  }
+  if (types.includes('boolean')) return true
+  if (types.includes('null')) return null
+  return undefined
+}
+
+function variantSchemaExample(schema, variant, propertyName) {
+  if (
+    isPlainObject(schema.properties) &&
+    isPlainObject(variant) &&
+    Array.isArray(variant.required)
+  ) {
+    const mergedProperties = {
+      ...schema.properties,
+      ...(isPlainObject(variant.properties) ? variant.properties : {}),
+    }
+    return Object.fromEntries(
+      variant.required.map((name) => [
+        name,
+        schemaExampleFor(mergedProperties[name], name),
+      ]),
+    )
+  }
+  return schemaExampleFor(mergeVariantSchema(schema, variant), propertyName)
+}
+
+function mergeVariantSchema(schema, variant) {
+  if (!isPlainObject(variant)) return schema
+  return {
+    ...schema,
+    ...variant,
+    properties:
+      isPlainObject(schema.properties) || isPlainObject(variant.properties)
+        ? {
+            ...(isPlainObject(schema.properties) ? schema.properties : {}),
+            ...(isPlainObject(variant.properties) ? variant.properties : {}),
+          }
+        : undefined,
+    required: Array.isArray(variant.required)
+      ? variant.required
+      : Array.isArray(schema.required)
+        ? schema.required
+        : undefined,
+    oneOf: undefined,
+    anyOf: undefined,
+  }
+}
+
+function objectSchemaExample(schema) {
+  if (isPlainObject(schema.properties)) {
+    const names = objectExamplePropertyNames(schema)
+    return Object.fromEntries(
+      names.map((name) => [name, schemaExampleFor(schema.properties[name], name)]),
+    )
+  }
+  if (isPlainObject(schema.additionalProperties)) {
+    return {
+      sample: schemaExampleFor(schema.additionalProperties, 'value'),
+    }
+  }
+  return {}
+}
+
+function objectExamplePropertyNames(schema) {
+  const properties = Object.keys(schema.properties)
+  if (Array.isArray(schema.oneOf) && schema.oneOf.length > 0) {
+    const branchRequired = new Set(schema.oneOf[0].required ?? [])
+    return properties.filter((name) => branchRequired.has(name))
+  }
+  return properties
+}
+
+function schemaTypes(schema) {
+  if (Array.isArray(schema.type)) return schema.type
+  if (typeof schema.type === 'string') return [schema.type]
+  if (isPlainObject(schema.properties)) return ['object']
+  if (isPlainObject(schema.items)) return ['array']
+  return []
+}
+
+function namedSchemaExample(name, schema) {
+  if (name === undefined) return undefined
+  if (typeof schema.pattern === 'string') {
+    const patternExample = stringPatternExample(schema.pattern)
+    if (patternExample !== undefined) return patternExample
+  }
+  const examples = {
+    afterBlockId: 'paragraph-1',
+    afterSlideId: 'slide-2',
+    anchor: 'A1',
+    answer: 'Approved answer for this NodeRun.',
+    arguments: ['--version'],
+    author: 'RealmFlow',
+    blockId: 'paragraph-1',
+    bounds: { leftPt: 24, topPt: 24, widthPt: 320, heightPt: 180 },
+    bundleId: 'com.realmflow.App',
+    categories: ['Q1'],
+    categoryRange: 'A1:A4',
+    column: 1,
+    content: 'Example content.',
+    cwd: '.',
+    dataRange: 'B1:B4',
+    document: {
+      title: 'Project brief',
+      blocks: [{ kind: 'paragraph', text: 'Summary' }],
+    },
+    edits: [{ oldText: 'before', newText: 'after', replaceAll: false }],
+    expectedAbsent: true,
+    expectedApprovalRevision: 1,
+    expectedNodeRunRevision: 1,
+    expectedRevision: 1,
+    fields: { customer: 'Acme' },
+    files: ['src/index.ts'],
+    formulas: [['=SUM(A1:A2)']],
+    gate: {
+      kind: 'approval',
+      decisionId: 'decision-1',
+      expectedApprovalRevision: 1,
+      result: 'approved',
+    },
+    height: 240,
+    heightPt: 720,
+    html:
+      '<main><h1>Quarterly update</h1><p>Revenue increased 12%.</p></main>',
+    id: 'item-1',
+    idempotencyKey: 'request-1',
+    imagePath: 'assets/image.png',
+    index: 1,
+    key: 'return',
+    keys: [{ column: 1, direction: 'ascending' }],
+    language: 'en',
+    left: 0,
+    maxBytes: 4096,
+    maxCharacters: 4000,
+    maxCount: 20,
+    maxDimension: 1024,
+    maxOutputBytes: 4096,
+    maxRedirects: 3,
+    maxResults: 10,
+    message: 'chore: update generated artifact',
+    minimumByteSize: 1,
+    minimumPageCount: 1,
+    name: 'example',
+    names: ['python3'],
+    nodeId: 'node-1',
+    nodeRunId: 'node-run-1',
+    opacity: 0.5,
+    outputPath: 'exports/result.pdf',
+    overlays: [{ contentBase64: 'aGVsbG8=', left: 0, top: 0 }],
+    pageNumber: 1,
+    pageNumbers: [1],
+    path: 'docs/example.md',
+    paths: ['docs/example.md'],
+    processId: 'process-1',
+    profileId: 'browser-primary',
+    preferredLayout: 'report',
+    qualityPolicy: 'require_print_layout',
+    query: 'release notes',
+    range: 'A1:B2',
+    reason: 'User requested this state change.',
+    ref: 'ref-1',
+    replacement: 'updated text',
+    regions: [{ left: 0, top: 0, width: 80, height: 40 }],
+    requireRenderSmokeTest: true,
+    requirementId: 'requirement-1',
+    rows: [['Name', 'Value']],
+    scopeRoot: '.',
+    series: [{ name: 'Revenue', values: [100] }],
+    sessionId: '12345678-1234-4234-9234-123456789abc',
+    shapeId: 'shape-1-1',
+    sheet: 'Sheet1',
+    slideId: 'slide-1',
+    sourceId: 'source-1',
+    sourceKinds: ['file'],
+    sourceMessageIds: ['message-1'],
+    source: {
+      kind: 'html',
+      html: '<main><h1>Quarterly update</h1><p>Revenue increased 12%.</p></main>',
+    },
+    sourcePath: 'docs/source.docx',
+    sources: [
+      {
+        path: 'docs/source.md',
+        expectedChecksum:
+          'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      },
+    ],
+    staged: false,
+    startColumn: 1,
+    startRow: 1,
+    style: { bold: true },
+    tableId: 'table-1',
+    target: { kind: 'current_run' },
+    targetPath: 'docs/copy.md',
+    text: 'Example text.',
+    timeoutMs: 1000,
+    title: 'Quarterly update',
+    top: 0,
+    topK: 5,
+    url: 'https://example.com',
+    value: 'Example value',
+    values: [['Example value']],
+    width: 320,
+    widthPt: 960,
+    x: 120,
+    y: 160,
+    zIndex: 1,
+  }
+  return cloneJson(examples[name])
+}
+
+function singularName(name) {
+  if (typeof name !== 'string') return name
+  if (name.endsWith('ies')) return `${name.slice(0, -3)}y`
+  if (name.endsWith('s')) return name.slice(0, -1)
+  return name
+}
+
+function numericSchemaExample(schema, fallback) {
+  const minimum = Number.isFinite(schema.minimum)
+    ? schema.minimum
+    : Number.isFinite(schema.exclusiveMinimum)
+      ? schema.exclusiveMinimum + 1
+      : fallback
+  const maximum = Number.isFinite(schema.maximum) ? schema.maximum : undefined
+  const value =
+    maximum === undefined || minimum <= maximum
+      ? minimum
+      : maximum
+  return schema.type === 'integer' ? Math.ceil(value) : value
+}
+
+function stringSchemaExample(schema) {
+  if (typeof schema.pattern === 'string') {
+    const patternExample = stringPatternExample(schema.pattern)
+    if (patternExample !== undefined) return patternExample
+  }
+  const minLength = Number.isFinite(schema.minLength) ? schema.minLength : 0
+  const value = minLength === 0 ? '' : 'example'
+  return value.length >= minLength ? value : value.padEnd(minLength, 'x')
+}
+
+function stringPatternExample(pattern) {
+  const examples = {
+    '^[a-f0-9]{64}$':
+      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    '^sha256:[a-f0-9]{64}$':
+      'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    '^[a-f0-9]{64}:chunk:[1-9][0-9]*$':
+      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:chunk:1',
+    '^[0-9a-f]{8}-[0-9a-f-]{27,}$':
+      '12345678-1234-4234-9234-123456789abc',
+    '^browser-[A-Za-z0-9-]+$': 'browser-primary',
+    '^(paragraph|table)-[1-9][0-9]*$': 'paragraph-1',
+    '^paragraph-[1-9][0-9]*$': 'paragraph-1',
+    '^table-[1-9][0-9]*$': 'table-1',
+    '^section-[1-9][0-9]*$': 'section-1',
+    '^[0-9]+$': '1',
+    '^slide-[0-9]+$': 'slide-1',
+    '^shape-[0-9]+-[0-9]+$': 'shape-1-1',
+    '^#[0-9a-fA-F]{6}$': '#ff0000',
+    '^[A-Za-z]{1,3}[1-9][0-9]*:[A-Za-z]{1,3}[1-9][0-9]*$': 'A1:B2',
+    '^[A-Za-z]{1,3}[1-9][0-9]*$': 'A1',
+    '^[A-Za-z0-9_-]+$': 'eng',
+    '^[A-Za-z0-9][A-Za-z0-9._+-]{0,199}$': 'python3',
+    '^/[A-Za-z0-9._+/-]{1,199}$': '/usr/bin/python3',
+    '^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$': 'process-1',
+    '^[A-Za-z0-9][A-Za-z0-9.-]{1,199}$': 'com.realmflow.App',
+    '^https?://': 'https://example.com',
+  }
+  return examples[pattern]
+}
+
+function inputPropertyDescription(toolId, name) {
+  const descriptions = {
+    action: 'Action selector for the model-facing facade call.',
+    afterBlockId: 'Stable block ID after which new document content is inserted.',
+    afterSlideId: 'Stable slide ID after which the copied or new slide is inserted.',
+    angle: 'Rotation angle in degrees.',
+    anchor: 'Top-left spreadsheet cell where the generated chart is anchored.',
+    answer: 'User-approved answer text for the NodeRun question.',
+    arguments: 'Arguments object validated against the selected action contract.',
+    artifactId: 'Stable artifact ID for the generated RealmFlow artifact to read.',
+    author: 'Display name recorded on the local document comment.',
+    blockId: 'Stable document block ID to update or comment on.',
+    blocks: 'Ordered structured document blocks used to build or inspect the document.',
+    bold: 'Whether the selected document text should use bold styling.',
+    bounds: 'Rectangle position and size in points within the target slide.',
+    bundleId: 'macOS application bundle identifier for the authorized target app.',
+    caseSensitive: 'Whether text matching treats uppercase and lowercase as distinct.',
+    categories: 'Ordered category labels used by the chart data series.',
+    categoryRange: 'Spreadsheet range containing chart category labels.',
+    chunkId: 'Opaque chunk identifier returned by a prior bounded read.',
+    column: 'One-based column index used by the spreadsheet operation.',
+    color: 'Hex RGB fill color used for image redaction.',
+    commentId: 'Stable document comment ID returned by document inspection.',
+    confirmMacroRemoval: 'Explicit confirmation that macro removal is expected for the safe copy.',
+    contains: 'Visible text expected to appear in the authorized app while waiting.',
+    contentBase64: 'Base64-encoded image layer content used by the composite operation.',
+    content: 'UTF-8 text content to write into the authorized local file.',
+    contentMode:
+      'Content search mode: text_only scans plain UTF-8 text only, structured_cached searches existing local extraction cache, structured_extract may run bounded local extraction before searching.',
+    count: 'Number of rows affected by the spreadsheet operation.',
+    cwd: 'Working directory as a relative path under the authorized root. Do not invent or pass absolute local paths.',
+    dataRange: 'Spreadsheet range containing chart data values.',
+    decisionId: 'Stable approval decision ID for the selected workflow gate.',
+    deltaY: 'Vertical scroll delta in screen pixels.',
+    direction: 'Sort direction for the spreadsheet sort key.',
+    document:
+      'Structured document payload used to create a DOCX, including the title and ordered content blocks.',
+    edits: 'Ordered patch edits with exact prior text and replacement text.',
+    expectedAbsent: 'Must be true to confirm the target path does not already exist.',
+    expectedApprovalRevision:
+      'Expected approval revision used for optimistic concurrency control. Copy this value from the latest RealmFlow UI/API state; do not invent it.',
+    expectedChecksum: 'SHA-256 checksum of the authorized prior file content.',
+    expectedNodeRunRevision:
+      'Expected NodeRun revision used for optimistic concurrency control. Copy this value from the latest RealmFlow UI/API state; do not invent it.',
+    expectedRevision:
+      'Expected revision used for optimistic concurrency control. Copy this value from the latest RealmFlow UI/API state; do not invent it.',
+    executable: 'Executable name or path to run under the configured local process policy.',
+    expression: 'Expression evaluated against the sanitized browser snapshot, not live page state.',
+    fields: 'PDF form fields keyed by AcroForm field name.',
+    fit:
+      'Image resize fitting strategy that controls how source pixels map into the requested dimensions.',
+    files: 'Explicit repository file paths to include in the commit.',
+    fontSize: 'Font size in points for the generated PDF watermark.',
+    footer: 'Footer text to apply to the selected document section.',
+    format: 'Output format for the converted or verified artifact.',
+    formulas: 'Two-dimensional formula matrix written into the spreadsheet range.',
+    fontSizePt: 'Document font size in points for the selected text style.',
+    gate: 'Approval gate decision payload for the selected NodeRun.',
+    gateId: 'Stable custom gate ID for the selected workflow gate.',
+    header: 'Header text to apply to the selected document section.',
+    height: 'Height in pixels for the image operation.',
+    heightPt: 'Height in points.',
+    html:
+      'Self-contained HTML markup to render into the PDF; external scripts and network resources are not allowed.',
+    id: 'Stable RealmFlow entity ID for the requested operation.',
+    idempotencyKey:
+      'Caller-provided key that makes a retry or replay safe and deduplicated. Reuse the same key for retries of the same user request; use a new key for a different user intent.',
+    imagePath: 'Authorized local image path used by the presentation operation.',
+    index: 'One-based destination index.',
+    italic: 'Whether the selected document text should use italic styling.',
+    items: 'Ordered list item text values for a bullet list block.',
+    key: 'Keyboard key sent to the authorized target.',
+    keys: 'Ordered spreadsheet sort keys.',
+    kind: 'Discriminator selecting the schema variant for this object.',
+    language: 'Language or locale code used by OCR, search, or content processing.',
+    left: 'Left pixel coordinate of the image rectangle.',
+    leftPt: 'Left coordinate in points within the target slide.',
+    level: 'Heading level for a structured document heading block.',
+    limit: 'Maximum number of bytes or results returned by the operation.',
+    locale: 'Search locale such as en-US or zh-CN used by the configured web search provider.',
+    markdown: 'Markdown content inserted as structured document blocks after the target block.',
+    maxBytes: 'Maximum response bytes accepted from the web provider.',
+    maxCharacters: 'Maximum document characters returned before chunking is required.',
+    maxCount: 'Maximum number of history entries returned.',
+    maxDimension: 'Maximum rendered image dimension in pixels.',
+    maxOutputBytes: 'Maximum captured stdout and stderr bytes for the process.',
+    maxRedirects: 'Maximum number of HTTP redirects allowed for the fetch.',
+    maxResults: 'Maximum number of search results returned.',
+    message: 'Commit message or user-visible operation message.',
+    minimumByteSize: 'Minimum accepted artifact size in bytes.',
+    minimumPageCount: 'Minimum accepted page count for the generated artifact.',
+    mode: 'Operation mode selected for this tool call.',
+    modifiers: 'Keyboard modifier keys sent with the key press.',
+    name: 'Display name or identifier used by the requested operation.',
+    names: 'Executable names to discover on the local machine.',
+    newText: 'Replacement text inserted by the patch edit.',
+    nodeId: 'Stable workflow node ID used to narrow execution lookup within a requirement.',
+    nodeRunId: 'Stable NodeRun ID that owns the question, todo, or approval.',
+    noteId: 'Stable knowledge note ID to edit.',
+    notes: 'Speaker notes text to attach to the new slide.',
+    note: 'Optional human-readable note recorded with the approval decision.',
+    opacity: 'Watermark opacity from transparent to opaque.',
+    operation: 'Mutation operation to perform.',
+    operator: 'Comparison operator used by the spreadsheet filter.',
+    offset: 'Byte offset where bounded UTF-8 text reading begins.',
+    oldText: 'Exact prior text that must be present before the patch edit is applied.',
+    outputPath:
+      'Authorized new output path as a relative path under the authorized root; it must not overwrite existing content. Do not invent or pass absolute local paths.',
+    overlays: 'Image overlay layers to composite in order.',
+    pageNumber: 'One-based page number.',
+    pageNumbers: 'One-based page numbers affected by the PDF operation.',
+    passed: 'Whether the custom workflow gate passed.',
+    path:
+      'Authorized local path as a relative path under the authorized root. Do not invent or pass absolute local paths.',
+    paths:
+      'Authorized local paths as relative paths under the authorized root. Do not invent or pass absolute local paths.',
+    processId: 'RealmFlow-managed process identifier returned by process.start or process.list.',
+    profileId: 'Owned browser profile identifier approved by the user.',
+    preferredLayout:
+      'Layout hint for structured blocks: report for prose reports or office for document-style pages.',
+    qualityPolicy:
+      'PDF generation quality policy controlling whether layout-preserving output is required or degraded text fallback may be accepted.',
+    quality: 'Encoding quality value used by image compression or conversion.',
+    query: 'Search or match query supplied by the user or current task.',
+    range: 'Spreadsheet A1 range affected by the operation.',
+    reason: 'Short reason recorded for the state change.',
+    recency: 'Optional search freshness filter.',
+    ref: 'Current browser snapshot reference for the target element.',
+    requirementId: 'Stable requirement ID whose data should be read or changed.',
+    replacement: 'Replacement text written for each matched document occurrence.',
+    replaceAll: 'Whether every match should be replaced instead of only the first match.',
+    required: 'Whether the todo is required before the node can complete.',
+    result: 'Approval decision result for the selected workflow gate.',
+    regions: 'Image rectangles to redact, each with pixel coordinates and dimensions.',
+    requireRenderSmokeTest:
+      'Whether RealmFlow must render the first generated PDF page locally before accepting the file.',
+    role: 'Accessible role used while waiting for a native UI condition.',
+    rows: 'Two-dimensional table rows written into a document, slide, or sheet.',
+    safeSearch: 'Safe-search preference passed to the configured web search provider.',
+    scopeRoot:
+      'Optional authorized root override. Omit or pass "." to use the current authorized root.',
+    sectionId: 'Stable document section ID whose page layout, header, or footer is updated.',
+    series: 'Ordered chart data series.',
+    sessionId: 'Stable local editing or browser session ID returned by an inspect/create tool.',
+    shapeId: 'Stable presentation shape ID.',
+    sheet: 'Spreadsheet sheet name.',
+    slideId: 'Stable presentation slide ID.',
+    sourceChecksum: 'SHA-256 checksum of the source file expected before conversion.',
+    sourceId: 'Knowledge source ID in the current workspace.',
+    sourceKinds:
+      'Knowledge source kinds to include. repository means indexed code repository content; code is not a valid sourceKind.',
+    sourceMessageIds: 'Conversation message IDs used as source evidence for the knowledge note.',
+    source:
+      'PDF source payload: self-contained HTML, Markdown, structured document blocks, or a checksum-bound DOCX file.',
+    sourcePath:
+      'Authorized source path as a relative path under the authorized root. Do not invent or pass absolute local paths.',
+    sources: 'Authorized archive source files or directories with expected checksums.',
+    staged: 'Whether to inspect staged Git changes instead of unstaged changes.',
+    startColumn: 'One-based starting column index.',
+    startRow: 'One-based starting row index.',
+    status: 'Target workflow, todo, requirement, or question status.',
+    style: 'Structured style patch for the target document or spreadsheet range.',
+    styleName: 'Named document style to apply to the selected text block.',
+    tableId: 'Stable document table ID.',
+    target: 'Current run target object for browser or UI automation.',
+    targetPath:
+      'Authorized destination path as a relative path under the authorized root. Do not invent or pass absolute local paths.',
+    text: 'Text content used by the requested operation.',
+    timeoutMs: 'Maximum time in milliseconds before the operation times out.',
+    title: 'User-visible title.',
+    top: 'Top pixel coordinate of the image rectangle.',
+    topPt: 'Top coordinate in points within the target slide.',
+    topK: 'Maximum number of ranked knowledge results returned.',
+    type: 'Type selector for the requested structured object.',
+    url: 'Public HTTP or HTTPS URL used by the web or browser operation.',
+    value: 'Value used by the form, filter, or selection operation.',
+    values: 'Two-dimensional value matrix written into the target range.',
+    width: 'Width in pixels for the image operation.',
+    widthPt: 'Width in points.',
+    x: 'Horizontal screen coordinate.',
+    y: 'Vertical screen coordinate.',
+    zIndex: 'One-based shape layer index.',
+  }
+  return (
+    descriptions[name] ??
+    `${name} argument for ${toolId}; provide the value required by this tool contract.`
+  )
+}
+
+function withEnumDescription(description, schema) {
+  if (!Array.isArray(schema.enum)) return description
+  const values = schema.enum
+    .filter((value) => typeof value === 'string' || typeof value === 'number')
+    .map(String)
+  if (values.length === 0) return description
+  const missing = values.filter((value) => !description.includes(value))
+  if (missing.length === 0) return description
+  return `${description} Allowed values: ${values.join(', ')}.`
+}
+
+function cloneJson(value) {
+  return structuredClone(value)
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
 function fileInputSchema(id) {
@@ -822,6 +1414,10 @@ function fileInputSchema(id) {
         scopeRoot,
         query: { type: 'string', minLength: 1, maxLength: 2000 },
         mode: { type: 'string', enum: ['name', 'content'] },
+        contentMode: {
+          type: 'string',
+          enum: ['text_only', 'structured_cached', 'structured_extract'],
+        },
         maxResults: { type: 'integer', minimum: 1, maximum: 200 },
       },
     }
@@ -1796,6 +2392,24 @@ function pdfInputSchema(id) {
       },
     }
   }
+  if (id === 'builtin.pdf.save_as') {
+    return {
+      ...common,
+      required: [
+        'sessionId',
+        'expectedRevision',
+        'outputPath',
+        'expectedAbsent',
+      ],
+      properties: {
+        ...common.properties,
+        outputPath: { type: 'string', minLength: 1 },
+        expectedAbsent: { type: 'boolean', const: true },
+        requireRenderSmokeTest: { type: 'boolean' },
+        scopeRoot: { type: 'string', minLength: 1 },
+      },
+    }
+  }
   return {
     ...common,
     required: ['sessionId', 'expectedRevision'],
@@ -1905,6 +2519,135 @@ function documentInputSchema(id) {
         sourceChecksum: deliveryChecksum,
         outputPath: path,
         expectedAbsent: { type: 'boolean', const: true },
+        scopeRoot,
+      },
+    }
+  }
+  if (id === 'builtin.document.deliver_pdf') {
+    const documentBlock = {
+      oneOf: [
+        {
+          type: 'object',
+          additionalProperties: false,
+          required: ['kind', 'level', 'text'],
+          properties: {
+            kind: { const: 'heading' },
+            level: { type: 'integer', minimum: 1, maximum: 9 },
+            text: { type: 'string', minLength: 1, maxLength: 100000 },
+          },
+        },
+        {
+          type: 'object',
+          additionalProperties: false,
+          required: ['kind', 'text'],
+          properties: {
+            kind: { const: 'paragraph' },
+            text: { type: 'string', minLength: 1, maxLength: 100000 },
+          },
+        },
+        {
+          type: 'object',
+          additionalProperties: false,
+          required: ['kind', 'items'],
+          properties: {
+            kind: { const: 'bullet_list' },
+            items: {
+              type: 'array',
+              minItems: 1,
+              maxItems: 10000,
+              items: { type: 'string', minLength: 1, maxLength: 100000 },
+            },
+          },
+        },
+        {
+          type: 'object',
+          additionalProperties: false,
+          required: ['kind', 'rows'],
+          properties: {
+            kind: { const: 'table' },
+            rows: {
+              type: 'array',
+              minItems: 1,
+              maxItems: 1000,
+              items: {
+                type: 'array',
+                minItems: 1,
+                maxItems: 100,
+                items: { type: 'string', maxLength: 100000 },
+              },
+            },
+          },
+        },
+      ],
+    }
+    return {
+      type: 'object',
+      additionalProperties: false,
+      required: ['source', 'outputPath', 'expectedAbsent'],
+      properties: {
+        source: {
+          oneOf: [
+            {
+              type: 'object',
+              additionalProperties: false,
+              required: ['kind', 'html'],
+              properties: {
+                kind: { const: 'html' },
+                html: { type: 'string', minLength: 1, maxLength: 2000000 },
+                title: { type: 'string', minLength: 1, maxLength: 1000 },
+              },
+            },
+            {
+              type: 'object',
+              additionalProperties: false,
+              required: ['kind', 'markdown'],
+              properties: {
+                kind: { const: 'markdown' },
+                markdown: { type: 'string', minLength: 1, maxLength: 2000000 },
+                title: { type: 'string', minLength: 1, maxLength: 1000 },
+              },
+            },
+            {
+              type: 'object',
+              additionalProperties: false,
+              required: ['kind', 'title', 'blocks'],
+              properties: {
+                kind: { const: 'document_blocks' },
+                title: { type: 'string', minLength: 1, maxLength: 1000 },
+                blocks: {
+                  type: 'array',
+                  minItems: 1,
+                  maxItems: 10000,
+                  items: documentBlock,
+                },
+                preferredLayout: { type: 'string', enum: ['report', 'office'] },
+              },
+            },
+            {
+              type: 'object',
+              additionalProperties: false,
+              required: ['kind', 'sourcePath', 'sourceChecksum'],
+              properties: {
+                kind: { const: 'docx' },
+                sourcePath: path,
+                sourceChecksum: deliveryChecksum,
+              },
+            },
+          ],
+        },
+        outputPath: path,
+        expectedAbsent: { type: 'boolean', const: true },
+        qualityPolicy: {
+          type: 'string',
+          enum: [
+            'require_print_layout',
+            'prefer_print_layout',
+            'allow_degraded_text',
+          ],
+        },
+        requireRenderSmokeTest: { type: 'boolean' },
+        minimumByteSize: { type: 'integer', minimum: 1 },
+        minimumPageCount: { type: 'integer', minimum: 1 },
         scopeRoot,
       },
     }
@@ -2413,8 +3156,9 @@ function buildSkillPackage() {
     description,
     instructionsPath: `instructions/${id.slice('builtin.skill.'.length)}.md`,
     runtime: { kind: 'instruction' },
-    inputSchema: OBJECT_SCHEMA,
-    outputSchema: OBJECT_SCHEMA,
+    inputSchema: skillInputSchema(name),
+    outputSchema: skillOutputSchema(name),
+    examples: [skillExample(name)],
     requiredTools: dependencies.map((toolId) => ({
       toolId,
       versionRange: `^${VERSION}`,
@@ -2437,6 +3181,49 @@ function buildSkillPackage() {
     tools: [],
     skills,
   })
+}
+
+function skillInputSchema(name) {
+  return {
+    type: 'object',
+    description: `Inputs for invoking the ${name} Skill.`,
+    required: ['task'],
+    additionalProperties: false,
+    properties: {
+      task: {
+        type: 'string',
+        description: 'The user-visible task or workflow objective for the Skill.',
+        minLength: 1,
+      },
+      context: {
+        type: 'string',
+        description: 'Optional local context that narrows the requested work.',
+        minLength: 1,
+      },
+    },
+  }
+}
+
+function skillOutputSchema(name) {
+  return {
+    type: 'object',
+    description: `Structured result produced by the ${name} Skill.`,
+    required: ['summary'],
+    additionalProperties: false,
+    properties: {
+      summary: {
+        type: 'string',
+        description: 'Concise outcome summary for the completed Skill run.',
+        minLength: 1,
+      },
+    },
+  }
+}
+
+function skillExample(name) {
+  return {
+    task: `Run ${name.toLowerCase()} for the current request.`,
+  }
 }
 
 function toolDefinition({
@@ -2521,30 +3308,40 @@ function knowledgeInputSchema(id) {
       required: ['sourceId'],
     }
   }
-  if (id === 'builtin.knowledge.note.save') {
+  if (id === 'builtin.knowledge.note.create') {
     const idString = { type: 'string', minLength: 1, maxLength: 200 }
     return {
       type: 'object',
       additionalProperties: false,
-      required: ['operation'],
+      required: ['kind', 'sourceMessageIds', 'title', 'content'],
       properties: {
-        operation: { type: 'string', enum: ['create', 'edit'] },
         kind: {
           type: 'string',
           enum: ['conversation_note', 'decision', 'retrospective'],
         },
-        id: idString,
-        versionId: idString,
-        noteId: idString,
         sourceMessageIds: {
           type: 'array',
+          minItems: 1,
           maxItems: 50,
           items: idString,
           uniqueItems: true,
         },
         title: { type: 'string', minLength: 1, maxLength: 200 },
         content: { type: 'string', minLength: 1, maxLength: 20000 },
+      },
+    }
+  }
+  if (id === 'builtin.knowledge.note.edit') {
+    const idString = { type: 'string', minLength: 1, maxLength: 200 }
+    return {
+      type: 'object',
+      additionalProperties: false,
+      required: ['noteId', 'expectedRevision', 'title', 'content'],
+      properties: {
+        noteId: idString,
         expectedRevision: { type: 'integer', minimum: 0 },
+        title: { type: 'string', minLength: 1, maxLength: 200 },
+        content: { type: 'string', minLength: 1, maxLength: 20000 },
       },
     }
   }
@@ -2701,6 +3498,7 @@ function computerInputSchema(action) {
 
 function effectFor(capability) {
   if (capability === 'credential.use') return 'local_data.read'
+  if (capability === 'process.inspect') return 'local_data.read'
   if (capability.endsWith('.read') || capability.endsWith('.observe')) {
     return 'local_data.read'
   }
@@ -2775,7 +3573,10 @@ function jsonFile(path, value) {
 
 function digestFiles(files) {
   const hash = createHash('sha256')
-  for (const { path, content } of files) {
+  const normalized = [...files].sort((left, right) =>
+    Buffer.compare(Buffer.from(left.path, 'utf8'), Buffer.from(right.path, 'utf8')),
+  )
+  for (const { path, content } of normalized) {
     updateLengthPrefixed(hash, Buffer.from(path, 'utf8'))
     updateLengthPrefixed(hash, Buffer.from(content, 'utf8'))
   }

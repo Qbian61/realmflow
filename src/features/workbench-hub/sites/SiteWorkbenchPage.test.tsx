@@ -124,8 +124,9 @@ describe("SiteWorkbenchPage", () => {
     renderPage({ sites });
 
     expect(
-      await screen.findByLabelText("拖拽排序 未分组"),
-    ).toBeInTheDocument();
+      await screen.findByRole("button", { name: "未分组 (1)" }),
+    ).toHaveAttribute("draggable", "true");
+    expect(screen.queryByLabelText("拖拽排序 未分组")).toBeNull();
     const remove = screen.getByRole("button", {
       name: "删除分组 未分组",
     });
@@ -168,9 +169,17 @@ describe("SiteWorkbenchPage", () => {
       ).not.toBeInTheDocument(),
     );
     expect(screen.getByRole("button", { name: "新增分组" })).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("navigation", { name: "工具列表" })).getByText(
+        "下方 + 新建",
+      ),
+    ).toHaveClass("workbench-navigation-empty");
+    expect(screen.getByRole("region", { name: "工具内容" })).toHaveTextContent(
+      /^$/,
+    );
   });
 
-  it("reorders groups from a hover drag handle", async () => {
+  it("reorders groups by dragging their names", async () => {
     const snapshot = createSnapshot();
     snapshot.groups.push(
       {
@@ -196,7 +205,7 @@ describe("SiteWorkbenchPage", () => {
       }),
     });
     renderPage({ sites });
-    const source = await screen.findByLabelText("拖拽排序 研发");
+    const source = await screen.findByRole("button", { name: "研发 (0)" });
     const target = screen
       .getByRole("button", { name: "产品 (0)" })
       .closest(".workbench-navigation-item")!;
@@ -217,7 +226,7 @@ describe("SiteWorkbenchPage", () => {
     );
   });
 
-  it("does not open a reorder menu when the drag handle is clicked", async () => {
+  it("keeps the group delete action separate from name dragging", async () => {
     const snapshot = createSnapshot();
     snapshot.groups.push({
 ...snapshot.groups[0],
@@ -234,12 +243,12 @@ describe("SiteWorkbenchPage", () => {
       }),
     });
     renderPage({ sites });
-    const handle = await screen.findByLabelText("拖拽排序 未分组");
+    const name = await screen.findByRole("button", { name: "未分组 (1)" });
 
-    fireEvent.click(handle);
+    fireEvent.click(name);
 
-    expect(handle.tagName).toBe("SPAN");
-    expect(screen.queryByRole("menu")).toBeNull();
+    expect(name).toHaveAttribute("draggable", "true");
+    expect(screen.queryByLabelText("拖拽排序 未分组")).toBeNull();
     expect(sites.updateGroup).not.toHaveBeenCalled();
   });
 
@@ -461,6 +470,7 @@ function createAttachmentApi(
     list: vi.fn().mockResolvedValue([]),
     pickAndAttach: vi.fn(),
     readImage: vi.fn(),
+    readExtracted: vi.fn(),
     open: vi.fn(),
     reveal: vi.fn(),
     delete: vi.fn(),

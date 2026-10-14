@@ -348,6 +348,8 @@ function ProductCapabilityDetailDialog({
 
   const Icon = item.kind === "skill" ? Sparkles : GROUP_ICONS[item.group];
   const registry = registrySkill(item)?.registry;
+  const dependencyIssues =
+    item.catalogItem?.kind === "skill" ? item.catalogItem.dependencyIssues : [];
   const name = capabilityDisplayName(item, t);
   const description = capabilityDescription(item, t);
   const isFacade =
@@ -445,6 +447,18 @@ function ProductCapabilityDetailDialog({
                   : item.name}
               </dd>
             </div>
+            {dependencyIssues.length > 0 ? (
+              <div>
+                <dt>{t("capabilities.status.dependencyDisabled")}</dt>
+                <dd>
+                  <ul className="product-capability-dependency-list">
+                    {dependencyIssues.map((issue) => (
+                      <li key={issue}>{issue}</li>
+                    ))}
+                  </ul>
+                </dd>
+              </div>
+            ) : null}
           </dl>
         </div>
       </DialogBody>

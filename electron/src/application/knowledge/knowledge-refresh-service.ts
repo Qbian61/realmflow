@@ -7,6 +7,7 @@ import {
   type KnowledgeRefreshPreset,
   type KnowledgeRefreshRun
 } from '../../../../domain/knowledge-refresh'
+import { isContentExtractionErrorCode } from '../../../../domain/content-extraction'
 import type { SchedulePlanner } from '../schedules/cron-schedule-planner'
 import type {
   KnowledgeIndexEnqueueResult
@@ -27,7 +28,7 @@ type RefreshRepository = {
   }): Promise<void>
   completeQueued(input: {
     runId: string
-    beforeChecksum: string
+    beforeChecksum: string | null
     afterChecksum: string
     indexJobId: string
     at: number
@@ -71,6 +72,12 @@ type KnowledgeRefreshServiceDependencies = {
   }
   reader: {
     readCurrentIdentity(sourceId: string): Promise<KnowledgeSourceIdentity>
+  }
+  indexes: {
+    hasCurrentIndex(input: {
+      sourceId: string
+      sourceChecksum: string
+    }): Promise<boolean>
   }
   probes: Record<
     'file' | 'document' | 'repository',
@@ -145,10 +152,12 @@ export class KnowledgeRefreshService {
         `refresh:${run.id}`
       )
       if (probe.status === 'unchanged') {
-        return this.completeUnchanged(run, probe.checksum)
+        return await this.completeUnchangedOrQueueMissingIndex(
+          run,
+          probe.checksum
+        )
       }
-      const before =
-        await this.dependencies.reader.readCurrentIdentity(source.id)
+      const before = await this.readCurrentIdentityIfAvailable(source.id)
       await this.dependencies.refreshers[source.type]({
         sourceId: source.id,
         expectedRevision: source.revision,
@@ -156,8 +165,11 @@ export class KnowledgeRefreshService {
       })
       const after =
         await this.dependencies.reader.readCurrentIdentity(source.id)
-      if (before.sourceChecksum === after.sourceChecksum) {
-        return this.completeUnchanged(run, after.sourceChecksum)
+      if (before?.sourceChecksum === after.sourceChecksum) {
+        return await this.completeUnchangedOrQueueMissingIndex(
+          run,
+          after.sourceChecksum
+        )
       }
       const indexed = await this.dependencies.coordinator.enqueue({
         sourceId: source.id,
@@ -166,7 +178,7 @@ export class KnowledgeRefreshService {
       const at = this.now()
       await this.dependencies.repository.completeQueued({
         runId: run.id,
-        beforeChecksum: before.sourceChecksum,
+        beforeChecksum: before?.sourceChecksum ?? null,
         afterChecksum: after.sourceChecksum,
         indexJobId: indexed.job.id,
         at
@@ -175,7 +187,7 @@ export class KnowledgeRefreshService {
       return {
         ...run,
         status: 'queued',
-        beforeChecksum: before.sourceChecksum,
+        beforeChecksum: before?.sourceChecksum ?? null,
         afterChecksum: after.sourceChecksum,
         indexJobId: indexed.job.id,
         completedAt: at
@@ -240,6 +252,51 @@ export class KnowledgeRefreshService {
     }
   }
 
+  private async completeUnchangedOrQueueMissingIndex(
+    run: KnowledgeRefreshRun,
+    checksum: string
+  ): Promise<KnowledgeRefreshRun> {
+    const hasCurrentIndex = await this.dependencies.indexes.hasCurrentIndex({
+      sourceId: run.sourceId,
+      sourceChecksum: checksum
+    })
+    if (hasCurrentIndex) {
+      return this.completeUnchanged(run, checksum)
+    }
+    const indexed = await this.dependencies.coordinator.enqueue({
+      sourceId: run.sourceId,
+      triggerSource: 'source_event'
+    })
+    const at = this.now()
+    await this.dependencies.repository.completeQueued({
+      runId: run.id,
+      beforeChecksum: checksum,
+      afterChecksum: checksum,
+      indexJobId: indexed.job.id,
+      at
+    })
+    this.dependencies.onIndexQueued?.()
+    return {
+      ...run,
+      status: 'queued',
+      beforeChecksum: checksum,
+      afterChecksum: checksum,
+      indexJobId: indexed.job.id,
+      completedAt: at
+    }
+  }
+
+  private async readCurrentIdentityIfAvailable(
+    sourceId: string
+  ): Promise<KnowledgeSourceIdentity | undefined> {
+    try {
+      return await this.dependencies.reader.readCurrentIdentity(sourceId)
+    } catch (error) {
+      if (isMissingCurrentContent(error)) return undefined
+      throw error
+    }
+  }
+
   private async failRun(
     run: KnowledgeRefreshRun,
     errorCode: KnowledgeRefreshErrorCode
@@ -269,12 +326,24 @@ export class KnowledgeRefreshService {
   }
 }
 
+function isMissingCurrentContent(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message === 'Knowledge source has no current content'
+  )
+}
+
 function refreshErrorCode(error: unknown): KnowledgeRefreshErrorCode {
-  if (
+  const code =
     typeof error === 'object' &&
     error !== null &&
     'code' in error &&
-    typeof error.code === 'string' &&
+    typeof error.code === 'string'
+      ? error.code
+      : undefined
+  if (isContentExtractionErrorCode(code)) return code
+  if (
+    code &&
     [
       'source_temporarily_unavailable',
       'connector_unavailable',
@@ -283,9 +352,9 @@ function refreshErrorCode(error: unknown): KnowledgeRefreshErrorCode {
       'unsupported_format',
       'model_assets_invalid',
       'qdrant_schema_incompatible'
-    ].includes(error.code)
+    ].includes(code)
   ) {
-    return error.code as KnowledgeRefreshErrorCode
+    return code as KnowledgeRefreshErrorCode
   }
   return 'source_temporarily_unavailable'
 }

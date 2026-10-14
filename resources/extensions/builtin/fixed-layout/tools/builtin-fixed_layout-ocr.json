@@ -22,30 +22,59 @@
     "properties": {
       "path": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Authorized local path as a relative path under the authorized root. Do not invent or pass absolute local paths.",
+        "examples": [
+          "docs/example.md"
+        ]
       },
       "scopeRoot": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "description": "Optional authorized root override. Omit or pass \".\" to use the current authorized root.",
+        "examples": [
+          "."
+        ]
       },
       "pageNumber": {
         "type": "integer",
         "minimum": 1,
-        "maximum": 2000
+        "maximum": 2000,
+        "description": "One-based page number.",
+        "examples": [
+          1
+        ]
       },
       "language": {
         "type": "string",
         "enum": [
           "eng",
           "chi_sim"
+        ],
+        "description": "Language or locale code used by OCR, search, or content processing. Allowed values: eng, chi_sim.",
+        "examples": [
+          "eng"
         ]
       },
       "maxDimension": {
         "type": "integer",
         "minimum": 64,
-        "maximum": 2400
+        "maximum": 2400,
+        "description": "Maximum rendered image dimension in pixels.",
+        "examples": [
+          1024
+        ]
       }
-    }
+    },
+    "examples": [
+      {
+        "path": "docs/example.md",
+        "scopeRoot": ".",
+        "pageNumber": 1,
+        "language": "eng",
+        "maxDimension": 1024
+      }
+    ]
   },
   "outputSchema": {
     "type": "object",

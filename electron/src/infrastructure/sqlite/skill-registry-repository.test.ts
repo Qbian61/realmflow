@@ -41,6 +41,7 @@ const definition: SkillDefinition = {
   runtime: { kind: 'instruction' },
   inputSchema: { type: 'object', additionalProperties: true },
   outputSchema: { type: 'object', additionalProperties: true },
+  examples: [{}],
   requiredTools: [
     {
       toolId: 'builtin.files.read',

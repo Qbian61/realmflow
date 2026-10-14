@@ -410,6 +410,10 @@ function assertCheckpointInput(input: NormalizedRunCheckpointInput): void {
     Object.entries(input.ledger.repeatedCallFingerprints).some(
       ([fingerprint, count]) =>
         !fingerprint.trim() || !Number.isInteger(count) || count < 1
+    ) ||
+    Object.entries(input.ledger.deterministicFailureFingerprints).some(
+      ([fingerprint, count]) =>
+        !fingerprint.trim() || !Number.isInteger(count) || count < 1
     )
   ) {
     throw new Error('Invalid Agent Run budget ledger')

@@ -73,6 +73,9 @@ export default function SpaceDetailPage({
   const requirements = requirementsBySpace[spacePath] ?? [];
   const [activeTab, setActiveTab] = useUrlQueryState("tab", spaceTabCodec);
   const [resources, setResources] = useState<SpaceResource[]>([]);
+  const [resourcesLoaded, setResourcesLoaded] = useState(
+    () => !business || !space?.id,
+  );
   const [resourcePersistenceUnavailable, setResourcePersistenceUnavailable] =
     useState(false);
   const [createRequirementOpen, setCreateRequirementOpen] = useState(
@@ -81,17 +84,27 @@ export default function SpaceDetailPage({
   const [requirementDraft, setRequirementDraft] = useState("");
 
   useEffect(() => {
-    if (!business || !space?.id) return;
+    if (!business || !space?.id) {
+      setResources([]);
+      setResourcesLoaded(true);
+      return;
+    }
     let disposed = false;
+    setResources([]);
+    setResourcesLoaded(false);
     void business
       .listKnowledgeSources({ workspaceId: space.id })
       .then((items) => {
         if (disposed) return;
         setResources(items.map(mapBusinessResource));
         setResourcePersistenceUnavailable(false);
+        setResourcesLoaded(true);
       })
       .catch(() => {
-        if (!disposed) setResourcePersistenceUnavailable(true);
+        if (!disposed) {
+          setResourcePersistenceUnavailable(true);
+          setResourcesLoaded(true);
+        }
       });
     return () => {
       disposed = true;
@@ -160,7 +173,9 @@ export default function SpaceDetailPage({
               aria-controls="space-resources-panel"
               value="resources"
             >
-              {t("spaceDetail.knowledge", { count: resources.length })}
+              {resourcesLoaded
+                ? t("spaceDetail.knowledge", { count: resources.length })
+                : t("spaceDetail.knowledgeLoading")}
             </Tab>
             <Tab
               id="space-overview-tab"

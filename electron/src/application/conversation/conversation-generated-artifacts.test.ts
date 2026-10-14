@@ -127,6 +127,33 @@ describe('ConversationGeneratedArtifactService', () => {
     ])
   })
 
+  it('registers unified PDF generation outputs as final conversation artifacts', async () => {
+    await writeFile(join(workspace, 'delivered.pdf'), '%PDF-1.7 delivered')
+    await writeFile(join(workspace, 'saved-copy.pdf'), '%PDF-1.7 saved')
+
+    await service.afterToolExecution({
+      runId: 'run-pdf',
+      toolName: 'document.deliver_pdf',
+      arguments: {},
+      scopeRoots: [workspace],
+      output: { path: 'delivered.pdf' }
+    })
+    await service.afterToolExecution({
+      runId: 'run-pdf',
+      toolName: 'pdf.save_as',
+      arguments: {},
+      scopeRoots: [workspace],
+      output: { path: 'saved-copy.pdf' }
+    })
+
+    expect(
+      (await service.finalizeRun({
+        runId: 'run-pdf',
+        status: 'completed'
+      }))?.generatedArtifacts.map((artifact) => artifact.name).sort()
+    ).toEqual(['delivered.pdf', 'saved-copy.pdf'])
+  })
+
   it('preserves all outputs when tools finish concurrently in one run', async () => {
     const states = new Map()
     const store = {

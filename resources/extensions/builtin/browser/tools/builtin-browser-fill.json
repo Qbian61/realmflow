@@ -25,25 +25,52 @@
         "properties": {
           "kind": {
             "type": "string",
-            "const": "current_run"
+            "const": "current_run",
+            "description": "Discriminator selecting the schema variant for this object.",
+            "examples": [
+              "current_run"
+            ]
           }
-        }
+        },
+        "description": "Current run target object for browser or UI automation.",
+        "examples": [
+          {
+            "kind": "current_run"
+          }
+        ]
       },
       "ref": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 16000
+        "maxLength": 16000,
+        "description": "Current browser snapshot reference for the target element.",
+        "examples": [
+          "ref-1"
+        ]
       },
       "value": {
         "type": "string",
         "minLength": 0,
-        "maxLength": 16000
+        "maxLength": 16000,
+        "description": "Value used by the form, filter, or selection operation.",
+        "examples": [
+          "Example value"
+        ]
       }
     },
     "required": [
       "target",
       "ref",
       "value"
+    ],
+    "examples": [
+      {
+        "target": {
+          "kind": "current_run"
+        },
+        "ref": "ref-1",
+        "value": "Example value"
+      }
     ]
   },
   "outputSchema": {

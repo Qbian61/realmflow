@@ -1,0 +1,523 @@
+{
+  "schemaVersion": 1,
+  "id": "builtin.document.deliver_pdf",
+  "version": "1.1.0",
+  "name": "Deliver PDF",
+  "description": "Generate a verified PDF directly from HTML, Markdown, structured document blocks, or a checksum-bound DOCX at an authorized new path.",
+  "tags": [
+    "document"
+  ],
+  "executor": {
+    "kind": "builtin",
+    "handler": "document.deliver_pdf",
+    "handlerVersion": "1.0.0"
+  },
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "source",
+      "outputPath",
+      "expectedAbsent"
+    ],
+    "properties": {
+      "source": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "html"
+            ],
+            "properties": {
+              "kind": {
+                "const": "html",
+                "description": "Discriminator selecting the schema variant for this object.",
+                "examples": [
+                  "html"
+                ]
+              },
+              "html": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000000,
+                "description": "Self-contained HTML markup to render into the PDF; external scripts and network resources are not allowed.",
+                "examples": [
+                  "<main><h1>Quarterly update</h1><p>Revenue increased 12%.</p></main>"
+                ]
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000,
+                "description": "User-visible title.",
+                "examples": [
+                  "Quarterly update"
+                ]
+              }
+            },
+            "examples": [
+              {
+                "kind": "html",
+                "html": "<main><h1>Quarterly update</h1><p>Revenue increased 12%.</p></main>"
+              }
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "markdown"
+            ],
+            "properties": {
+              "kind": {
+                "const": "markdown",
+                "description": "Discriminator selecting the schema variant for this object.",
+                "examples": [
+                  "markdown"
+                ]
+              },
+              "markdown": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000000,
+                "description": "Markdown content inserted as structured document blocks after the target block.",
+                "examples": [
+                  "example"
+                ]
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000,
+                "description": "User-visible title.",
+                "examples": [
+                  "Quarterly update"
+                ]
+              }
+            },
+            "examples": [
+              {
+                "kind": "html",
+                "html": "<main><h1>Quarterly update</h1><p>Revenue increased 12%.</p></main>"
+              }
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "title",
+              "blocks"
+            ],
+            "properties": {
+              "kind": {
+                "const": "document_blocks",
+                "description": "Discriminator selecting the schema variant for this object.",
+                "examples": [
+                  "document_blocks"
+                ]
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000,
+                "description": "User-visible title.",
+                "examples": [
+                  "Quarterly update"
+                ]
+              },
+              "blocks": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 10000,
+                "items": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "kind",
+                        "level",
+                        "text"
+                      ],
+                      "properties": {
+                        "kind": {
+                          "const": "heading",
+                          "description": "Discriminator selecting the schema variant for this object.",
+                          "examples": [
+                            "heading"
+                          ]
+                        },
+                        "level": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 9,
+                          "description": "Heading level for a structured document heading block.",
+                          "examples": [
+                            1
+                          ]
+                        },
+                        "text": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 100000,
+                          "description": "Text content used by the requested operation.",
+                          "examples": [
+                            "Example text."
+                          ]
+                        }
+                      },
+                      "examples": [
+                        {
+                          "kind": "heading",
+                          "level": 1,
+                          "text": "Example text."
+                        }
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "kind",
+                        "text"
+                      ],
+                      "properties": {
+                        "kind": {
+                          "const": "paragraph",
+                          "description": "Discriminator selecting the schema variant for this object.",
+                          "examples": [
+                            "paragraph"
+                          ]
+                        },
+                        "text": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 100000,
+                          "description": "Text content used by the requested operation.",
+                          "examples": [
+                            "Example text."
+                          ]
+                        }
+                      },
+                      "examples": [
+                        {
+                          "kind": "paragraph",
+                          "text": "Example text."
+                        }
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "kind",
+                        "items"
+                      ],
+                      "properties": {
+                        "kind": {
+                          "const": "bullet_list",
+                          "description": "Discriminator selecting the schema variant for this object.",
+                          "examples": [
+                            "bullet_list"
+                          ]
+                        },
+                        "items": {
+                          "type": "array",
+                          "minItems": 1,
+                          "maxItems": 10000,
+                          "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 100000,
+                            "examples": [
+                              "example"
+                            ]
+                          },
+                          "description": "Ordered list item text values for a bullet list block.",
+                          "examples": [
+                            [
+                              "example"
+                            ]
+                          ]
+                        }
+                      },
+                      "examples": [
+                        {
+                          "kind": "bullet_list",
+                          "items": [
+                            "example"
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "kind",
+                        "rows"
+                      ],
+                      "properties": {
+                        "kind": {
+                          "const": "table",
+                          "description": "Discriminator selecting the schema variant for this object.",
+                          "examples": [
+                            "table"
+                          ]
+                        },
+                        "rows": {
+                          "type": "array",
+                          "minItems": 1,
+                          "maxItems": 1000,
+                          "items": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 100,
+                            "items": {
+                              "type": "string",
+                              "maxLength": 100000,
+                              "examples": [
+                                [
+                                  [
+                                    "Name",
+                                    "Value"
+                                  ]
+                                ]
+                              ]
+                            },
+                            "examples": [
+                              [
+                                [
+                                  "Name",
+                                  "Value"
+                                ]
+                              ]
+                            ]
+                          },
+                          "description": "Two-dimensional table rows written into a document, slide, or sheet.",
+                          "examples": [
+                            [
+                              [
+                                "Name",
+                                "Value"
+                              ]
+                            ]
+                          ]
+                        }
+                      },
+                      "examples": [
+                        {
+                          "kind": "table",
+                          "rows": [
+                            [
+                              "Name",
+                              "Value"
+                            ]
+                          ]
+                        }
+                      ]
+                    }
+                  ],
+                  "examples": [
+                    {
+                      "kind": "heading",
+                      "level": 1,
+                      "text": "Example text."
+                    }
+                  ]
+                },
+                "description": "Ordered structured document blocks used to build or inspect the document.",
+                "examples": [
+                  [
+                    {
+                      "kind": "heading",
+                      "level": 1,
+                      "text": "Example text."
+                    }
+                  ]
+                ]
+              },
+              "preferredLayout": {
+                "type": "string",
+                "enum": [
+                  "report",
+                  "office"
+                ],
+                "description": "Layout hint for structured blocks: report for prose reports or office for document-style pages.",
+                "examples": [
+                  "report"
+                ]
+              }
+            },
+            "examples": [
+              {
+                "kind": "html",
+                "html": "<main><h1>Quarterly update</h1><p>Revenue increased 12%.</p></main>"
+              }
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "sourcePath",
+              "sourceChecksum"
+            ],
+            "properties": {
+              "kind": {
+                "const": "docx",
+                "description": "Discriminator selecting the schema variant for this object.",
+                "examples": [
+                  "docx"
+                ]
+              },
+              "sourcePath": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Authorized source path as a relative path under the authorized root. Do not invent or pass absolute local paths.",
+                "examples": [
+                  "docs/source.docx"
+                ]
+              },
+              "sourceChecksum": {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$",
+                "description": "SHA-256 checksum of the source file expected before conversion.",
+                "examples": [
+                  "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                ]
+              }
+            },
+            "examples": [
+              {
+                "kind": "html",
+                "html": "<main><h1>Quarterly update</h1><p>Revenue increased 12%.</p></main>"
+              }
+            ]
+          }
+        ],
+        "description": "PDF source payload: self-contained HTML, Markdown, structured document blocks, or a checksum-bound DOCX file.",
+        "examples": [
+          {
+            "kind": "html",
+            "html": "<main><h1>Quarterly update</h1><p>Revenue increased 12%.</p></main>"
+          }
+        ]
+      },
+      "outputPath": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Authorized new output path as a relative path under the authorized root; it must not overwrite existing content. Do not invent or pass absolute local paths.",
+        "examples": [
+          "exports/result.pdf"
+        ]
+      },
+      "expectedAbsent": {
+        "type": "boolean",
+        "const": true,
+        "description": "Must be true to confirm the target path does not already exist.",
+        "examples": [
+          true
+        ]
+      },
+      "qualityPolicy": {
+        "type": "string",
+        "enum": [
+          "require_print_layout",
+          "prefer_print_layout",
+          "allow_degraded_text"
+        ],
+        "description": "PDF generation quality policy controlling whether layout-preserving output is required or degraded text fallback may be accepted. Allowed values: require_print_layout, prefer_print_layout, allow_degraded_text.",
+        "examples": [
+          "require_print_layout"
+        ]
+      },
+      "requireRenderSmokeTest": {
+        "type": "boolean",
+        "description": "Whether RealmFlow must render the first generated PDF page locally before accepting the file.",
+        "examples": [
+          true
+        ]
+      },
+      "minimumByteSize": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Minimum accepted artifact size in bytes.",
+        "examples": [
+          1
+        ]
+      },
+      "minimumPageCount": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Minimum accepted page count for the generated artifact.",
+        "examples": [
+          1
+        ]
+      },
+      "scopeRoot": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Optional authorized root override. Omit or pass \".\" to use the current authorized root.",
+        "examples": [
+          "."
+        ]
+      }
+    },
+    "examples": [
+      {
+        "source": {
+          "kind": "html",
+          "html": "<main><h1>Quarterly update</h1><p>Revenue increased 12%.</p></main>"
+        },
+        "outputPath": "exports/result.pdf",
+        "expectedAbsent": true,
+        "qualityPolicy": "require_print_layout",
+        "requireRenderSmokeTest": true,
+        "minimumByteSize": 1,
+        "minimumPageCount": 1,
+        "scopeRoot": "."
+      }
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "additionalProperties": true
+  },
+  "capabilities": [
+    "filesystem.write"
+  ],
+  "effects": [
+    "local_data.change"
+  ],
+  "risk": "medium",
+  "invocation": {
+    "mode": "unary",
+    "idempotency": "supported",
+    "cancellable": true,
+    "resumable": false
+  },
+  "resources": {
+    "timeoutMs": 120000,
+    "maxOutputBytes": 4194304,
+    "maxAttempts": 1
+  },
+  "discovery": {
+    "intents": [
+      "deliver pdf"
+    ],
+    "contexts": [
+      "general",
+      "space",
+      "requirement",
+      "workflow",
+      "schedule"
+    ]
+  }
+}

@@ -18,31 +18,55 @@
     "properties": {
       "sessionId": {
         "type": "string",
-        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$",
+        "description": "Stable local editing or browser session ID returned by an inspect/create tool.",
+        "examples": [
+          "12345678-1234-4234-9234-123456789abc"
+        ]
       },
       "expectedRevision": {
         "type": "integer",
-        "minimum": 0
+        "minimum": 0,
+        "description": "Expected revision used for optimistic concurrency control. Copy this value from the latest RealmFlow UI/API state; do not invent it.",
+        "examples": [
+          1
+        ]
       },
       "left": {
         "type": "integer",
         "minimum": 0,
-        "maximum": 20000
+        "maximum": 20000,
+        "description": "Left pixel coordinate of the image rectangle.",
+        "examples": [
+          0
+        ]
       },
       "top": {
         "type": "integer",
         "minimum": 0,
-        "maximum": 20000
+        "maximum": 20000,
+        "description": "Top pixel coordinate of the image rectangle.",
+        "examples": [
+          0
+        ]
       },
       "width": {
         "type": "integer",
         "minimum": 1,
-        "maximum": 20000
+        "maximum": 20000,
+        "description": "Width in pixels for the image operation.",
+        "examples": [
+          320
+        ]
       },
       "height": {
         "type": "integer",
         "minimum": 1,
-        "maximum": 20000
+        "maximum": 20000,
+        "description": "Height in pixels for the image operation.",
+        "examples": [
+          240
+        ]
       }
     },
     "required": [
@@ -52,6 +76,16 @@
       "top",
       "width",
       "height"
+    ],
+    "examples": [
+      {
+        "sessionId": "12345678-1234-4234-9234-123456789abc",
+        "expectedRevision": 1,
+        "left": 0,
+        "top": 0,
+        "width": 320,
+        "height": 240
+      }
     ]
   },
   "outputSchema": {

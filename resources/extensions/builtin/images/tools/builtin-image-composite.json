@@ -18,11 +18,19 @@
     "properties": {
       "sessionId": {
         "type": "string",
-        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$",
+        "description": "Stable local editing or browser session ID returned by an inspect/create tool.",
+        "examples": [
+          "12345678-1234-4234-9234-123456789abc"
+        ]
       },
       "expectedRevision": {
         "type": "integer",
-        "minimum": 0
+        "minimum": 0,
+        "description": "Expected revision used for optimistic concurrency control. Copy this value from the latest RealmFlow UI/API state; do not invent it.",
+        "examples": [
+          1
+        ]
       },
       "overlays": {
         "type": "array",
@@ -39,26 +47,70 @@
           "properties": {
             "contentBase64": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "description": "Base64-encoded image layer content used by the composite operation.",
+              "examples": [
+                "example"
+              ]
             },
             "left": {
               "type": "integer",
               "minimum": 0,
-              "maximum": 20000
+              "maximum": 20000,
+              "description": "Left pixel coordinate of the image rectangle.",
+              "examples": [
+                0
+              ]
             },
             "top": {
               "type": "integer",
               "minimum": 0,
-              "maximum": 20000
+              "maximum": 20000,
+              "description": "Top pixel coordinate of the image rectangle.",
+              "examples": [
+                0
+              ]
             }
-          }
-        }
+          },
+          "examples": [
+            [
+              {
+                "contentBase64": "aGVsbG8=",
+                "left": 0,
+                "top": 0
+              }
+            ]
+          ]
+        },
+        "description": "Image overlay layers to composite in order.",
+        "examples": [
+          [
+            {
+              "contentBase64": "aGVsbG8=",
+              "left": 0,
+              "top": 0
+            }
+          ]
+        ]
       }
     },
     "required": [
       "sessionId",
       "expectedRevision",
       "overlays"
+    ],
+    "examples": [
+      {
+        "sessionId": "12345678-1234-4234-9234-123456789abc",
+        "expectedRevision": 1,
+        "overlays": [
+          {
+            "contentBase64": "aGVsbG8=",
+            "left": 0,
+            "top": 0
+          }
+        ]
+      }
     ]
   },
   "outputSchema": {

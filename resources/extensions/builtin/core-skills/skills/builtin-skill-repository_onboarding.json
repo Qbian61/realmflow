@@ -10,12 +10,44 @@
   },
   "inputSchema": {
     "type": "object",
-    "additionalProperties": true
+    "description": "Inputs for invoking the Repository onboarding Skill.",
+    "required": [
+      "task"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "task": {
+        "type": "string",
+        "description": "The user-visible task or workflow objective for the Skill.",
+        "minLength": 1
+      },
+      "context": {
+        "type": "string",
+        "description": "Optional local context that narrows the requested work.",
+        "minLength": 1
+      }
+    }
   },
   "outputSchema": {
     "type": "object",
-    "additionalProperties": true
+    "description": "Structured result produced by the Repository onboarding Skill.",
+    "required": [
+      "summary"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "summary": {
+        "type": "string",
+        "description": "Concise outcome summary for the completed Skill run.",
+        "minLength": 1
+      }
+    }
   },
+  "examples": [
+    {
+      "task": "Run repository onboarding for the current request."
+    }
+  ],
   "requiredTools": [
     {
       "toolId": "builtin.files.search",

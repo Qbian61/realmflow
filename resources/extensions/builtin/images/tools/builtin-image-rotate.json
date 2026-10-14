@@ -18,22 +18,41 @@
     "properties": {
       "sessionId": {
         "type": "string",
-        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$"
+        "pattern": "^[0-9a-f]{8}-[0-9a-f-]{27,}$",
+        "description": "Stable local editing or browser session ID returned by an inspect/create tool.",
+        "examples": [
+          "12345678-1234-4234-9234-123456789abc"
+        ]
       },
       "expectedRevision": {
         "type": "integer",
-        "minimum": 0
+        "minimum": 0,
+        "description": "Expected revision used for optimistic concurrency control. Copy this value from the latest RealmFlow UI/API state; do not invent it.",
+        "examples": [
+          1
+        ]
       },
       "angle": {
         "type": "number",
         "minimum": -360,
-        "maximum": 360
+        "maximum": 360,
+        "description": "Rotation angle in degrees.",
+        "examples": [
+          -360
+        ]
       }
     },
     "required": [
       "sessionId",
       "expectedRevision",
       "angle"
+    ],
+    "examples": [
+      {
+        "sessionId": "12345678-1234-4234-9234-123456789abc",
+        "expectedRevision": 1,
+        "angle": -360
+      }
     ]
   },
   "outputSchema": {

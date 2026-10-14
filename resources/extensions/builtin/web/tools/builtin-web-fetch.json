@@ -22,31 +22,60 @@
       "url": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 4096
+        "maxLength": 4096,
+        "description": "Public HTTP or HTTPS URL used by the web or browser operation.",
+        "examples": [
+          "https://example.com"
+        ]
       },
       "mode": {
         "type": "string",
         "enum": [
           "readable",
           "raw_text"
+        ],
+        "description": "Operation mode selected for this tool call. Allowed values: readable, raw_text.",
+        "examples": [
+          "readable"
         ]
       },
       "timeoutMs": {
         "type": "integer",
         "minimum": 1000,
-        "maximum": 30000
+        "maximum": 30000,
+        "description": "Maximum time in milliseconds before the operation times out.",
+        "examples": [
+          1000
+        ]
       },
       "maxBytes": {
         "type": "integer",
         "minimum": 1024,
-        "maximum": 1048576
+        "maximum": 1048576,
+        "description": "Maximum response bytes accepted from the web provider.",
+        "examples": [
+          4096
+        ]
       },
       "maxRedirects": {
         "type": "integer",
         "minimum": 0,
-        "maximum": 10
+        "maximum": 10,
+        "description": "Maximum number of HTTP redirects allowed for the fetch.",
+        "examples": [
+          3
+        ]
       }
-    }
+    },
+    "examples": [
+      {
+        "url": "https://example.com",
+        "mode": "readable",
+        "timeoutMs": 1000,
+        "maxBytes": 4096,
+        "maxRedirects": 3
+      }
+    ]
   },
   "outputSchema": {
     "type": "object",
