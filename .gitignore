@@ -84,6 +84,7 @@ pip-wheel-metadata/
 .build/
 resources/sidecar/*
 !resources/sidecar/.gitkeep
+resources/dsh/runtime/
 resources/qdrant/*/
 python-service/model-assets/
 .qdrant-initialized
