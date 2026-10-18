@@ -225,7 +225,7 @@ describe("component system guard", () => {
     const files = [
       {
         path: "src/pages/example.css",
-        source: `.legacy-action { height: 34px; }`,
+        source: `.existing-action { height: 34px; }`,
       },
     ];
     const current = analyzeComponentSystem(files);
@@ -233,8 +233,8 @@ describe("component system guard", () => {
       ruleId: "control-size",
       file: "src/pages/example.css",
       owner: "UI Platform",
-      reason: "Freeze the audited legacy control inventory",
-      removalCondition: "Remove after legacy controls use shared primitives",
+      reason: "Freeze the audited current control inventory",
+      removalCondition: "Remove after current controls use shared primitives",
     });
 
     expect(analyzeComponentSystem(files, [baseline])).toEqual([]);
@@ -244,7 +244,7 @@ describe("component system guard", () => {
     const originalFiles = [
       {
         path: "src/pages/example.css",
-        source: `.legacy-action { height: 34px; }`,
+        source: `.existing-action { height: 34px; }`,
       },
     ];
     const baseline = createComponentSystemBaseline(
@@ -253,16 +253,16 @@ describe("component system guard", () => {
         ruleId: "control-size",
         file: "src/pages/example.css",
         owner: "UI Platform",
-        reason: "Freeze the audited legacy control inventory",
+        reason: "Freeze the audited current control inventory",
         removalCondition:
-          "Remove after legacy controls use shared primitives",
+          "Remove after current controls use shared primitives",
       },
     );
     const changedFiles = [
       {
         path: "src/pages/example.css",
         source: `
-          .legacy-action { height: 34px; }
+          .existing-action { height: 34px; }
           .new-action { height: 34px; }
         `,
       },

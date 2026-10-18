@@ -130,13 +130,6 @@ function createApi(): RealmFlowApi {
     business: {} as never,
     toolCatalog: {} as never,
     toolPermissions: {} as never,
-    persistence: {
-      load: vi.fn().mockResolvedValue({
-        status: "loaded",
-        snapshot: { revision: 0, value: null },
-      }),
-      onChanged: vi.fn().mockReturnValue(() => undefined),
-    },
     workspace: {
       chooseFiles: vi.fn().mockResolvedValue({
         binding: {
@@ -164,6 +157,11 @@ function createApi(): RealmFlowApi {
           rootPath: "/tmp/selected",
         },
         files: [],
+      }),
+      bindSessionDirectory: vi.fn().mockResolvedValue({
+        requirementId: "session-folder",
+        rootName: "project",
+        rootPath: "/tmp/project",
       }),
       chooseFolder: vi.fn().mockResolvedValue({
         requirementId: "session-folder",
@@ -320,7 +318,7 @@ describe("WorkbenchProvider", () => {
             <aside className="sidebar" />
             <main
               className="app-content"
-              style={{ marginLeft: 8, marginRight: 0 }}
+              style={{ marginLeft: 0, marginRight: 0 }}
             />
           </div>
         </WorkbenchProvider>
@@ -361,10 +359,10 @@ describe("WorkbenchProvider", () => {
     });
     fireEvent.mouseDown(resizer, { clientX: 560 });
     fireEvent.mouseMove(window, { clientX: 0 });
-    expect(layout).toHaveStyle({ "--global-workbench-width": "620px" });
+    expect(layout).toHaveStyle({ "--global-workbench-width": "628px" });
 
     fireEvent.mouseMove(window, { clientX: 1000 });
-    expect(layout).toHaveStyle({ "--global-workbench-width": "448px" });
+    expect(layout).toHaveStyle({ "--global-workbench-width": "440px" });
     fireEvent.mouseUp(window);
   });
 
@@ -672,25 +670,58 @@ describe("WorkbenchProvider", () => {
     expect(await screen.findByLabelText("终端 · project")).toBeInTheDocument();
   });
 
-  it("maximizes and restores the workbench panel", () => {
+  it("maximizes the workbench from the main content edge and restores it", async () => {
     const api = createApi();
-    render(
+    const { container } = render(
       <MemoryRouter>
         <WorkbenchProvider api={api}>
-          <TestPage />
+          <div className="app-shell">
+            <aside className="sidebar" />
+            <main className="app-content">
+              <TestPage />
+            </main>
+          </div>
         </WorkbenchProvider>
       </MemoryRouter>,
     );
 
     fireEvent.click(screen.getByRole("button", { name: "打开工作区" }));
     const panel = screen.getByRole("complementary", { name: "全局工作区" });
+    const layout = panel.closest(".global-workbench-layout") as HTMLDivElement;
+    const content = container.querySelector(".app-content") as HTMLElement;
+    vi.spyOn(layout, "getBoundingClientRect").mockReturnValue({
+      x: 12,
+      y: 0,
+      width: 1200,
+      height: 800,
+      top: 0,
+      right: 1212,
+      bottom: 800,
+      left: 12,
+      toJSON: () => ({}),
+    });
+    vi.spyOn(content, "getBoundingClientRect").mockReturnValue({
+      x: 260,
+      y: 0,
+      width: 952,
+      height: 800,
+      top: 0,
+      right: 1212,
+      bottom: 800,
+      left: 260,
+      toJSON: () => ({}),
+    });
+
     fireEvent.click(screen.getByRole("button", { name: "最大化工作区" }));
-    expect(panel.closest(".global-workbench-layout")).toHaveClass("maximized");
+    expect(layout).toHaveClass("maximized");
+    await waitFor(() => {
+      expect(layout).toHaveStyle({
+        "--global-workbench-maximized-left": "248px",
+      });
+    });
 
     fireEvent.click(screen.getByRole("button", { name: "还原工作区" }));
-    expect(panel.closest(".global-workbench-layout")).not.toHaveClass(
-      "maximized",
-    );
+    expect(layout).not.toHaveClass("maximized");
   });
 
   it("opens page web links inside the global workbench", async () => {

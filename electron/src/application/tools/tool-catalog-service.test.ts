@@ -713,14 +713,6 @@ function projectionStoreFixture(
 ): ToolProjectionStore {
   return {
     getCatalog: vi.fn(async () => catalog),
-    getExecution: vi.fn(),
-    getPermission: vi.fn(),
-    listPendingPermissions: vi.fn().mockResolvedValue([]),
-    getCheckpoint: vi.fn(),
-    commitExecutionBatch: vi.fn(),
-    replaceExecutionProjection: vi.fn(),
-    commitPermissionBatch: vi.fn(),
-    replacePermissionProjection: vi.fn(),
     commitCatalogProjection: vi.fn(),
     replaceCatalogProjection: vi.fn()
   }

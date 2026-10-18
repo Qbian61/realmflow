@@ -213,7 +213,7 @@ function buildInstalledAgentProfiles(
           candidate.id === installation.capabilityId &&
           candidate.version === installation.capabilityVersion,
       );
-      if (!definition || definition.id.startsWith("legacy.")) return [];
+      if (!definition) return [];
       const display =
         capabilities.displayByDefinitionKey?.[
           `${definition.id}@${definition.version}`

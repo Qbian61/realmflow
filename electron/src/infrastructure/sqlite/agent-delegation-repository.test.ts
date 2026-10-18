@@ -23,6 +23,7 @@ async function fixture() {
   database = openRealmFlowDatabase(join(directory, 'runtime.db'))
   await new SqliteChatSessionRepository(database).save({
     id: 'session-root', kind: 'general', title: 'Parent conversation', sortOrder: 0,
+    turns: [],
     messages: [], createdAt: 1, updatedAt: 1
   }, 0)
   const snapshot = createAgentRunSnapshot({ conversationId: 'session-root' }, {
@@ -57,14 +58,42 @@ describe('durable delegation preparation', () => {
   it('atomically creates a separate visible child conversation, delegation and budget reservation', async () => {
     const store = await fixture()
     const [child] = store.prepare('root', 'spawn-1', { tasks: [task] }, 10)
-    expect(child).toMatchObject({ parentRunId: 'root', rootRunId: 'root', status: 'registered', task })
+    expect(child).toMatchObject({
+      parentRunId: 'root',
+      rootRunId: 'root',
+      status: 'registered',
+      ordinal: 1,
+      agentId: 'builtin.general',
+      agentName: 'General',
+      task
+    })
     expect(child.sessionId).not.toBe('session-root')
     const session = await new SqliteChatSessionRepository(database).get(child.sessionId)
     expect(session).toMatchObject({
-      kind: 'general', title: task.objective,
+      kind: 'general',
+      title: task.objective,
+      turns: [
+        {
+          id: `${child.runId}:turn`,
+          runId: child.runId,
+          userMessageId: `${child.runId}:user`,
+          assistantMessageId: `${child.runId}:assistant`,
+          status: 'running'
+        }
+      ],
       messages: [
-        { role: 'user', content: task.objective, status: 'completed' },
-        { role: 'assistant', status: 'pending', runId: child.runId }
+        {
+          turnId: `${child.runId}:turn`,
+          role: 'user',
+          content: task.objective,
+          status: 'completed'
+        },
+        {
+          turnId: `${child.runId}:turn`,
+          role: 'assistant',
+          status: 'pending',
+          runId: child.runId
+        }
       ]
     })
     expect(new SqliteAgentRuntimeBudgetRepository(database).read('root').availableToolCalls).toBe(2)
@@ -79,7 +108,22 @@ describe('durable delegation preparation', () => {
     database.close()
     database = openRealmFlowDatabase(join(directory, 'runtime.db'))
     const restored = new delegationModule.SqliteAgentDelegationRepository(database)
-    expect(restored.prepare('root', 'spawn-1', { tasks: [task] }, 20)).toMatchObject([{ runId: child.runId, sessionId: child.sessionId, status: 'running' }])
+    expect(restored.prepare('root', 'spawn-1', { tasks: [task] }, 20)).toMatchObject([{
+      runId: child.runId,
+      sessionId: child.sessionId,
+      status: 'running',
+      ordinal: 1,
+      agentId: 'builtin.general',
+      startedAt: 11
+    }])
+    const restoredSession = await new SqliteChatSessionRepository(database).get(child.sessionId)
+    expect(restoredSession).toMatchObject({
+      turns: [{ id: `${child.runId}:turn`, runId: child.runId }],
+      messages: [
+        { id: `${child.runId}:user`, turnId: `${child.runId}:turn` },
+        { id: `${child.runId}:assistant`, turnId: `${child.runId}:turn` }
+      ]
+    })
     expect(() => restored.prepare('root', 'spawn-1', { tasks: [{ ...task, objective: 'Changed task' }] }, 20))
       .toThrow('runtime_idempotency_conflict')
     expect(new SqliteAgentRuntimeBudgetRepository(database).read('root').availableToolCalls).toBe(2)
@@ -101,7 +145,12 @@ describe('durable delegation preparation', () => {
     store.claim(child.runId, 11)
     store.finish(child.runId, result, 20)
     store.finish(child.runId, result, 21)
-    expect(store.list('root')[0]).toMatchObject({ status: 'completed', result })
+    expect(store.list('root')[0]).toMatchObject({
+      status: 'completed',
+      startedAt: 11,
+      completedAt: 20,
+      result
+    })
     expect((await new SqliteChatSessionRepository(database).get(child.sessionId))?.messages.at(-1))
       .toMatchObject({ status: 'completed', content: result.summary })
     expect(() => store.finish(child.runId, { ...result, summary: 'Changed' }, 22)).toThrow('runtime_idempotency_conflict')

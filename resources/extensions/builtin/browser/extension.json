@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "packageId": "realmflow.builtin.browser",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Browser",
   "description": "Main-owned Chromium sessions and scoped browser artifacts.",
   "publisher": {

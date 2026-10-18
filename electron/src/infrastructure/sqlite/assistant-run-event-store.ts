@@ -13,6 +13,7 @@ type EventRow = {
   event_id: string
   run_id: string
   assistant_message_id: string
+  turn_id: string
   sequence: number
   event_type: AssistantRunEvent['type']
   event_timestamp: number
@@ -56,6 +57,7 @@ export class SqliteAssistantRunEventStore {
     projection: AssistantTurnProjection
   ): Promise<boolean> {
     assertProjectionMatchesEvent(event, projection)
+    assertProjectionTurnOwnership(this.database, projection)
     return this.serialize(() => this.appendInternal(event, projection))
   }
 
@@ -65,6 +67,37 @@ export class SqliteAssistantRunEventStore {
 
   reconcileTerminalConversations(artifacts?: Pick<ConversationGeneratedArtifactService, 'finalizeRun'>): Promise<void> {
     return reconcileTerminalConversations(this.database, this, artifacts)
+  }
+
+  async rebuildMissingProjections(): Promise<number> {
+    return this.serialize(async () => {
+      const runIds = this.database.prepare(
+        `SELECT DISTINCT e.run_id
+         FROM assistant_run_events e
+         LEFT JOIN assistant_turn_projections p ON p.run_id = e.run_id
+         WHERE p.run_id IS NULL
+         ORDER BY e.run_id`
+      ).pluck().all() as string[]
+      let rebuiltCount = 0
+      for (const runId of runIds) {
+        const projection = await this.rebuildProjection(runId)
+        if (!projection) continue
+        this.database.prepare(
+          `INSERT INTO assistant_turn_projections (
+            run_id, assistant_message_id, last_sequence, projection_json,
+            updated_at
+          ) VALUES (?, ?, ?, ?, ?)`
+        ).run(
+          projection.runId,
+          projection.assistantMessageId,
+          projection.lastSequence,
+          JSON.stringify(projection),
+          projection.completedAt ?? projection.startedAt
+        )
+        rebuiltCount += 1
+      }
+      return rebuiltCount
+    })
   }
 
   async repairRecoveredTerminalDelivery(
@@ -78,7 +111,8 @@ export class SqliteAssistantRunEventStore {
     }
     return this.serialize(async () => this.database.transaction(() => {
       const message = this.database.prepare(
-        `SELECT session_id, status, content, error, completed_at, source_json
+        `SELECT session_id, turn_id, status, content, error, completed_at,
+                source_json
          FROM chat_messages
          WHERE id = ? AND run_id = ? AND role = 'assistant'`
       ).get(
@@ -86,6 +120,7 @@ export class SqliteAssistantRunEventStore {
         projection.runId
       ) as {
         session_id: string
+        turn_id: string
         status: string
         content: string
         error: string | null
@@ -111,12 +146,23 @@ export class SqliteAssistantRunEventStore {
           ? JSON.stringify(source)
           : message.source_json
       }
+      const turn = this.database.prepare(
+        `SELECT status, completed_at
+         FROM conversation_turns
+         WHERE id = ? AND run_id = ?`
+      ).get(message.turn_id, projection.runId) as {
+        status: string
+        completed_at: number | null
+      } | undefined
+      const turnStatus = projection.status
       if (
         message.status === next.status &&
         message.content === next.content &&
         message.error === next.error &&
         message.completed_at === next.completedAt &&
-        message.source_json === next.sourceJson
+        message.source_json === next.sourceJson &&
+        turn?.status === turnStatus &&
+        turn.completed_at === timestamp
       ) {
         return false
       }
@@ -134,6 +180,11 @@ export class SqliteAssistantRunEventStore {
         projection.runId
       )
       this.database.prepare(
+        `UPDATE conversation_turns
+         SET status = ?, completed_at = ?
+         WHERE id = ? AND run_id = ?`
+      ).run(turnStatus, timestamp, message.turn_id, projection.runId)
+      this.database.prepare(
         'UPDATE chat_sessions SET revision = revision + 1, updated_at = ? WHERE id = ?'
       ).run(timestamp, message.session_id)
       return true
@@ -148,26 +199,58 @@ export class SqliteAssistantRunEventStore {
     source?: ConversationGeneratedArtifactSource
   ): Promise<boolean> {
     assertProjectionMatchesEvent(event, projection)
+    assertProjectionTurnOwnership(this.database, projection)
     return this.serialize(async () => this.database.transaction(() => {
       const inserted = this.persist(event, projection)
-      if (!inserted || !['run.resumed', 'run.completed', 'run.failed', 'run.cancelled'].includes(event.type)) return inserted
+      if (!inserted || ![
+        'run.resumed',
+        'run.recovery_blocked',
+        'run.completed',
+        'run.failed',
+        'run.cancelled'
+      ].includes(event.type)) return inserted
       const message = this.database.prepare(
-        `SELECT session_id FROM chat_messages
+        `SELECT session_id, turn_id FROM chat_messages
          WHERE id = ? AND run_id = ? AND role = 'assistant'`
-      ).get(projection.assistantMessageId, event.runId) as { session_id: string } | undefined
+      ).get(projection.assistantMessageId, event.runId) as {
+        session_id: string
+        turn_id: string
+      } | undefined
       if (!message) return inserted
       const resumed = event.type === 'run.resumed'
+      const recoveryBlocked = event.type === 'run.recovery_blocked'
       const completed = event.type === 'run.completed'
+      if (!recoveryBlocked) {
+        this.database.prepare(
+          `UPDATE chat_messages SET status = ?, content = ?, error = ?, completed_at = ?,
+             source_json = COALESCE(?, source_json)
+           WHERE id = ? AND run_id = ?`
+        ).run(
+          resumed ? 'pending' : completed ? 'completed' : 'failed',
+          projection.answer || (completed ? recoveredEmptyAnswer(this.database, message.session_id) : ''),
+          resumed || completed ? null : event.type === 'run.cancelled' ? 'Conversation run cancelled' : 'Conversation run failed',
+          resumed ? null : event.timestamp, source ? JSON.stringify(source) : null,
+          projection.assistantMessageId, event.runId
+        )
+      }
+      const turnStatus = resumed
+        ? 'running'
+        : recoveryBlocked
+          ? 'recovery_blocked'
+          : event.type === 'run.completed'
+            ? 'completed'
+            : event.type === 'run.cancelled'
+              ? 'cancelled'
+              : 'failed'
       this.database.prepare(
-        `UPDATE chat_messages SET status = ?, content = ?, error = ?, completed_at = ?,
-           source_json = COALESCE(?, source_json)
+        `UPDATE conversation_turns
+         SET status = ?, completed_at = ?
          WHERE id = ? AND run_id = ?`
       ).run(
-        resumed ? 'pending' : completed ? 'completed' : 'failed',
-        projection.answer || (completed ? recoveredEmptyAnswer(this.database, message.session_id) : ''),
-        resumed || completed ? null : event.type === 'run.cancelled' ? 'Conversation run cancelled' : 'Conversation run failed',
-        resumed ? null : event.timestamp, source ? JSON.stringify(source) : null,
-        projection.assistantMessageId, event.runId
+        turnStatus,
+        resumed || recoveryBlocked ? null : event.timestamp,
+        message.turn_id,
+        event.runId
       )
       this.database.prepare(
         'UPDATE chat_sessions SET revision = revision + 1, updated_at = ? WHERE id = ?'
@@ -432,10 +515,13 @@ export class SqliteAssistantRunEventStore {
   ): Promise<AssistantTurnProjection | undefined> {
     const rows = this.database
       .prepare(
-        `SELECT event_id, run_id, assistant_message_id, sequence, event_type,
-                event_timestamp, started_at, payload_json
-         FROM assistant_run_events
-         WHERE run_id = ?
+        `SELECT e.event_id, e.run_id, e.assistant_message_id, m.turn_id,
+                e.sequence, e.event_type, e.event_timestamp, e.started_at,
+                e.payload_json
+         FROM assistant_run_events e
+         JOIN chat_messages m
+           ON m.id = e.assistant_message_id AND m.role = 'assistant'
+         WHERE e.run_id = ?
          ORDER BY sequence`
       )
       .all(runId) as EventRow[]
@@ -443,6 +529,7 @@ export class SqliteAssistantRunEventStore {
     if (!first) return undefined
     let projection = createAssistantTurnProjection({
       runId,
+      turnId: first.turn_id,
       assistantMessageId: first.assistant_message_id,
       startedAt: first.started_at
     })
@@ -512,5 +599,23 @@ function assertProjectionMatchesEvent(
     !projection.assistantMessageId
   ) {
     throw new Error('Assistant Turn projection does not match event')
+  }
+}
+
+function assertProjectionTurnOwnership(
+  database: Database.Database,
+  projection: AssistantTurnProjection
+): void {
+  const message = database
+    .prepare(
+      `SELECT turn_id
+       FROM chat_messages
+       WHERE id = ? AND role = 'assistant'`
+    )
+    .get(projection.assistantMessageId) as { turn_id: string } | undefined
+  if (!message || message.turn_id !== projection.turnId) {
+    throw new Error(
+      'Assistant Turn projection Turn ownership does not match message'
+    )
   }
 }

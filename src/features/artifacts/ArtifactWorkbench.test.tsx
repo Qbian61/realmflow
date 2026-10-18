@@ -120,6 +120,11 @@ function createWorkspaceApi(
       },
       files: [],
     }),
+    bindSessionDirectory: vi.fn().mockResolvedValue({
+      requirementId: "session-folder",
+      rootName: "project",
+      rootPath: "/tmp/project",
+    }),
     chooseFolder: vi.fn().mockResolvedValue(null),
     chooseDirectory: vi.fn().mockResolvedValue({
       requirementId: "requirement-1",
@@ -307,6 +312,46 @@ describe("ArtifactWorkbench", () => {
     expect(
       screen.queryByRole("button", { name: "绑定本地目录" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("loads a preview URL for an image supplied by a session selection", async () => {
+    const imageFile: WorkspaceFile = {
+      name: "wireframe.png",
+      path: "attachment-digest",
+      content: "",
+      kind: "image",
+      language: "binary",
+      size: 3,
+      modifiedAt: 1,
+      version: "1:3",
+    };
+    const getPreviewUrl = vi
+      .fn()
+      .mockResolvedValue(
+        "realmflow-artifact://preview/session-files/attachment-digest",
+      );
+    const api = createWorkspaceApi({
+      getBinding: vi.fn().mockResolvedValue(null),
+      getPreviewUrl,
+    });
+
+    render(
+      <ArtifactWorkbench
+        initialFiles={[imageFile]}
+        requirementId="session-files"
+        workspaceApi={api}
+      />,
+    );
+
+    expect(await screen.findByRole("img", { name: "wireframe.png" }))
+      .toHaveAttribute(
+        "src",
+        "realmflow-artifact://preview/session-files/attachment-digest",
+      );
+    expect(getPreviewUrl).toHaveBeenCalledWith(
+      "session-files",
+      "attachment-digest",
+    );
   });
 
   it("keeps image previews contained and offers an in-place decode retry", async () => {

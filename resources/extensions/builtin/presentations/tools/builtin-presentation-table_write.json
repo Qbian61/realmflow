@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.presentation.table_write",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Write presentation table",
   "description": "Write a bounded value matrix into a table shape.",
   "tags": [

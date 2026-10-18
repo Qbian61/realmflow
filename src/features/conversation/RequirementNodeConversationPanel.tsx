@@ -7,11 +7,13 @@ import { Composer } from "../../components/Composer";
 import { Select } from "../../components/ui";
 import { useLocalization } from "../../localization/LocalizationProvider";
 import { ConversationMessageFooter } from "./ConversationMessageFooter";
-import { ConversationMessageList } from "./ConversationMessageList";
+import { ConversationTurnList } from "./ConversationTurnList";
+import { assembleConversationTurnViews } from "./conversation-turn-view";
 import { ConversationShareController } from "./ConversationShareController";
 import { KnowledgeNoteCapture } from "./KnowledgeNoteCapture";
 import { useToast } from "../toast/ToastProvider";
 import { useDefaultApprovalProfile } from "../permissions/use-default-approval-profile";
+import { useOptionalWorkbench } from "../workbench/WorkbenchProvider";
 
 type Props = {
   requirementId: string;
@@ -40,6 +42,7 @@ export function RequirementNodeConversationPanel({
 }: Props): JSX.Element {
   const { locale, t } = useLocalization();
   const toast = useToast();
+  const workbench = useOptionalWorkbench();
   const [prompt, setPrompt] = useState("");
   const [questionId, setQuestionId] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -56,10 +59,12 @@ export function RequirementNodeConversationPanel({
   const openQuestions = questions.filter(
     (question) => question.status === "open",
   );
-  const latestAssistantIndex =
-    displayedConversation?.messages
-      .map((message) => message.role === "assistant")
-      .lastIndexOf(true) ?? -1;
+  const turnViews = displayedConversation
+    ? assembleConversationTurnViews(
+        displayedConversation.turns,
+        displayedConversation.messages,
+      )
+    : [];
   const responseActive =
     displayedConversation?.messages.some(
       (message) =>
@@ -160,6 +165,23 @@ export function RequirementNodeConversationPanel({
         : undefined,
     );
   };
+  const openConversationAttachment = async (
+    attachmentId: string,
+  ): Promise<void> => {
+    const api = window.realmflow?.conversationAttachments;
+    if (!api || !workbench) return;
+    try {
+      const selection = await api.open(attachmentId);
+      if (selection.files.length === 0) {
+        throw new Error("Conversation attachment selection was empty");
+      }
+      workbench.openWorkspaceSelection(selection);
+    } catch {
+      toast.error("chat.openAttachmentFailed", {
+        dedupeKey: `chat.openAttachmentFailed:${attachmentId}`,
+      });
+    }
+  };
 
   return (
     <section
@@ -169,6 +191,7 @@ export function RequirementNodeConversationPanel({
       {displayedConversation?.messages.length ? (
         <ConversationShareController
           title={displayedConversation.title}
+          turns={displayedConversation.turns}
           messages={displayedConversation.messages}
         >
           {(shareMessage) => (
@@ -179,32 +202,28 @@ export function RequirementNodeConversationPanel({
               messages={displayedConversation.messages}
             >
               {(selection) => (
-                <ConversationMessageList
+                <ConversationTurnList
                   className="requirement-node-messages"
-                  messages={displayedConversation.messages}
+                  turns={turnViews}
                   selection={selection}
                   labels={{
                     messages: t("nodeConversation.messages"),
                     messageIndex: t("chat.messageIndex"),
-                    jumpToMessage: (index, preview) =>
+                    jumpToTurn: (index, preview) =>
                       t("chat.jumpToMessage", { index, preview }),
-                    tool: t("chat.tool"),
-                    generating: t("nodeConversation.generating"),
+                    openAttachment: (name) =>
+                      t("chat.openAttachment", { name }),
+                    thinking: t("chat.thinking"),
+                    planningNext: t("chat.planningNext"),
                   }}
-                  renderFooter={(message, messageIndex) => {
-                    if (
-                      (message.role !== "user" &&
-                        message.role !== "assistant") ||
-                      message.status === "pending"
-                    ) {
+                  onOpenAttachment={openConversationAttachment}
+                  renderFooter={(message, turn) => {
+                    if (message.status === "pending") {
                       return null;
                     }
                     const retryContent =
                       message.role === "assistant"
-                        ? displayedConversation.messages
-                            .slice(0, messageIndex)
-                            .reverse()
-                            .find((item) => item.role === "user")?.content
+                        ? turn.userMessage.content
                         : undefined;
                     return (
                       <ConversationMessageFooter
@@ -240,7 +259,7 @@ export function RequirementNodeConversationPanel({
                         retryDisabled={
                           !interactive ||
                           submitting ||
-                          messageIndex !== latestAssistantIndex
+                          !turn.isLast
                         }
                       />
                     );

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.document.replace_text",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "name": "Replace document text",
   "description": "Replace text without rewriting unrelated blocks.",
   "tags": [

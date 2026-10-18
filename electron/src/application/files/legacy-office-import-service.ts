@@ -5,7 +5,7 @@ import type {
   LegacyOfficeConversionResult,
   LegacyOfficeFormat,
   ModernOfficeFormat
-} from '../../sidecar/client'
+} from './private-python-worker-client'
 import type {
   LocalPresentationSessionService,
   PresentationSessionSummary

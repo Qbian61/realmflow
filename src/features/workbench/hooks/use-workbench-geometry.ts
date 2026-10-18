@@ -10,20 +10,21 @@ import {
 } from 'react'
 
 const MIN_WORKBENCH_WIDTH = 440
-const WORKBENCH_RIGHT_INSET = 8
-const MIN_PANEL_WIDTH = MIN_WORKBENCH_WIDTH + WORKBENCH_RIGHT_INSET
+const MIN_PANEL_WIDTH = MIN_WORKBENCH_WIDTH
 const MAX_PANEL_WIDTH = 920
 const MIN_SIDEBAR_WIDTH = 220
 const MIN_CONTENT_WIDTH = 320
 const MIN_MAIN_WORKSPACE_WIDTH =
-  MIN_SIDEBAR_WIDTH + MIN_CONTENT_WIDTH + 8
+  MIN_SIDEBAR_WIDTH + MIN_CONTENT_WIDTH
 const WORKBENCH_RESIZER_WIDTH = 4
+const WORKSPACE_PANEL_INSET = 0
 
 export function useWorkbenchGeometry(panelOpen: boolean): {
   layoutRef: RefObject<HTMLDivElement>
   panelRef: RefObject<HTMLDivElement>
   panelWidth: number
   panelMaximized: boolean
+  maximizedLeftInset: number
   onResizeStart: (event: MouseEvent<HTMLDivElement>) => void
   onResizeKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void
   onToggleMaximized: () => void
@@ -33,6 +34,24 @@ export function useWorkbenchGeometry(panelOpen: boolean): {
   const resizeStartRef = useRef<{ clientX: number; width: number }>()
   const [panelWidth, setPanelWidth] = useState(640)
   const [panelMaximized, setPanelMaximized] = useState(false)
+  const [maximizedLeftInset, setMaximizedLeftInset] = useState(
+    WORKSPACE_PANEL_INSET
+  )
+
+  const measureMaximizedLeftInset = useCallback((): number => {
+    const layout = layoutRef.current
+    const content = layout?.querySelector<HTMLElement>('.app-content')
+    if (!layout || !content) return WORKSPACE_PANEL_INSET
+
+    const layoutRect = layout.getBoundingClientRect()
+    const contentRect = content.getBoundingClientRect()
+    if (contentRect.width <= 0) return WORKSPACE_PANEL_INSET
+
+    return Math.max(
+      WORKSPACE_PANEL_INSET,
+      contentRect.left - layoutRect.left
+    )
+  }, [])
 
   const clampPanelWidth = useCallback((width: number): number => {
     const layout = layoutRef.current
@@ -44,7 +63,7 @@ export function useWorkbenchGeometry(panelOpen: boolean): {
       ? Number.parseFloat(styles.marginLeft) +
         Number.parseFloat(styles.marginRight)
       : Number.NaN
-    const contentInset = Number.isFinite(measuredInset) ? measuredInset : 8
+    const contentInset = Number.isFinite(measuredInset) ? measuredInset : 0
     const sidebarWidth =
       sidebar?.getBoundingClientRect().width || MIN_SIDEBAR_WIDTH
     const minimumMainWidth = Math.max(
@@ -96,11 +115,33 @@ export function useWorkbenchGeometry(panelOpen: boolean): {
     return () => observer.disconnect()
   }, [clampPanelWidth, panelMaximized, panelOpen])
 
+  useLayoutEffect(() => {
+    if (!panelMaximized) return
+    const layout = layoutRef.current
+    const content = layout?.querySelector<HTMLElement>('.app-content')
+    if (!layout || !content) return
+
+    const updateInset = (): void => {
+      const nextInset = measureMaximizedLeftInset()
+      setMaximizedLeftInset((current) =>
+        current === nextInset ? current : nextInset
+      )
+    }
+    updateInset()
+    if (typeof ResizeObserver === 'undefined') return
+
+    const observer = new ResizeObserver(updateInset)
+    observer.observe(layout)
+    observer.observe(content)
+    return () => observer.disconnect()
+  }, [measureMaximizedLeftInset, panelMaximized])
+
   return {
     layoutRef,
     panelRef,
     panelWidth,
     panelMaximized,
+    maximizedLeftInset,
     onResizeStart: (event) => {
       resizeStartRef.current = {
         clientX: event.clientX,
@@ -115,6 +156,11 @@ export function useWorkbenchGeometry(panelOpen: boolean): {
         clampPanelWidth(width + (event.key === 'ArrowLeft' ? 8 : -8))
       )
     },
-    onToggleMaximized: () => setPanelMaximized((value) => !value)
+    onToggleMaximized: () => {
+      if (!panelMaximized) {
+        setMaximizedLeftInset(measureMaximizedLeftInset())
+      }
+      setPanelMaximized((value) => !value)
+    }
   }
 }

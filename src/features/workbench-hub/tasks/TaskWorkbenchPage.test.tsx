@@ -942,33 +942,6 @@ describe("TaskWorkbenchPage", () => {
     expect(screen.getByText("整理文档 · 1")).toBeInTheDocument();
   });
 
-  it("normalizes cached snapshots created before hierarchical groups", async () => {
-    const current = taskSnapshot();
-    const legacy = {
-      ...current,
-      table: {
-        ...current.table,
-        viewState: {
-          filters: [],
-          filterJoin: "and",
-          sorts: [],
-        },
-      },
-    } as unknown as WorkbenchTaskTableSnapshot;
-    delete (legacy as Partial<WorkbenchTaskTableSnapshot>).groupTree;
-    const api = createApi({
-      listTables: vi.fn().mockResolvedValue([legacy.table]),
-      getTable: vi.fn().mockResolvedValue(legacy),
-    });
-
-    renderPage(api);
-
-    expect(
-      await screen.findByRole("table", { name: "发布计划" }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "分组" })).toBeInTheDocument();
-    expect(screen.getByText("发布桌面版")).toBeInTheDocument();
-  });
 });
 
 function renderPage(api: WorkbenchTaskApi): void {

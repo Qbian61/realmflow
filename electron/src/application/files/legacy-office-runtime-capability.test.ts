@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { LegacyOfficeRuntimeCapabilityProvider } from './legacy-office-runtime-capability'
+import { nonReadyToolIds } from '../tools/runtime-tool-availability'
 
 describe('LegacyOfficeRuntimeCapabilityProvider', () => {
   it('discovers LibreOffice from PATH without invoking a process', async () => {
@@ -12,7 +13,9 @@ describe('LegacyOfficeRuntimeCapabilityProvider', () => {
       isExecutable
     })
 
-    await expect(provider.getUnavailableToolIds()).resolves.toEqual(new Set())
+    expect(nonReadyToolIds(await provider.getEligibilitySnapshot())).toEqual(
+      new Set()
+    )
     expect(isExecutable).toHaveBeenCalledWith('/opt/tools/soffice')
   })
 
@@ -24,7 +27,9 @@ describe('LegacyOfficeRuntimeCapabilityProvider', () => {
       isExecutable: async (candidate) => candidate === path
     })
 
-    await expect(provider.getUnavailableToolIds()).resolves.toEqual(new Set())
+    expect(nonReadyToolIds(await provider.getEligibilitySnapshot())).toEqual(
+      new Set()
+    )
   })
 
   it('hides legacy Office import but keeps PDF export visible for structured fallback', async () => {
@@ -34,7 +39,7 @@ describe('LegacyOfficeRuntimeCapabilityProvider', () => {
       isExecutable: async () => false
     })
 
-    await expect(provider.getUnavailableToolIds()).resolves.toEqual(
+    expect(nonReadyToolIds(await provider.getEligibilitySnapshot())).toEqual(
       new Set(['builtin.office.import_legacy'])
     )
   })
@@ -83,15 +88,17 @@ describe('LegacyOfficeRuntimeCapabilityProvider', () => {
       isExecutable
     })
 
-    await provider.getUnavailableToolIds()
+    await provider.getEligibilitySnapshot()
     expect(isExecutable).toHaveBeenCalledTimes(2)
     available = true
-    await expect(provider.getUnavailableToolIds()).resolves.toEqual(
+    expect(nonReadyToolIds(await provider.getEligibilitySnapshot())).toEqual(
       new Set(['builtin.office.import_legacy'])
     )
     expect(isExecutable).toHaveBeenCalledTimes(2)
     provider.invalidate()
-    await expect(provider.getUnavailableToolIds()).resolves.toEqual(new Set())
+    expect(nonReadyToolIds(await provider.getEligibilitySnapshot())).toEqual(
+      new Set()
+    )
     expect(isExecutable).toHaveBeenCalledTimes(3)
   })
 
@@ -106,11 +113,13 @@ describe('LegacyOfficeRuntimeCapabilityProvider', () => {
       cacheTtlMs: 30_000
     })
 
-    await expect(provider.getUnavailableToolIds()).resolves.toEqual(
+    expect(nonReadyToolIds(await provider.getEligibilitySnapshot())).toEqual(
       new Set(['builtin.office.import_legacy'])
     )
     available = true
     now += 30_001
-    await expect(provider.getUnavailableToolIds()).resolves.toEqual(new Set())
+    expect(nonReadyToolIds(await provider.getEligibilitySnapshot())).toEqual(
+      new Set()
+    )
   })
 })

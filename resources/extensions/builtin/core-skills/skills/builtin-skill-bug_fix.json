@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.skill.bug_fix",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "name": "Bug fix",
   "description": "Reproduce, diagnose, repair, and regression-test a defect.",
   "instructionsPath": "instructions/bug_fix.md",

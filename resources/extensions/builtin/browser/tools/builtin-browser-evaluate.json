@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.browser.evaluate",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Evaluate browser snapshot",
   "description": "Evaluate an expression over the current Run sanitized snapshot in an isolated offline sandbox after explicit approval. No live page JavaScript, cookies or storage.",
   "tags": [

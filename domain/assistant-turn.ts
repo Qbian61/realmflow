@@ -1,3 +1,5 @@
+import type { ConversationGeneratedArtifact } from './follow-up-suggestion'
+
 export const TOOL_CALL_CATEGORIES = [
   'web_search',
   'command',
@@ -78,9 +80,17 @@ export type ToolCallAttemptProjection = {
 export type DelegationTaskProjection = {
   taskId: string
   objective: string
+  childRunId?: string
+  childSessionId?: string
+  ordinal?: number
+  agentId?: string
+  agentName?: string
   status: 'requested' | 'completed' | 'failed' | 'cancelled'
   summary?: string
   evidenceCount: number
+  artifactIds?: string[]
+  startedAt?: number
+  completedAt?: number
   errorCode?: string
 }
 
@@ -113,6 +123,178 @@ export type AssistantRecoveryProjection = {
   actions?: Array<'resume' | 'branch' | 'cancel'>
 }
 
+export type AssistantTurnStatus =
+  | 'running'
+  | 'waiting_permission'
+  | 'waiting_input'
+  | 'retrying'
+  | 'paused'
+  | 'recovery_blocked'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+
+export type SemanticToolViewData = {
+  type:
+    | 'command'
+    | 'web_search'
+    | 'file'
+    | 'skill'
+    | 'agent'
+    | 'mcp'
+    | 'connector'
+    | 'generic'
+  title: string
+}
+
+export type FileChangeSummary = {
+  added: number
+  modified: number
+  deleted: number
+}
+
+export type ImageResultProjection = {
+  id: string
+  name: string
+  mediaType: string
+  path?: string
+  url?: string
+  width?: number
+  height?: number
+}
+
+export type IsolatedWidgetProjection = {
+  id: string
+  title: string
+  html: string
+}
+
+export type SubAgentChildProjection = {
+  taskId: string
+  childRunId: string
+  childSessionId: string
+  ordinal: number
+  agentId?: string
+  agentName?: string
+  objective: string
+  status: 'registered' | 'running' | 'completed' | 'failed' | 'cancelled'
+  progressSummary?: string
+  resultSummary?: string
+  evidenceCount: number
+  artifactIds: string[]
+  startedAt?: number
+  completedAt?: number
+  errorCode?: string
+  tree: AssistantDisplayNode[]
+}
+
+export type SubAgentGroupProjection = {
+  groupId: string
+  callId: string
+  parentRunId: string
+  strategy: 'parallel' | 'sequential'
+  status: 'requested' | 'running' | 'partial' | 'completed' | 'failed' | 'cancelled'
+  requestedAt: number
+  completedAt?: number
+  children: SubAgentChildProjection[]
+}
+
+export type TodoItemProjection = {
+  id: string
+  ordinal: number
+  title: string
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+  children: AssistantDisplayNode[]
+}
+
+export type TodoGroupProjection = {
+  todoId: string
+  title: string
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+  items: TodoItemProjection[]
+}
+
+export type AssistantExecutionGroupNode = {
+  id: string
+  kind: 'execution_group'
+  order: number
+  groupType: 'progress' | 'explore' | 'command' | 'todo' | 'sub_agent'
+  title: string
+  status: AssistantTurnStatus
+  defaultExpanded: boolean
+  children: AssistantDisplayNode[]
+}
+
+export type AssistantDisplayNode =
+  | {
+      id: string
+      kind: 'reference_group'
+      order: number
+      references: ReferenceItem[]
+    }
+  | {
+      id: string
+      kind: 'reasoning'
+      order: number
+      content: string
+      status: 'streaming' | 'completed'
+    }
+  | {
+      id: string
+      kind: 'tool_call'
+      order: number
+      toolCall: ToolCallProjection
+      view: SemanticToolViewData
+    }
+  | {
+      id: string
+      kind: 'sub_agent_group'
+      order: number
+      group: SubAgentGroupProjection
+    }
+  | {
+      id: string
+      kind: 'todo_group'
+      order: number
+      todo: TodoGroupProjection
+    }
+  | {
+      id: string
+      kind: 'notification'
+      order: number
+      level: 'info' | 'warning' | 'error'
+      message: string
+      diagnosticId?: string
+    }
+  | {
+      id: string
+      kind: 'context_compaction'
+      order: number
+      compaction: ContextCompactionProjection
+    }
+  | {
+      id: string
+      kind: 'artifact'
+      order: number
+      artifact: ConversationGeneratedArtifact
+    }
+  | {
+      id: string
+      kind: 'widget'
+      order: number
+      widget: IsolatedWidgetProjection
+    }
+  | AssistantExecutionGroupNode
+  | {
+      id: string
+      kind: 'finish'
+      order: number
+      answerMessageId: string
+      fileChanges?: FileChangeSummary
+      artifacts?: ConversationGeneratedArtifact[]
+      images?: ImageResultProjection[]
+    }
+
 type AssistantEventBase<TType extends string, TData> = {
   id: string
   runId: string
@@ -129,6 +311,10 @@ export type AssistantRunEvent =
       { progress: number; message?: string }
     >
   | AssistantEventBase<'answer.delta', { delta: string }>
+  | AssistantEventBase<
+      'answer.completed',
+      { content: string; sourceCallId?: string }
+    >
   | AssistantEventBase<
       'execution.summary.delta',
       {
@@ -182,11 +368,18 @@ export type AssistantRunEvent =
           status: 'completed' | 'partial' | 'failed' | 'cancelled'
           tasks: Array<{
             taskId: string
+            childRunId?: string
+            childSessionId?: string
+            ordinal?: number
+            agentId?: string
+            agentName?: string
             status: 'completed' | 'failed' | 'cancelled'
             summary: string
             evidence: Array<unknown>
             unresolved: string[]
             artifactIds: string[]
+            startedAt?: number
+            completedAt?: number
             errorCode?: string
           }>
         }
@@ -203,6 +396,20 @@ export type AssistantRunEvent =
         message: string
         recoveryHint?: string
         diagnosticId?: string
+      }
+    >
+  | AssistantEventBase<
+      'delegation.updated',
+      Omit<SubAgentGroupProjection, 'status' | 'completedAt'> & {
+        completedAt?: number
+      }
+    >
+  | AssistantEventBase<
+      'todo.updated',
+      {
+        todoId: string
+        title: string
+        items: TodoItemProjection[]
       }
     >
   | AssistantEventBase<'artifact.ready', Record<string, never>>
@@ -260,22 +467,17 @@ export type AssistantRunEvent =
     >
 
 export type AssistantTurnProjection = {
+  schemaVersion: 2
   runId: string
+  turnId: string
   assistantMessageId: string
-  status:
-    | 'running'
-    | 'waiting_permission'
-    | 'waiting_input'
-    | 'retrying'
-    | 'paused'
-    | 'recovery_blocked'
-    | 'completed'
-    | 'failed'
-    | 'cancelled'
+  status: AssistantTurnStatus
   startedAt: number
   elapsedAt?: number
   completedAt?: number
   answer: string
+  tree: AssistantDisplayNode[]
+  collapsedDefaults: string[]
   executionSummaries: ExecutionSummary[]
   references: ReferenceItem[]
   toolCalls: ToolCallProjection[]
@@ -304,13 +506,17 @@ export class AssistantTurnProjectionError extends Error {
 
 export function createAssistantTurnProjection(input: {
   runId: string
+  turnId: string
   assistantMessageId: string
   startedAt: number
 }): AssistantTurnProjection {
   return {
+    schemaVersion: 2,
     ...input,
     status: 'running',
     answer: '',
+    tree: [],
+    collapsedDefaults: [],
     executionSummaries: [],
     references: [],
     toolCalls: [],
@@ -341,7 +547,10 @@ export function projectAssistantTurn(
   }
 
   const next = applyEvent(current, event)
-  return { ...next, lastSequence: event.sequence }
+  return {
+    ...projectDisplayTree(current, next, event),
+    lastSequence: event.sequence
+  }
 }
 
 export function summarizeToolCalls(
@@ -421,6 +630,16 @@ function applyEvent(
       }
     case 'answer.delta':
       return { ...current, answer: current.answer + event.data.delta }
+    case 'answer.completed':
+      return {
+        ...current,
+        answer: event.data.content,
+        toolCalls: event.data.sourceCallId
+          ? current.toolCalls.filter(
+              ({ callId }) => callId !== event.data.sourceCallId
+            )
+          : current.toolCalls
+      }
     case 'execution.summary.delta': {
       const existing = current.executionSummaries.find(
         (summary) => summary.id === event.data.summaryId
@@ -543,23 +762,627 @@ function applyEvent(
         ),
         status: 'running'
       }
+    case 'delegation.updated':
+    case 'todo.updated':
+      return current
     case 'run.completed':
       return { ...terminal(current, 'completed', event.timestamp),
         answer: event.data.recoveredAnswer ?? current.answer }
     case 'run.failed':
       return {
-        ...terminal(current, 'failed', event.timestamp),
+        ...terminal(current, 'failed', event.timestamp, {
+          errorCode: event.data.errorCode ?? 'run_failed',
+          error: event.data.message ?? 'Assistant run failed'
+        }),
         answer: event.data.recoveredAnswer ?? current.answer,
         error: event.data.message,
         ...terminalFailureRecovery(event)
       }
     case 'run.cancelled':
       return {
-        ...terminal(current, 'cancelled', event.timestamp),
+        ...terminal(current, 'cancelled', event.timestamp, {
+          errorCode: 'run_cancelled',
+          error: event.data.message ?? 'Assistant run cancelled'
+        }),
         answer: event.data.recoveredAnswer ?? current.answer,
         ...(event.data.message ? { error: event.data.message } : {})
       }
+    default:
+      return current
   }
+}
+
+function projectDisplayTree(
+  previous: AssistantTurnProjection,
+  current: AssistantTurnProjection,
+  event: AssistantRunEvent
+): AssistantTurnProjection {
+  let tree = previous.tree
+  switch (event.type) {
+    case 'run.progress':
+      if (event.data.message) {
+        tree = upsertProgressChild(
+          tree,
+          {
+            id: `reasoning:${event.id}`,
+            kind: 'reasoning',
+            order: event.sequence,
+            content: event.data.message,
+            status: 'streaming'
+          },
+          event.sequence,
+          current.status
+        )
+      }
+      break
+    case 'execution.summary.delta': {
+      const summary = current.executionSummaries.find(
+        ({ id }) => id === event.data.summaryId
+      )
+      if (summary) {
+        tree = upsertProgressChild(
+          tree,
+          {
+            id: `reasoning:${summary.id}`,
+            kind: 'reasoning',
+            order: existingNodeOrder(
+              tree,
+              `reasoning:${summary.id}`,
+              event.sequence
+            ),
+            content: summary.content,
+            status: 'streaming'
+          },
+          event.sequence,
+          current.status
+        )
+      }
+      break
+    }
+    case 'reference.added':
+      tree = upsertRootNode(tree, {
+        id: 'references',
+        kind: 'reference_group',
+        order: existingNodeOrder(tree, 'references', event.sequence),
+        references: current.references
+      })
+      break
+    case 'tool.call.requested':
+    case 'tool.call.started':
+    case 'tool.call.progress':
+    case 'tool.call.permission_required':
+    case 'tool.call.completed':
+    case 'tool.call.failed': {
+      const toolCall = current.toolCalls.find(
+        ({ callId }) => callId === event.data.callId
+      )
+      if (toolCall) {
+        tree = upsertToolNode(
+          tree,
+          toolCall,
+          event.sequence,
+          current.status
+        )
+      }
+      if (
+        event.type === 'tool.call.completed' &&
+        event.data.delegation?.tasks.every(
+          (task) =>
+            task.childRunId &&
+            task.childSessionId &&
+            Number.isInteger(task.ordinal)
+        )
+      ) {
+        tree = removeNode(tree, `tool:${event.data.callId}`)
+        tree = upsertCompletedDelegationGroup(
+          tree,
+          current,
+          event,
+          current.status
+        )
+      }
+      break
+    }
+    case 'delegation.updated':
+      tree = upsertSubAgentGroup(tree, event, current.status)
+      break
+    case 'todo.updated':
+      tree = upsertTodoGroup(tree, event, current.status)
+      break
+    case 'context.compacted': {
+      const compaction = current.compactions?.at(-1)
+      if (compaction) {
+        tree = upsertRootNode(tree, {
+          id: `compaction:${event.id}`,
+          kind: 'context_compaction',
+          order: event.sequence,
+          compaction
+        })
+      }
+      break
+    }
+    case 'answer.completed':
+      if (event.data.sourceCallId) {
+        tree = removeNode(tree, `tool:${event.data.sourceCallId}`)
+      }
+      tree = upsertFinishNode(tree, current.assistantMessageId, event.sequence)
+      break
+    case 'run.completed':
+      tree = upsertFinishNode(tree, current.assistantMessageId, event.sequence)
+      break
+    case 'run.failed':
+    case 'run.cancelled':
+      for (const toolCall of current.toolCalls) {
+        tree = upsertToolNode(tree, toolCall, event.sequence, current.status)
+      }
+      tree = upsertRootNode(tree, {
+        id: `notification:${event.id}`,
+        kind: 'notification',
+        order: event.sequence,
+        level: 'error',
+        message:
+          event.type === 'run.failed'
+            ? 'Assistant run failed'
+            : 'Assistant run cancelled',
+        diagnosticId: event.id
+      })
+      if (current.answer) {
+        tree = upsertFinishNode(
+          tree,
+          current.assistantMessageId,
+          event.sequence
+        )
+      }
+      break
+    case 'run.started':
+    case 'answer.delta':
+    case 'artifact.ready':
+    case 'heartbeat':
+    case 'run.retrying':
+    case 'run.waiting_input':
+    case 'run.paused':
+    case 'run.recovery_blocked':
+    case 'run.resumed':
+      break
+    default: {
+      const unknownEvent = event as unknown as {
+        id: string
+        sequence: number
+      }
+      tree = upsertRootNode(tree, {
+        id: `notification:${unknownEvent.id}`,
+        kind: 'notification',
+        order: unknownEvent.sequence,
+        level: 'warning',
+        message: 'Unsupported assistant event',
+        diagnosticId: unknownEvent.id
+      })
+    }
+  }
+  tree = synchronizeDisplayTree(tree, current)
+  return {
+    ...current,
+    tree,
+    collapsedDefaults: collapsedGroupIds(tree)
+  }
+}
+
+function upsertToolNode(
+  tree: AssistantDisplayNode[],
+  toolCall: ToolCallProjection,
+  order: number,
+  status: AssistantTurnStatus
+): AssistantDisplayNode[] {
+  const existingOrder = existingNodeOrder(
+    tree,
+    `tool:${toolCall.callId}`,
+    order
+  )
+  const child: AssistantDisplayNode = {
+    id: `tool:${toolCall.callId}`,
+    kind: 'tool_call',
+    order: existingOrder,
+    toolCall,
+    view: semanticToolView(toolCall)
+  }
+  const progress = findNode(tree, 'progress')
+  const progressChildren =
+    progress?.kind === 'execution_group' ? progress.children : []
+  const existingGroup = progressChildren.find(
+    (node): node is AssistantExecutionGroupNode =>
+      node.kind === 'execution_group' &&
+      node.children.some(({ id }) => id === child.id)
+  )
+  const lastProgressChild = [...progressChildren]
+    .sort(compareDisplayNodes)
+    .at(-1)
+  const adjacentGroup =
+    !existingGroup &&
+    lastProgressChild?.kind === 'execution_group' &&
+    (lastProgressChild.groupType === 'command' ||
+      lastProgressChild.groupType === 'explore')
+      ? lastProgressChild
+      : undefined
+  const targetGroup = existingGroup ?? adjacentGroup
+  const children = upsertNode(targetGroup?.children ?? [], child)
+  const groupType = children.every(
+    (node) =>
+      node.kind === 'tool_call' && node.toolCall.category === 'command'
+  )
+    ? 'command'
+    : 'explore'
+  const groupId = targetGroup?.id ?? `activity:${order}`
+  const group: AssistantExecutionGroupNode = {
+    id: groupId,
+    kind: 'execution_group',
+    order: targetGroup?.order ?? order,
+    groupType,
+    title: 'Activity',
+    status,
+    defaultExpanded: defaultExpanded(status),
+    children
+  }
+  return upsertProgressChild(tree, group, order, status)
+}
+
+function upsertSubAgentGroup(
+  tree: AssistantDisplayNode[],
+  event: Extract<AssistantRunEvent, { type: 'delegation.updated' }>,
+  status: AssistantTurnStatus
+): AssistantDisplayNode[] {
+  const id = `sub-agent-group:${event.data.groupId}`
+  const children = [...event.data.children]
+    .sort((left, right) => left.ordinal - right.ordinal)
+    .map((child) => ({
+      ...child,
+      artifactIds: [...child.artifactIds],
+      tree: [...child.tree].sort(compareDisplayNodes)
+    }))
+  const completedAt =
+    event.data.completedAt ??
+    (children.every((child) => isTerminalSubAgentStatus(child.status))
+      ? Math.max(...children.map((child) => child.completedAt ?? event.timestamp))
+      : undefined)
+  const node: AssistantDisplayNode = {
+    id,
+    kind: 'sub_agent_group',
+    order: existingNodeOrder(tree, id, event.sequence),
+    group: {
+      ...event.data,
+      status: aggregateSubAgentStatus(children),
+      children,
+      ...(completedAt === undefined ? {} : { completedAt })
+    }
+  }
+  return upsertNamedExecutionGroup(
+    tree,
+    'sub_agent',
+    'Sub-agents',
+    node,
+    event.sequence,
+    status
+  )
+}
+
+function upsertCompletedDelegationGroup(
+  tree: AssistantDisplayNode[],
+  projection: AssistantTurnProjection,
+  event: Extract<AssistantRunEvent, { type: 'tool.call.completed' }>,
+  status: AssistantTurnStatus
+): AssistantDisplayNode[] {
+  const delegation = projection.delegations.find(
+    ({ callId }) => callId === event.data.callId
+  )
+  if (!delegation || !event.data.delegation) return tree
+  const children: SubAgentChildProjection[] =
+    event.data.delegation.tasks.map((task) => {
+      const childRunId = task.childRunId!
+      const summary = task.summary
+      return {
+        taskId: task.taskId,
+        childRunId,
+        childSessionId: task.childSessionId!,
+        ordinal: task.ordinal!,
+        ...(task.agentId ? { agentId: task.agentId } : {}),
+        ...(task.agentName ? { agentName: task.agentName } : {}),
+        objective:
+          delegation.tasks.find(({ taskId }) => taskId === task.taskId)
+            ?.objective ?? task.taskId,
+        status: task.status,
+        resultSummary: summary,
+        evidenceCount: task.evidence.length,
+        artifactIds: [...task.artifactIds],
+        ...(task.startedAt === undefined ? {} : { startedAt: task.startedAt }),
+        ...(task.completedAt === undefined
+          ? {}
+          : { completedAt: task.completedAt }),
+        ...(task.errorCode ? { errorCode: task.errorCode } : {}),
+        tree:
+          task.status === 'completed'
+            ? [{
+                id: `finish:${childRunId}:assistant`,
+                kind: 'finish',
+                order: 1,
+                answerMessageId: `${childRunId}:assistant`
+              }]
+            : [{
+                id: `notification:${childRunId}`,
+                kind: 'notification',
+                order: 1,
+                level: 'error',
+                message: summary
+              }]
+      }
+    })
+  const id = `sub-agent-group:delegation:${event.data.callId}`
+  return upsertNamedExecutionGroup(
+    tree,
+    'sub_agent',
+    'Sub-agents',
+    {
+      id,
+      kind: 'sub_agent_group',
+      order: existingNodeOrder(tree, id, event.sequence),
+      group: {
+        groupId: `delegation:${event.data.callId}`,
+        callId: event.data.callId,
+        parentRunId: projection.runId,
+        strategy: 'parallel',
+        status: aggregateSubAgentStatus(children),
+        requestedAt: delegation.requestedAt,
+        completedAt: event.timestamp,
+        children: children.sort((left, right) => left.ordinal - right.ordinal)
+      }
+    },
+    event.sequence,
+    status
+  )
+}
+
+function upsertTodoGroup(
+  tree: AssistantDisplayNode[],
+  event: Extract<AssistantRunEvent, { type: 'todo.updated' }>,
+  status: AssistantTurnStatus
+): AssistantDisplayNode[] {
+  const id = `todo-group:${event.data.todoId}`
+  const items = [...event.data.items]
+    .sort((left, right) => left.ordinal - right.ordinal)
+    .map((item) => ({
+      ...item,
+      children: [...item.children].sort(compareDisplayNodes)
+    }))
+  const node: AssistantDisplayNode = {
+    id,
+    kind: 'todo_group',
+    order: existingNodeOrder(tree, id, event.sequence),
+    todo: {
+      todoId: event.data.todoId,
+      title: event.data.title,
+      status: aggregateTodoStatus(items),
+      items
+    }
+  }
+  return upsertNamedExecutionGroup(
+    tree,
+    'todo',
+    event.data.title,
+    node,
+    event.sequence,
+    status
+  )
+}
+
+function upsertNamedExecutionGroup(
+  tree: AssistantDisplayNode[],
+  groupType: 'todo' | 'sub_agent',
+  title: string,
+  child: AssistantDisplayNode,
+  order: number,
+  status: AssistantTurnStatus
+): AssistantDisplayNode[] {
+  const progress = findNode(tree, 'progress')
+  const progressChildren =
+    progress?.kind === 'execution_group' ? progress.children : []
+  const existing = progressChildren.find(({ id }) => id === groupType)
+  const group: AssistantExecutionGroupNode = {
+    id: groupType,
+    kind: 'execution_group',
+    order: existing?.order ?? order,
+    groupType,
+    title,
+    status,
+    defaultExpanded: defaultExpanded(status),
+    children: upsertNode(
+      existing?.kind === 'execution_group' ? existing.children : [],
+      child
+    )
+  }
+  return upsertProgressChild(tree, group, order, status)
+}
+
+function aggregateSubAgentStatus(
+  children: readonly SubAgentChildProjection[]
+): SubAgentGroupProjection['status'] {
+  if (children.some((child) => child.status === 'running')) return 'running'
+  if (children.some((child) => child.status === 'registered')) return 'requested'
+  if (children.every((child) => child.status === 'completed')) return 'completed'
+  if (children.every((child) => child.status === 'failed')) return 'failed'
+  if (children.every((child) => child.status === 'cancelled')) return 'cancelled'
+  return 'partial'
+}
+
+function isTerminalSubAgentStatus(
+  status: SubAgentChildProjection['status']
+): boolean {
+  return status === 'completed' || status === 'failed' || status === 'cancelled'
+}
+
+function aggregateTodoStatus(
+  items: readonly TodoItemProjection[]
+): TodoGroupProjection['status'] {
+  if (items.some((item) => item.status === 'running')) return 'running'
+  if (items.some((item) => item.status === 'pending')) {
+    return items.some((item) => item.status === 'completed') ? 'running' : 'pending'
+  }
+  if (items.every((item) => item.status === 'completed')) return 'completed'
+  if (items.every((item) => item.status === 'cancelled')) return 'cancelled'
+  if (items.some((item) => item.status === 'failed')) return 'failed'
+  return 'pending'
+}
+
+function semanticToolView(
+  toolCall: ToolCallProjection
+): SemanticToolViewData {
+  const type: SemanticToolViewData['type'] =
+    toolCall.category === 'filesystem'
+      ? 'file'
+      : toolCall.category === 'other'
+        ? 'generic'
+        : toolCall.category
+  return { type, title: toolCall.toolName }
+}
+
+function upsertProgressChild(
+  tree: AssistantDisplayNode[],
+  child: AssistantDisplayNode,
+  order: number,
+  status: AssistantTurnStatus
+): AssistantDisplayNode[] {
+  const existing = tree.find(({ id }) => id === 'progress')
+  const progress: AssistantExecutionGroupNode = {
+    id: 'progress',
+    kind: 'execution_group',
+    order: existing?.order ?? order,
+    groupType: 'progress',
+    title: 'Task progress',
+    status,
+    defaultExpanded: defaultExpanded(status),
+    children: upsertNode(
+      existing?.kind === 'execution_group' ? existing.children : [],
+      child
+    )
+  }
+  return upsertRootNode(tree, progress)
+}
+
+function upsertFinishNode(
+  tree: AssistantDisplayNode[],
+  assistantMessageId: string,
+  order: number
+): AssistantDisplayNode[] {
+  const id = `finish:${assistantMessageId}`
+  return upsertRootNode(tree, {
+    id,
+    kind: 'finish',
+    order: existingNodeOrder(tree, id, order),
+    answerMessageId: assistantMessageId
+  })
+}
+
+function upsertRootNode(
+  tree: AssistantDisplayNode[],
+  node: AssistantDisplayNode
+): AssistantDisplayNode[] {
+  return upsertNode(tree, node)
+}
+
+function upsertNode(
+  nodes: AssistantDisplayNode[],
+  node: AssistantDisplayNode
+): AssistantDisplayNode[] {
+  const next = nodes.some(({ id }) => id === node.id)
+    ? nodes.map((candidate) => (candidate.id === node.id ? node : candidate))
+    : [...nodes, node]
+  return next.sort(compareDisplayNodes)
+}
+
+function compareDisplayNodes(
+  left: AssistantDisplayNode,
+  right: AssistantDisplayNode
+): number {
+  return left.order - right.order || left.id.localeCompare(right.id)
+}
+
+function findNode(
+  nodes: readonly AssistantDisplayNode[],
+  id: string
+): AssistantDisplayNode | undefined {
+  for (const node of nodes) {
+    if (node.id === id) return node
+    if (node.kind === 'execution_group') {
+      const child = findNode(node.children, id)
+      if (child) return child
+    }
+  }
+  return undefined
+}
+
+function existingNodeOrder(
+  nodes: readonly AssistantDisplayNode[],
+  id: string,
+  fallback: number
+): number {
+  return findNode(nodes, id)?.order ?? fallback
+}
+
+function removeNode(
+  nodes: AssistantDisplayNode[],
+  id: string
+): AssistantDisplayNode[] {
+  return nodes.flatMap((node): AssistantDisplayNode[] => {
+    if (node.id === id) return []
+    if (node.kind !== 'execution_group') return [node]
+    const children = removeNode(node.children, id)
+    return children.length === 0 ? [] : [{ ...node, children }]
+  })
+}
+
+function synchronizeDisplayTree(
+  nodes: AssistantDisplayNode[],
+  projection: AssistantTurnProjection
+): AssistantDisplayNode[] {
+  return nodes.flatMap((node): AssistantDisplayNode[] => {
+    if (node.kind === 'tool_call') {
+      const toolCall = projection.toolCalls.find(
+        ({ callId }) => callId === node.toolCall.callId
+      )
+      return toolCall
+        ? [{ ...node, toolCall, view: semanticToolView(toolCall) }]
+        : []
+    }
+    if (node.kind === 'reasoning') {
+      return [{
+        ...node,
+        status: isTerminal(projection.status) ? 'completed' : 'streaming'
+      }]
+    }
+    if (node.kind !== 'execution_group') return [node]
+    const children = synchronizeDisplayTree(node.children, projection)
+    return children.length === 0
+      ? []
+      : [{
+          ...node,
+          status: projection.status,
+          defaultExpanded: defaultExpanded(projection.status),
+          children
+        }]
+  })
+}
+
+function defaultExpanded(status: AssistantTurnStatus): boolean {
+  return status !== 'completed' && status !== 'cancelled'
+}
+
+function collapsedGroupIds(
+  nodes: readonly AssistantDisplayNode[]
+): string[] {
+  const ids: string[] = []
+  for (const node of nodes) {
+    if (node.kind !== 'execution_group') continue
+    if (!node.defaultExpanded) ids.push(node.id)
+    ids.push(...collapsedGroupIds(node.children))
+  }
+  return ids
 }
 
 function terminalFailureRecovery(
@@ -760,9 +1583,33 @@ function updateDelegation(
               return completed
                 ? {
                     ...task,
+                    ...(completed.childRunId
+                      ? { childRunId: completed.childRunId }
+                      : {}),
+                    ...(completed.childSessionId
+                      ? { childSessionId: completed.childSessionId }
+                      : {}),
+                    ...(completed.ordinal === undefined
+                      ? {}
+                      : { ordinal: completed.ordinal }),
+                    ...(completed.agentId
+                      ? { agentId: completed.agentId }
+                      : {}),
+                    ...(completed.agentName
+                      ? { agentName: completed.agentName }
+                      : {}),
                     status: completed.status,
                     summary: completed.summary,
                     evidenceCount: completed.evidence.length,
+                    ...(completed.artifactIds.length
+                      ? { artifactIds: [...completed.artifactIds] }
+                      : {}),
+                    ...(completed.startedAt === undefined
+                      ? {}
+                      : { startedAt: completed.startedAt }),
+                    ...(completed.completedAt === undefined
+                      ? {}
+                      : { completedAt: completed.completedAt }),
                     ...(completed.errorCode
                       ? { errorCode: completed.errorCode }
                       : {})
@@ -802,13 +1649,32 @@ function updateDelegationFailure(
 function terminal(
   current: AssistantTurnProjection,
   status: 'completed' | 'failed' | 'cancelled',
-  completedAt: number
+  completedAt: number,
+  activeToolFailure?: {
+    errorCode: string
+    error: string
+  }
 ): AssistantTurnProjection {
   const { elapsedAt: _elapsedAt, ...active } = current
   return {
     ...active,
     status,
     completedAt,
+    toolCalls: activeToolFailure
+      ? current.toolCalls.map((toolCall) =>
+          toolCall.status === 'requested' ||
+          toolCall.status === 'running' ||
+          toolCall.status === 'waiting_permission'
+            ? {
+                ...toolCall,
+                status: 'failed',
+                completedAt,
+                errorCode: activeToolFailure.errorCode,
+                error: activeToolFailure.error
+              }
+            : toolCall
+        )
+      : current.toolCalls,
     delegations: current.delegations.map((delegation) =>
       delegation.status === 'requested'
         ? {

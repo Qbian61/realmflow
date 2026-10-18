@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { browserInputSchema, browserPackageSpec } from './builtin-browser-catalog.mjs'
 
 const VERSION = '1.0.0'
+const CORE_SKILL_VERSION = '1.0.2'
 const OUTPUT_ROOT = new URL('../resources/extensions/builtin/', import.meta.url)
 const CONTEXTS = ['general', 'space', 'requirement', 'workflow', 'schedule']
 const OBJECT_SCHEMA = { type: 'object', additionalProperties: true }
@@ -107,7 +108,7 @@ const packageSpecs = [
   {
     directory: 'documents',
     packageId: 'realmflow.builtin.documents',
-    version: '1.1.0',
+    version: '1.1.1',
     name: 'Documents',
     description: 'Revision-safe local DOCX inspection and editing.',
     tools: [
@@ -131,7 +132,7 @@ const packageSpecs = [
   {
     directory: 'spreadsheets',
     packageId: 'realmflow.builtin.spreadsheets',
-    version: '1.0.0',
+    version: '1.0.1',
     name: 'Spreadsheets',
     description: 'Revision-safe local spreadsheet inspection and editing.',
     tools: [
@@ -151,7 +152,7 @@ const packageSpecs = [
   {
     directory: 'images',
     packageId: 'realmflow.builtin.images',
-    version: '1.0.0',
+    version: '1.0.1',
     name: 'Images',
     description: 'Revision-safe local image inspection, OCR, and deterministic editing.',
     tools: [
@@ -171,7 +172,7 @@ const packageSpecs = [
   {
     directory: 'pdf',
     packageId: 'realmflow.builtin.pdf',
-    version: '1.0.1',
+    version: '1.0.2',
     name: 'PDF',
     description: 'Revision-safe local PDF reading, OCR, and page operations.',
     tools: [
@@ -191,7 +192,7 @@ const packageSpecs = [
   {
     directory: 'presentations',
     packageId: 'realmflow.builtin.presentations',
-    version: '1.0.0',
+    version: '1.0.1',
     name: 'Presentations',
     description: 'Revision-safe local PPTX inspection and structured editing.',
     tools: [
@@ -216,7 +217,7 @@ const packageSpecs = [
   {
     directory: 'legacy-office',
     packageId: 'realmflow.builtin.legacy-office',
-    version: '1.2.0',
+    version: '1.2.1',
     name: 'Legacy Office Import',
     description: 'Non-overwriting local import and safe-copy conversion for Office files.',
     tools: [
@@ -228,7 +229,7 @@ const packageSpecs = [
   {
     directory: 'archives',
     packageId: 'realmflow.builtin.archives',
-    version: '1.1.0',
+    version: '1.1.1',
     name: 'Archives',
     description: 'Bounded local archive inspection, extraction, and creation.',
     tools: [
@@ -240,7 +241,7 @@ const packageSpecs = [
   {
     directory: 'fixed-layout',
     packageId: 'realmflow.builtin.fixed-layout',
-    version: '1.1.0',
+    version: '1.1.1',
     name: 'Fixed Layout',
     description: 'Read-only local OFD inspection, preview, and OCR.',
     tools: [
@@ -251,7 +252,7 @@ const packageSpecs = [
   {
     directory: 'git',
     packageId: 'realmflow.builtin.git',
-    version: '1.0.1',
+    version: '1.0.2',
     name: 'Git',
     description: 'Bounded Git repository operations.',
     tools: [
@@ -353,7 +354,7 @@ const packageSpecs = [
   {
     directory: 'web',
     packageId: 'realmflow.builtin.web',
-    version: '1.1.0',
+    version: '1.1.1',
     name: 'Web',
     description: 'Permissioned public web retrieval.',
     tools: [
@@ -376,7 +377,7 @@ const packageSpecs = [
   {
     directory: 'realmflow',
     packageId: 'realmflow.builtin.domain',
-    version: '1.0.2',
+    version: '1.0.3',
     name: 'RealmFlow',
     description: 'RealmFlow domain queries and commands.',
     tools: [
@@ -499,6 +500,7 @@ const packageSpecs = [
   {
     directory: 'computer',
     packageId: 'realmflow.builtin.computer',
+    version: '1.0.1',
     name: 'Computer Use',
     description: 'Authorized macOS observation and control.',
     platforms: ['darwin'],
@@ -3151,7 +3153,7 @@ function buildSkillPackage() {
   const skills = skillSpecs.map(([id, name, description, dependencies]) => ({
     schemaVersion: 1,
     id,
-    version: VERSION,
+    version: CORE_SKILL_VERSION,
     name,
     description,
     instructionsPath: `instructions/${id.slice('builtin.skill.'.length)}.md`,
@@ -3176,6 +3178,7 @@ function buildSkillPackage() {
   return createPackage({
     directory: 'core-skills',
     packageId: 'realmflow.builtin.core-skills',
+    version: CORE_SKILL_VERSION,
     name: 'Core Skills',
     description: 'RealmFlow built-in software delivery Skills.',
     tools: [],

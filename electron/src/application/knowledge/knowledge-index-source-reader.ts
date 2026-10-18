@@ -34,7 +34,7 @@ type ArtifactLookup = {
         artifact: {
           id: string
           requirementId: string
-          nodeId?: string
+          nodeId: string
           relativePath: string
           checksum: string
           mediaType?: string
@@ -48,7 +48,7 @@ type ArtifactLookup = {
   readSource: (artifact: {
     id: string
     requirementId: string
-    nodeId?: string
+    nodeId: string
     relativePath: string
     checksum: string
     mediaType?: string
@@ -357,8 +357,10 @@ export class MainKnowledgeIndexSourceReader {
   ): Promise<string> {
     const workspace = await this.dependencies.workspaces.get(workspaceId)
     if (!workspace) throw new Error('Workspace not found')
+    const rootPath = workspace.rootPath?.trim()
+    if (!rootPath) throw new Error('Workspace root is not configured')
     return (
-      await this.securePaths.resolveExistingPath(workspace.path, relativePath)
+      await this.securePaths.resolveExistingPath(rootPath, relativePath)
     ).targetPath
   }
 

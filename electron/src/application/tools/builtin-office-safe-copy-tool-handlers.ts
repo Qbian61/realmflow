@@ -1,6 +1,6 @@
 import { extname } from 'node:path'
 import type { JsonObject } from '../../../../domain/tool-protocol-validation'
-import type { OfficeSafeCopyFormat } from '../../sidecar/client'
+import type { OfficeSafeCopyFormat } from '../files/private-python-worker-client'
 import {
   OfficeSafeCopyError,
   type OfficeSafeCopyService

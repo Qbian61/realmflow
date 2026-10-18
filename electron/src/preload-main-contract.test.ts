@@ -152,6 +152,39 @@ describe('preload and main IPC contract', () => {
     )
   })
 
+  it('exposes Turn cursor pages and targeted projection updates', async () => {
+    const invoke = vi.fn().mockResolvedValue(undefined)
+    const on = vi.fn()
+    const removeListener = vi.fn()
+    const api = createRealmFlowApi(
+      { invoke, on, removeListener },
+      'darwin'
+    )
+    const query = {
+      sessionId: 'conversation-1',
+      cursor: 'opaque-cursor',
+      limit: 40
+    }
+    const listener = vi.fn()
+
+    await api.business.listConversationTurns(query)
+    const unsubscribe = api.business.onConversationTurnProjection?.(listener)
+
+    expect(invoke).toHaveBeenCalledWith(
+      IPC_QUERY_CHANNELS.conversationListTurns,
+      query
+    )
+    expect(on).toHaveBeenCalledWith(
+      IPC_EVENT_CHANNELS.conversationTurnProjection,
+      expect.any(Function)
+    )
+    unsubscribe?.()
+    expect(removeListener).toHaveBeenCalledWith(
+      IPC_EVENT_CHANNELS.conversationTurnProjection,
+      expect.any(Function)
+    )
+  })
+
   it('exposes credential-free provider discovery and configuration channels', async () => {
     const invoke = vi.fn().mockResolvedValue(undefined)
     const api = createRealmFlowApi(
@@ -896,7 +929,9 @@ describe('preload and main IPC contract', () => {
     const query = {
       kind: 'space' as const,
       workspaceId: 'space-1',
-      updatedAfter: 100
+      updatedAfter: 100,
+      cursor: 'opaque-cursor',
+      limit: 50
     }
 
     await api.business.listRecentConversations(query)
@@ -1139,7 +1174,9 @@ describe('preload and main IPC contract', () => {
       } as never,
       conversationAttachments: {
         pick: vi.fn(),
-        remove: vi.fn()
+        remove: vi.fn(),
+        readImage: vi.fn(),
+        open: vi.fn()
       } as never,
       workbenchSites: {
         getSnapshot: vi.fn(),
@@ -1165,9 +1202,6 @@ describe('preload and main IPC contract', () => {
       },
       quitApp,
       respondToCloseRequest,
-      persistence: {
-        load: vi.fn()
-      },
       workspace: createWorkspaceMock() as never,
       terminalManager: createTerminalMock() as never,
       codeSnippetService: {
@@ -1284,7 +1318,7 @@ describe('preload and main IPC contract', () => {
     api.aiRuns.onEvent(vi.fn())
     api.workbenchHub.dashboard.onInvalidated(vi.fn())
     api.business.onConversationEvent?.(vi.fn())
-    api.persistence.onChanged(vi.fn())
+    api.business.onConversationTurnProjection?.(vi.fn())
     api.webWorkbench.onStateChange(vi.fn())
     api.webWorkbench.onAgentBrowserSurface(vi.fn())
     api.terminal.onEvent(vi.fn())
@@ -1382,6 +1416,7 @@ function createBusinessMock(): Record<string, ReturnType<typeof vi.fn>> {
       'listRecentConversations',
       'listWorkspaceConversations',
       'getConversation',
+      'listConversationTurns',
       'createConversation',
       'appendConversationMessage',
       'sendFollowUpSuggestion',
@@ -1531,6 +1566,8 @@ async function invokeEveryApiCommand(api: RealmFlowApi): Promise<void> {
       draftId: 'draft-1',
       attachmentId: 'attachment-1'
     }),
+    api.conversationAttachments?.readImage('attachment-1'),
+    api.conversationAttachments?.open('attachment-1'),
     api.workbenchHub.layout.get(),
     api.workbenchHub.layout.update({
       requestId: 'request-workbench-layout',
@@ -1675,7 +1712,8 @@ async function invokeEveryApiCommand(api: RealmFlowApi): Promise<void> {
     api.workbenchHub.system.getStatus(),
     api.aiRuns.start({
       requirementId: 'requirement-1',
-      stageId: 'analysis'
+      nodeId: 'node-1',
+      nodeRunId: 'node-run-1'
     }),
     api.aiRuns.cancel('run-1'),
     api.aiRuns.get('run-1'),
@@ -2032,6 +2070,10 @@ async function invokeEveryApiCommand(api: RealmFlowApi): Promise<void> {
     business.listRecentConversations({}),
     business.listWorkspaceConversations({ workspaceId: 'space-1' }),
     business.getConversation({ sessionId: 'conversation-1' }),
+    business.listConversationTurns({
+      sessionId: 'conversation-1',
+      limit: 40
+    }),
     business.getConversationContextDiagnostics({
       sessionId: 'conversation-1'
     }),
@@ -2534,9 +2576,9 @@ async function invokeEveryApiCommand(api: RealmFlowApi): Promise<void> {
     api.appLifecycle?.respondToCloseRequest(true),
     api.nativeOverlay?.show({ kind: 'workbench-menu', anchor: bounds }),
     api.nativeOverlay?.hide('workbench-menu'),
-    api.persistence.load('workspaceNavigation'),
     api.workspace.chooseFiles(),
     api.workspace.openSessionFiles(['/tmp/report.pdf']),
+    api.workspace.bindSessionDirectory('/tmp/project'),
     api.workspace.chooseFolder(),
     api.workspace.chooseDirectory('requirement-1'),
     api.workspace.getBinding('requirement-1'),

@@ -32,6 +32,7 @@ describe('SqliteConversationContextRepository', () => {
       knowledgeScope: { kind: 'none' },
       title: 'Transcript',
       sortOrder: 0,
+      turns: [],
       messages: [],
       createdAt: 1,
       updatedAt: 1
@@ -54,6 +55,7 @@ describe('SqliteConversationContextRepository', () => {
     ).toEqual([
       expect.objectContaining({
         messageId: 'user-1',
+        turnId: 'user-1:turn',
         role: 'user',
         content: expect.stringContaining('runtime_resource_stale')
       })

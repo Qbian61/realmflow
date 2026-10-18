@@ -640,14 +640,14 @@ describe("SettingsPage", () => {
       },
       profiles: [
         {
-          id: "builtin-deepseek-default",
+          id: "builtin-deepseek:deepseek-flash",
           providerId: "builtin-deepseek",
-          modelId: "deepseek-v4-flash",
-          displayName: "DeepSeek V4 Flash",
+          modelId: "deepseek-flash",
+          displayName: "DeepSeek-V4.1-Flash",
           enabled: true,
           capabilities: {
             text: true,
-            vision: false,
+            vision: true,
             toolCalling: true,
             structuredOutput: true,
           },
@@ -665,7 +665,7 @@ describe("SettingsPage", () => {
     expect(
       await screen.findByRole("button", { name: "选择供应商 DeepSeek" }),
     ).toHaveAttribute("aria-current", "true");
-    expect(screen.getByText("DeepSeek V4 Flash")).toBeVisible();
+    expect(screen.getByText("DeepSeek-V4.1-Flash")).toBeVisible();
   });
 
   it("edits a provider without echoing or overwriting its saved credential", async () => {
@@ -1368,10 +1368,10 @@ describe("SettingsPage", () => {
     };
     const builtinProfile = {
       ...profile,
-      id: "builtin-deepseek-default",
+      id: "builtin-deepseek:deepseek-flash",
       providerId: builtinProvider.id,
-      modelId: "deepseek-v4-flash",
-      displayName: "DeepSeek V4 Flash",
+      modelId: "deepseek-flash",
+      displayName: "DeepSeek-V4.1-Flash",
       revision: 1,
     };
     const business = createBusiness();
@@ -1412,7 +1412,7 @@ describe("SettingsPage", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "保存并启用" }));
     await screen.findByRole("heading", { name: "DeepSeek" });
-    expect(screen.queryByText("DeepSeek V4 Flash")).not.toBeInTheDocument();
+    expect(screen.queryByText("DeepSeek-V4.1-Flash")).not.toBeInTheDocument();
   });
 
   it("keeps a referenced provider and reports the model count", async () => {

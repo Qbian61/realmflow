@@ -8,6 +8,11 @@ import { projectModelFacingToolCatalog } from './tool-model-facing-projection'
 const read = tool('builtin.files.read')
 const write = tool('builtin.files.write', { capabilities: ['filesystem.write'] })
 const web = tool('builtin.web.fetch', { capabilities: ['network.connect'] })
+const processRun = tool('builtin.process.run', {
+  capabilities: ['process.execute'],
+  effects: ['process.execute'],
+  risk: 'high',
+})
 const remove = tool('builtin.files.delete_permanently', {
   capabilities: ['filesystem.delete'], risk: 'critical',
 })
@@ -124,6 +129,24 @@ describe('model-facing run policy', () => {
     expect(ids(result)).toContain(tools[0].id)
     expect(ids(result)).not.toContain(tools[1].id)
     expect(result.directory?.renderedPromptDirectory).toContain(tools[1].id)
+  })
+
+  it('keeps high-risk contextual tools visible so execution can request approval', () => {
+    const tools = [
+      processRun,
+      ...Array.from({ length: 39 }, (_, index) => tool(`builtin.test.${index}`)),
+    ]
+
+    const result = resolver.resolve(autoInput(tools))
+
+    expect(result).toMatchObject({ mode: 'directory' })
+    expect(ids(result)).toContain(processRun.id)
+    expect(
+      result.policy?.decisions.find((decision) => decision.id === processRun.id),
+    ).toMatchObject({
+      allowed: true,
+      reason: 'explicit_grant_required',
+    })
   })
 
   it('switches to directory for a large schema or an authorized external tool', () => {
@@ -311,10 +334,17 @@ describe('model-facing run policy', () => {
     }, [read, web, script])))).toEqual([read.id])
   })
 
-  it('requires an exact grant for high risk tools instead of a broad group', () => {
+  it('keeps high risk tools callable while preserving execution-time approval metadata', () => {
     expect(ids(resolver.resolve(input({
       layers: [{ profile: 'full', allow: ['group:fs'] }],
-    }, [read, remove])))).toEqual([read.id])
+    }, [read, remove])))).toEqual(expect.arrayContaining([read.id, remove.id]))
+    expect(resolver.resolve(input({
+      layers: [{ profile: 'full', allow: ['group:fs'] }],
+    }, [read, remove])).policy?.decisions.find(({ id }) => id === remove.id))
+      .toMatchObject({
+        allowed: true,
+        reason: 'explicit_grant_required',
+      })
     expect(ids(resolver.resolve(input({
       layers: [{ allow: [remove.id] }],
     }, [read, remove])))).toEqual([remove.id])

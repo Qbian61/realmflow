@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AiRun, AiRunEvent, AiRunStatus } from '../../../domain/ai-run'
-import type { RequirementStageId } from '../../../domain/requirement'
 import type { AiRunApi, StartAiRunInput } from '../../../shared/ai-run'
 
 export type AiRunView = {
   runId: string
   requirementId: string
   nodeId?: string
-  stageId?: RequirementStageId
   status: AiRunStatus
   lastSequence?: number
   progress: number
@@ -56,12 +54,7 @@ export function useAiRunController(api?: AiRunApi): AiRunController {
         let run: AiRunView = current[runId] ?? {
           runId,
           requirementId: input.requirementId,
-          ...('nodeId' in input && input.nodeId
-            ? { nodeId: input.nodeId }
-            : {}),
-          ...('stageId' in input && input.stageId
-            ? { stageId: input.stageId }
-            : {}),
+          nodeId: input.nodeId,
           status: 'created',
           lastSequence: 0,
           progress: 0,
@@ -136,7 +129,6 @@ function hydrateRun(run: AiRun, events: AiRunEvent[]): AiRunView {
     runId: run.id,
     requirementId: run.requirementId,
     ...(run.nodeId ? { nodeId: run.nodeId } : {}),
-    ...(run.stageId ? { stageId: run.stageId } : {}),
     status: run.status,
     lastSequence: run.lastSequence,
     progress:
@@ -198,6 +190,7 @@ function applyEvent(run: AiRunView, event: AiRunEvent): AiRunView {
     case 'heartbeat':
       return next
   }
+  return next
 }
 
 function isTerminal(status: AiRunStatus): boolean {

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.fixed_layout.inspect",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "name": "Inspect OFD",
   "description": "Inspect authorized OFD metadata and page text without editing or uploading the document.",
   "tags": [

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.web.search",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "name": "Search web",
   "description": "Search using the provider saved in Web settings (self-hosted SearXNG or opt-in Brave); return source-attributed results. Provider selection and credentials are controlled by the user.",
   "tags": [

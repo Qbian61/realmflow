@@ -42,9 +42,22 @@ const conversation: ConversationDto = {
   title: "Build",
   sortOrder: 1,
   revision: 3,
+  turns: [
+    {
+      id: "turn-0",
+      sessionId: "conversation-1",
+      index: 0,
+      userMessageId: "message-0",
+      assistantMessageId: "message-1",
+      status: "completed",
+      createdAt: 1,
+      completedAt: 1,
+    },
+  ],
   messages: [
     {
       id: "message-0",
+      turnId: "turn-0",
       role: "user",
       status: "completed",
       content: "Explain the node",
@@ -53,6 +66,7 @@ const conversation: ConversationDto = {
     },
     {
       id: "message-1",
+      turnId: "turn-0",
       role: "assistant",
       status: "completed",
       content: "**Existing answer**",
@@ -131,10 +145,23 @@ describe("RequirementNodeConversationPanel", () => {
         conversation: {
           ...conversation,
           revision: 4,
+          turns: [
+            ...conversation.turns,
+            {
+              id: "turn-1",
+              sessionId: conversation.id,
+              index: 1,
+              userMessageId: "message-2",
+              assistantMessageId: "message-3",
+              status: "running",
+              createdAt: 2,
+            },
+          ],
           messages: [
             ...conversation.messages,
             {
               id: "message-2",
+              turnId: "turn-1",
               role: "user",
               status: "completed",
               content: "Continue now",
@@ -143,6 +170,7 @@ describe("RequirementNodeConversationPanel", () => {
             },
             {
               id: "message-3",
+              turnId: "turn-1",
               role: "assistant",
               status: "pending",
               content: "",
@@ -168,10 +196,24 @@ describe("RequirementNodeConversationPanel", () => {
         conversation: {
           ...conversation,
           revision: 5,
+          turns: [
+            ...conversation.turns,
+            {
+              id: "turn-1",
+              sessionId: conversation.id,
+              index: 1,
+              userMessageId: "message-2",
+              assistantMessageId: "message-3",
+              status: "completed",
+              createdAt: 2,
+              completedAt: 2,
+            },
+          ],
           messages: [
             ...conversation.messages,
             {
               id: "message-2",
+              turnId: "turn-1",
               role: "user",
               status: "completed",
               content: "Continue now",
@@ -180,6 +222,7 @@ describe("RequirementNodeConversationPanel", () => {
             },
             {
               id: "message-3",
+              turnId: "turn-1",
               role: "assistant",
               status: "completed",
               content: "Done",
@@ -388,14 +431,37 @@ describe("RequirementNodeConversationPanel", () => {
             conversation={{
               ...conversation,
               revision: 4,
+              turns: [
+                ...conversation.turns,
+                {
+                  id: "turn-1",
+                  sessionId: conversation.id,
+                  index: 1,
+                  userMessageId: "message-2-user",
+                  assistantMessageId: "message-2",
+                  status: "completed",
+                  createdAt: 2,
+                  completedAt: 2,
+                },
+              ],
               messages: [
                 ...conversation.messages,
                 {
+                  id: "message-2-user",
+                  turnId: "turn-1",
+                  role: "user",
+                  status: "completed",
+                  content: "",
+                  sortOrder: 2,
+                  createdAt: 2,
+                },
+                {
                   id: "message-2",
+                  turnId: "turn-1",
                   role: "assistant",
                   status: "completed",
                   content: "Newest answer",
-                  sortOrder: 2,
+                  sortOrder: 3,
                   createdAt: 2,
                 },
               ],

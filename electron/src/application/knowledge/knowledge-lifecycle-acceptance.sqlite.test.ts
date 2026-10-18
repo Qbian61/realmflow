@@ -60,7 +60,7 @@ describe('P3-38..39 knowledge lifecycle acceptance with SQLite', () => {
     await rm(directory, { recursive: true, force: true })
   })
 
-  it('returns the same indexed chunk to explicit search, space chat, and node context', async () => {
+  it('returns the same indexed chunk to explicit search and space chat without live node context injection', async () => {
     await harness.requirementMemories.syncCompleted('requirement-1')
     await expect(harness.worker.runNext()).resolves.toBe('completed')
 
@@ -74,7 +74,10 @@ describe('P3-38..39 knowledge lifecycle acceptance with SQLite', () => {
 
     const spaceContext = await new SpaceConversationContextAssembler(
       harness.search
-    ).assemble('workspace-1', 'acceptance-canary-3839')
+    ).assembleSnapshot(
+      { kind: 'workspace', workspaceId: 'workspace-1' },
+      'acceptance-canary-3839'
+    )
     const nodeContext = await createNodeContextAssembler(
       database,
       harness.search
@@ -84,13 +87,9 @@ describe('P3-38..39 knowledge lifecycle acceptance with SQLite', () => {
       query: 'acceptance-canary-3839'
     })
 
-    expect(spaceContext).toContain(fixedChunk.content)
-    expect(nodeContext.context).toContain(fixedChunk.content)
+    expect(spaceContext.content).toContain(fixedChunk.content)
+    expect(nodeContext.context).not.toContain(fixedChunk.content)
     expect(harness.protocol.workspaceSearches).toEqual([
-      expect.objectContaining({
-        workspaceIds: ['workspace-1'],
-        generationIds: [fixedChunk.generationId]
-      }),
       expect.objectContaining({
         workspaceIds: ['workspace-1'],
         generationIds: [fixedChunk.generationId]

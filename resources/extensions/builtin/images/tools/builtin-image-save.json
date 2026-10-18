@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.image.save",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Save image",
   "description": "Atomically commit the current image revision.",
   "tags": [

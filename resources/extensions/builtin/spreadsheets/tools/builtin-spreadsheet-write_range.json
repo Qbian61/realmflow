@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.spreadsheet.write_range",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Write spreadsheet range",
   "description": "Write a two-dimensional value matrix in one operation.",
   "tags": [

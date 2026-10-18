@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type {
   PresentationComputeInput,
   PresentationComputeResult
-} from '../../sidecar/client'
+} from './private-python-worker-client'
 import {
   LocalPresentationSessionService,
   PresentationSessionError,

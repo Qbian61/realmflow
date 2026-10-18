@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "packageId": "realmflow.builtin.domain",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "name": "RealmFlow",
   "description": "RealmFlow domain queries and commands.",
   "publisher": {

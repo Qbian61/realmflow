@@ -4,7 +4,7 @@ import type {
   SpreadsheetComputeOperation,
   SpreadsheetComputeResult,
   SpreadsheetFormat
-} from '../../sidecar/client'
+} from './private-python-worker-client'
 
 export type SpreadsheetSessionStatus =
   | 'ready'

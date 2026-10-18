@@ -26,25 +26,59 @@ function run(id: string, conversationId: string, workspaceId = 'workspace-1'): A
   }
 }
 
+function chatSession(id: string): ChatSessionRecord {
+  const turns: ChatSessionRecord['turns'] = []
+  const messages: ChatSessionRecord['messages'] = []
+  const addTurn = (
+    index: number,
+    userContent: string,
+    assistantContent: string,
+    assistantStatus: 'pending' | 'completed' = 'completed'
+  ): void => {
+    const turnId = `${id}-turn-${index}`
+    const userMessageId = `${turnId}-user`
+    const assistantMessageId = `${turnId}-assistant`
+    messages.push(
+      {
+        id: userMessageId, turnId, role: 'user', content: userContent,
+        status: 'completed', sortOrder: index * 2, createdAt: 1
+      },
+      {
+        id: assistantMessageId, turnId, role: 'assistant', content: assistantContent,
+        status: assistantStatus, sortOrder: index * 2 + 1, createdAt: 1
+      }
+    )
+    turns.push({
+      id: turnId,
+      sessionId: id,
+      index,
+      userMessageId,
+      assistantMessageId,
+      status: assistantStatus === 'pending' ? 'running' : 'completed',
+      createdAt: 1,
+      ...(assistantStatus === 'completed' ? { completedAt: 1 } : {})
+    })
+  }
+  addTurn(0, 'Check api_key=secret-value', 'raw secret pending secret', 'pending')
+  Array.from({ length: 30 }, (_, index) =>
+    addTurn(index + 1, '', '中文'.repeat(2000))
+  )
+  return {
+    id, kind: 'space', workspaceId: 'workspace-1',
+    title: 'Review /Users/private/repo', sortOrder: 0,
+    turns, messages, createdAt: 1, updatedAt: 1
+  }
+}
+
 async function fixture() {
   const runs = [run('root', 'session-1'), run('child', 'session-2'), run('outside', 'private', 'workspace-2')]
   database = openRealmFlowDatabase(':memory:')
   const runStore = new SqliteAgentRuntimeRunRepository(database)
   for (const item of runs) await runStore.create(item)
   const state = new RuntimeStateService(new SqliteAgentRuntimeStateRepository(database))
-  const sessions: ChatSessionRecord[] = runs.map((item) => ({
-    id: item.snapshot.conversationId!, kind: 'space', workspaceId: 'workspace-1',
-    title: 'Review /Users/private/repo', sortOrder: 0, createdAt: 1, updatedAt: 1,
-    messages: [
-      { id: 'user', role: 'user', content: 'Check api_key=secret-value', status: 'completed', sortOrder: 1, createdAt: 1 },
-      { id: 'tool', role: 'tool', content: 'raw secret', status: 'completed', sortOrder: 2, createdAt: 1 },
-      { id: 'draft', role: 'assistant', content: 'pending secret', status: 'pending', sortOrder: 3, createdAt: 1 },
-      ...Array.from({ length: 30 }, (_, i) => ({
-        id: `reply-${i}`, role: 'assistant' as const, content: '中文'.repeat(2000),
-        status: 'completed' as const, sortOrder: i + 4, createdAt: 1
-      }))
-    ]
-  }))
+  const sessions: ChatSessionRecord[] = runs.map((item) =>
+    chatSession(item.snapshot.conversationId!)
+  )
   const service = new AgentRuntimeOrchestrator({
     runs: {
       get: async (id) => runs.find((item) => item.id === id),
@@ -72,7 +106,7 @@ describe('agent runtime orchestration queries', () => {
     })
   })
 
-  it('bounds UTF-8 history, excludes tool results and pending messages, and flags untrusted content', async () => {
+  it('bounds UTF-8 history, excludes pending messages, and flags untrusted content', async () => {
     const { service } = await fixture()
     const result = await service.history('root', 'session-2', 50)
     expect(result.messages.length).toBeGreaterThan(0)
@@ -85,7 +119,7 @@ describe('agent runtime orchestration queries', () => {
 
   it('redacts credentials from user-visible history and rejects unrelated target sessions', async () => {
     const { service, sessions } = await fixture()
-    sessions[0].messages = sessions[0].messages.slice(0, 3)
+    sessions[0].messages = sessions[0].messages.slice(0, 2)
     const result = await service.history('root')
     expect(result.messages).toHaveLength(1)
     expect(JSON.stringify(result)).not.toContain('secret-value')

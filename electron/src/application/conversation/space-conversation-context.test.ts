@@ -39,20 +39,22 @@ describe('SpaceConversationContextAssembler', () => {
       420
     )
 
-    const result = await assembler.assemble('workspace-1', 'checkout retry')
+    const result = await assembler.assembleSnapshot(
+      { kind: 'workspace', workspaceId: 'workspace-1' },
+      'checkout retry'
+    )
 
     expect(search).toHaveBeenCalledWith({
       scope: { kind: 'workspace', workspaceId: 'workspace-1' },
       query: 'checkout retry',
       topK: 8
     })
-    expect(result).toBeDefined()
-    expect(result).toContain(
+    expect(result.content).toContain(
       '## Space knowledge: Source 1 / docs/1.md / chunk 1\nknowledge-1\n\n'
     )
-    expect(result).toContain('## Space knowledge: Source 5 / docs/5.md / chunk 5\n')
-    expect(result?.length).toBeLessThanOrEqual(420)
-    expect(result).not.toContain('chunk-9')
+    expect(result.content).toContain('## Space knowledge: Source 5 / docs/5.md / chunk 5\n')
+    expect(result.content.length).toBeLessThanOrEqual(420)
+    expect(result.content).not.toContain('chunk-9')
   })
 
   it('signals insufficient context when no local knowledge matches', async () => {
@@ -61,8 +63,14 @@ describe('SpaceConversationContextAssembler', () => {
     })
 
     await expect(
-      assembler.assemble('workspace-1', 'unmatched')
-    ).resolves.toContain('Local knowledge is insufficient')
+      assembler.assembleSnapshot(
+        { kind: 'workspace', workspaceId: 'workspace-1' },
+        'unmatched'
+      )
+    ).resolves.toMatchObject({
+      content: expect.stringContaining('Local knowledge is insufficient'),
+      insufficientKnowledge: true
+    })
   })
 
   it('labels each all-workspaces result with its source workspace', async () => {
@@ -79,10 +87,12 @@ describe('SpaceConversationContextAssembler', () => {
     const assembler = new SpaceConversationContextAssembler({ search })
 
     await expect(
-      assembler.assembleScope({ kind: 'all_workspaces' }, 'rollback')
-    ).resolves.toContain(
-      '## Space knowledge / Payments: Runbook / release.md / chunk 1'
-    )
+      assembler.assembleSnapshot({ kind: 'all_workspaces' }, 'rollback')
+    ).resolves.toMatchObject({
+      content: expect.stringContaining(
+        '## Space knowledge / Payments: Runbook / release.md / chunk 1'
+      )
+    })
     expect(search).toHaveBeenCalledWith({
       scope: { kind: 'all_workspaces' },
       query: 'rollback',
@@ -98,7 +108,10 @@ describe('SpaceConversationContextAssembler', () => {
     })
 
     await expect(
-      assembler.assemble('workspace-1', 'checkout')
+      assembler.assembleSnapshot(
+        { kind: 'workspace', workspaceId: 'workspace-1' },
+        'checkout'
+      )
     ).rejects.toThrow('读取空间知识失败，请重试')
   })
 
@@ -131,14 +144,7 @@ describe('SpaceConversationContextAssembler', () => {
         reason: 'semantic'
       }
     ]
-    const assemblePlan = assembler as unknown as {
-      assembleScope(
-        scope: { kind: 'workspace'; workspaceId: string },
-        query: typeof queries
-      ): Promise<string | undefined>
-    }
-
-    await assemblePlan.assembleScope(
+    await assembler.assembleSnapshot(
       { kind: 'workspace', workspaceId: 'workspace-1' },
       queries
     )

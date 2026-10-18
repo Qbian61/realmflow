@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.presentation.replace_image",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Replace presentation image",
   "description": "Replace an image shape from an authorized local file.",
   "tags": [

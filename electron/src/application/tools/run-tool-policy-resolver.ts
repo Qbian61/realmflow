@@ -1,7 +1,7 @@
 import type { AgentRuntimeRun } from '../../../../domain/agent-runtime'
 import { createApprovalProfileSnapshot, type ApprovalProfileSnapshot } from '../../../../domain/approval-profile'
 import type { ToolPolicySnapshot } from '../../../../domain/tool-policy'
-import type { ToolExecutionCommand } from './tool-execution-application-service'
+import type { ToolExecutionCommand } from './tool-execution-contract'
 import { ToolPolicyEngine } from './tool-policy-engine'
 
 const CLOSED_POLICY = new ToolPolicyEngine().resolve([], { layers: [{ allow: [] }] })

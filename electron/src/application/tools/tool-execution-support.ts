@@ -8,7 +8,7 @@ import type {
 import type {
   ToolExecutionCommand,
   ToolExecutionRecord
-} from './tool-execution-application-service'
+} from './tool-execution-contract'
 
 const TOOL_ERROR_CATEGORIES = new Set([
   'transient',

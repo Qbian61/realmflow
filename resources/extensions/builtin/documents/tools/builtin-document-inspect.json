@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.document.inspect",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "name": "Inspect document",
   "description": "Open and inspect an authorized DOCX file.",
   "tags": [

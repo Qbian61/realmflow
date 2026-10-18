@@ -44,13 +44,10 @@ export class SqliteArtifactRepository
   }
 
   async commit(
-    input: Parameters<ArtifactRepository['commit']>[0] & {
-      nodeRunId?: string
-    }
+    input: Parameters<ArtifactRepository['commit']>[0]
   ): Promise<FormalArtifactCommitResult> {
-    if (input.nodeId && !input.nodeRunId) {
-      throw new Error('Node run is required for a node artifact')
-    }
+    if (!input.nodeId) throw new Error('Node ID is required')
+    if (!input.nodeRunId) throw new Error('Node run is required')
     this.assertArtifact(input.artifact.path, input.artifact.content)
     if (input.artifact.path !== input.expectedArtifact.relativePath) {
       throw new Error(
@@ -72,8 +69,7 @@ export class SqliteArtifactRepository
     if (!Number.isFinite(completionTimestamp)) {
       throw new Error('Artifact completion timestamp is invalid')
     }
-    const nodeId =
-      input.nodeId ?? `${input.requirementId}:${input.stageId}`
+    const nodeId = input.nodeId
 
     const requirement = this.database
       .prepare(
@@ -107,9 +103,7 @@ export class SqliteArtifactRepository
     if (
       run.requirement_id !== input.requirementId ||
       run.stage_id !== input.stageId ||
-      (input.nodeId
-        ? run.node_id !== input.nodeId
-        : run.node_id !== null && run.node_id !== nodeId)
+      run.node_id !== nodeId
     ) {
       throw new Error('AI run does not match the artifact target')
     }
@@ -178,10 +172,7 @@ export class SqliteArtifactRepository
         if (
           currentRun.requirement_id !== input.requirementId ||
           currentRun.stage_id !== input.stageId ||
-          (input.nodeId
-            ? currentRun.node_id !== input.nodeId
-            : currentRun.node_id !== null &&
-              currentRun.node_id !== nodeId)
+          currentRun.node_id !== nodeId
         ) {
           throw new Error('AI run does not match the artifact target')
         }
@@ -237,7 +228,7 @@ export class SqliteArtifactRepository
             input.requirementId,
             input.stageId,
             nodeId,
-            input.nodeRunId ?? null,
+            input.nodeRunId,
             input.artifact.path,
             kind,
             checksum,
@@ -246,23 +237,6 @@ export class SqliteArtifactRepository
             timestamp,
             timestamp
           )
-        const legacyStageId = input.nodeId
-          ? input.legacyStageId
-          : input.stageId
-        if (legacyStageId) {
-          const requirementUpdate = this.database
-            .prepare(
-              `UPDATE requirements SET
-                stage = ?,
-                revision = revision + 1,
-                updated_at = ?
-               WHERE id = ?`
-            )
-            .run(legacyStageId, timestamp, input.requirementId)
-          if (requirementUpdate.changes !== 1) {
-            throw new Error('Requirement was not found')
-          }
-        }
         this.database
           .prepare(
             `INSERT INTO ai_run_events (
@@ -337,8 +311,8 @@ export class SqliteArtifactRepository
     const rows = this.database
       .prepare(
         `SELECT
-          id, requirement_id, node_id, relative_path, checksum, media_type,
-          version
+          id, requirement_id, node_id, node_run_id, relative_path, checksum,
+          media_type, version
          FROM artifacts
          WHERE requirement_id = ? AND is_primary = 1 AND is_valid = 1
          ORDER BY node_id, relative_path, id`
@@ -346,7 +320,8 @@ export class SqliteArtifactRepository
       .all(requirementId) as Array<{
       id: string
       requirement_id: string
-      node_id: string
+      node_id: string | null
+      node_run_id: string | null
       relative_path: string
       checksum: string
       media_type: string | null
@@ -355,7 +330,7 @@ export class SqliteArtifactRepository
     return rows.map((row) => ({
       id: row.id,
       requirementId: row.requirement_id,
-      nodeId: row.node_id,
+      nodeId: requireArtifactNode(row),
       relativePath: row.relative_path,
       checksum: row.checksum,
       ...(row.media_type ? { mediaType: row.media_type } : {}),
@@ -375,6 +350,7 @@ export class SqliteArtifactRepository
       .prepare(
         `SELECT
           artifact.id, artifact.requirement_id, artifact.node_id,
+          artifact.node_run_id,
           artifact.relative_path, artifact.checksum, artifact.media_type,
           artifact.version, requirement.workspace_id
          FROM artifacts artifact
@@ -389,6 +365,7 @@ export class SqliteArtifactRepository
           id: string
           requirement_id: string
           node_id: string | null
+          node_run_id: string | null
           relative_path: string
           checksum: string
           media_type: string | null
@@ -401,7 +378,7 @@ export class SqliteArtifactRepository
       artifact: {
         id: row.id,
         requirementId: row.requirement_id,
-        ...(row.node_id ? { nodeId: row.node_id } : {}),
+        nodeId: requireArtifactNode(row),
         relativePath: row.relative_path,
         checksum: row.checksum,
         ...(row.media_type ? { mediaType: row.media_type } : {}),
@@ -443,11 +420,8 @@ export class SqliteArtifactRepository
   }
 
   private assertCurrentNodeRun(
-    input: Parameters<ArtifactRepository['commit']>[0] & {
-      nodeRunId?: string
-    }
+    input: Parameters<ArtifactRepository['commit']>[0]
   ): void {
-    if (!input.nodeId || !input.nodeRunId) return
     const nodeRun = this.database
       .prepare(
         `SELECT
@@ -507,9 +481,7 @@ export class SqliteArtifactRepository
   }
 
   private readIdempotentResult(
-    input: Parameters<ArtifactRepository['commit']>[0] & {
-      nodeRunId?: string
-    },
+    input: Parameters<ArtifactRepository['commit']>[0],
     run: { artifact_id: string | null; last_sequence: number }
   ): FormalArtifactCommitResult {
     const artifact = run.artifact_id
@@ -555,9 +527,8 @@ export class SqliteArtifactRepository
       event.timestamp !== Date.parse(input.completionEvent.timestamp) ||
       event.data_json !== JSON.stringify(input.completionEvent.data) ||
       artifact.requirement_id !== input.requirementId ||
-      artifact.node_id !==
-        (input.nodeId ?? `${input.requirementId}:${input.stageId}`) ||
-      artifact.node_run_id !== (input.nodeRunId ?? null) ||
+      artifact.node_id !== input.nodeId ||
+      artifact.node_run_id !== input.nodeRunId ||
       artifact.relative_path !== input.artifact.path ||
       artifact.kind !== input.expectedArtifact.kind ||
       artifact.checksum !== checksum ||
@@ -579,6 +550,15 @@ export class SqliteArtifactRepository
     }
   }
 
+}
+
+function requireArtifactNode(row: {
+  node_id: string | null
+  node_run_id: string | null
+}): string {
+  if (!row.node_id) throw new Error('Artifact node ID is required')
+  if (!row.node_run_id) throw new Error('Artifact node run is required')
+  return row.node_id
 }
 
 function artifactKind(path: string): string {

@@ -9,10 +9,8 @@ from typing import Any
 
 import numpy
 import pytest
-from fastapi.testclient import TestClient
 
-from app import create_app
-from app.api import routes
+from dsh_embedding_worker import handle_line
 
 
 def local_embeddings():
@@ -96,20 +94,10 @@ class FakeEmbeddingService:
         return [1.0] + [0.0] * 767
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        if texts == ["checkout retry"]:
+            return [[1.0] + [0.0] * 767]
         assert texts == ["alpha", "beta"]
         return [[1.0] + [0.0] * 767, [0.0, 1.0] + [0.0] * 766]
-
-
-@pytest.fixture
-def embedding_client() -> TestClient:
-    app = create_app(auth_token="session-secret")
-    app.dependency_overrides[routes.get_local_embedding_service] = (
-        FakeEmbeddingService
-    )
-    return TestClient(
-        app,
-        headers={"Authorization": "Bearer session-secret"},
-    )
 
 
 def test_model_asset_manifest_validates_identity_size_and_sha256(
@@ -370,16 +358,20 @@ def test_real_gte_fixture_is_deterministic_and_offline(
     )
 
 
-def test_model_health_route_reports_fixed_offline_runtime(
-    embedding_client: TestClient,
-) -> None:
-    response = embedding_client.get("/api/v1/knowledge/model-health")
+def test_embedding_worker_health_reports_fixed_offline_runtime() -> None:
+    response = handle_line(
+        FakeEmbeddingService(),
+        json.dumps({"id": 1, "method": "health"}),
+    )
 
-    assert response.status_code == 200
-    assert response.json() == FakeEmbeddingService().model_health()
+    assert response == {
+        "id": 1,
+        "ok": True,
+        "result": FakeEmbeddingService().model_health(),
+    }
 
 
-def test_model_health_route_reports_a_stable_unavailable_state() -> None:
+def test_embedding_worker_health_reports_a_stable_unavailable_state() -> None:
     module = local_embeddings()
 
     class UnavailableService(FakeEmbeddingService):
@@ -389,59 +381,59 @@ def test_model_health_route_reports_a_stable_unavailable_state() -> None:
                 "absolute/path/must/not/leak",
             )
 
-    app = create_app(auth_token="session-secret")
-    app.dependency_overrides[routes.get_local_embedding_service] = (
-        UnavailableService
-    )
-    response = TestClient(
-        app,
-        headers={"Authorization": "Bearer session-secret"},
-    ).get("/api/v1/knowledge/model-health")
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "unavailable"
-    assert response.json()["errorCode"] == "model_assets_invalid"
-    assert "absolute/path" not in response.text
-
-
-def test_query_embedding_route_has_a_strict_contract(
-    embedding_client: TestClient,
-) -> None:
-    response = embedding_client.post(
-        "/api/v1/knowledge/embed-query",
-        json={"text": "checkout retry"},
+    response = handle_line(
+        UnavailableService(),
+        json.dumps({"id": 2, "method": "health"}),
     )
 
-    assert response.status_code == 200
-    assert response.json() == {
+    assert response["ok"] is False
+    assert response["error"]["code"] == "model_assets_invalid"
+    assert "absolute/path" not in json.dumps(response)
+
+
+def test_query_embedding_worker_has_a_strict_contract() -> None:
+    response = handle_line(
+        FakeEmbeddingService(),
+        json.dumps(
+            {
+                "id": 3,
+                "method": "embed",
+                "params": {"texts": ["checkout retry"]},
+            }
+        ),
+    )
+
+    assert response["ok"] is True
+    assert response["result"] == {
         "embeddingModel": "Alibaba-NLP/gte-multilingual-base",
         "embeddingRevision": (
             "9bbca17d9273fd0d03d5725c7a4b0f6b45142062"
         ),
         "dimensions": 768,
-        "embedding": [1.0] + [0.0] * 767,
+        "embeddings": [[1.0] + [0.0] * 767],
     }
-    assert embedding_client.post(
-        "/api/v1/knowledge/embed-query",
-        json={"text": "checkout retry", "unknown": True},
-    ).status_code == 422
+    invalid = handle_line(
+        FakeEmbeddingService(),
+        json.dumps({"id": 4, "method": "embed", "params": {"texts": []}}),
+    )
+    assert invalid["ok"] is False
+    assert invalid["error"]["code"] == "embedding_input_invalid"
 
 
-def test_document_embedding_route_preserves_ids_and_order(
-    embedding_client: TestClient,
-) -> None:
-    response = embedding_client.post(
-        "/api/v1/knowledge/embed-documents",
-        json={
-            "documents": [
-                {"id": "one", "text": "alpha"},
-                {"id": "two", "text": "beta"},
-            ]
-        },
+def test_document_embedding_worker_preserves_order() -> None:
+    response = handle_line(
+        FakeEmbeddingService(),
+        json.dumps(
+            {
+                "id": 5,
+                "method": "embed",
+                "params": {"texts": ["alpha", "beta"]},
+            }
+        ),
     )
 
-    assert response.status_code == 200
-    payload = response.json()
+    assert response["ok"] is True
+    payload = response["result"]
     assert payload["embeddingModel"] == (
         "Alibaba-NLP/gte-multilingual-base"
     )
@@ -449,5 +441,7 @@ def test_document_embedding_route_preserves_ids_and_order(
         "9bbca17d9273fd0d03d5725c7a4b0f6b45142062"
     )
     assert payload["dimensions"] == 768
-    assert [item["id"] for item in payload["embeddings"]] == ["one", "two"]
-    assert all(len(item["embedding"]) == 768 for item in payload["embeddings"])
+    assert payload["embeddings"] == [
+        [1.0] + [0.0] * 767,
+        [0.0, 1.0] + [0.0] * 766,
+    ]

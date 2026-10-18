@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "runtimeId": "dsh-v0.2.1-alpha.3-16-g571902028a",
+  "dsh": {
+    "package": "@deepseek-ai/dsh",
+    "version": "0.2.1-alpha.3",
+    "commit": "571902028a",
+    "sourceRepository": "https://github.com/deepseek-ai/deepseek-harness.git"
+  },
+  "acp": {
+    "package": "@agentclientprotocol/sdk",
+    "version": "1.4.0"
+  },
+  "node": {
+    "version": "22.19.0",
+    "source": "nodejs.org-dist",
+    "baseUrl": "https://nodejs.org/dist/v22.19.0"
+  },
+  "provenance": {
+    "buildTool": "scripts/fetch-dsh-runtime.mjs",
+    "buildSource": "../deepseek-harness",
+    "recordedAt": "2026-10-16T06:36:24.659Z",
+    "sourceDirty": true,
+    "sourceStatus": "M packages/acp/acp/src/updates.ts\n M packages/acp/acp/tests/turns.spec.ts\n M packages/acp/acp/tests/updates.spec.ts"
+  },
+  "assets": {
+    "darwin-arm64": {
+      "platform": "darwin",
+      "arch": "arm64",
+      "runtimeRoot": "runtime/darwin-arm64",
+      "nodeBinary": "runtime/darwin-arm64/node/bin/node",
+      "dshEntrypoint": "runtime/darwin-arm64/dsh/apps/cli/lib/bin.js",
+      "profilePath": "profile/package.json",
+      "files": [
+        {
+          "path": "runtime/darwin-arm64/node/bin/node",
+          "size": 110712624,
+          "sha256": "0d005c18e095027ca8f9fe1cc1126f767ee4ad7b004f4d6fb781ec4228a7c5d1",
+          "executable": true
+        },
+        {
+          "path": "runtime/darwin-arm64/dsh/apps/cli/lib/bin.js",
+          "size": 11772,
+          "sha256": "80112efe368efb1a39720c7ada0af00442e5131fb2744edaaff8a3e8bb499e6f",
+          "executable": true
+        },
+        {
+          "path": "runtime/darwin-arm64/dsh/apps/cli/node_modules/@deepseek-ai/node-addon-system-darwin-arm64/package.json",
+          "size": 647,
+          "sha256": "28db4f9fbdcb258f4e243b64ab7f4b32efab690f7c84155e3b831ec589a53117"
+        },
+        {
+          "path": "runtime/darwin-arm64/dsh/apps/cli/node_modules/@deepseek-ai/node-addon-system-darwin-arm64/prebuilds.json",
+          "size": 136,
+          "sha256": "4e0f7c22a1e3cb2ba5f573e1251aedc8d692bd92665f27d7153f85037d0cd392"
+        },
+        {
+          "path": "runtime/darwin-arm64/dsh/apps/cli/node_modules/@deepseek-ai/node-addon-system-darwin-arm64/bin/system.node",
+          "size": 52232,
+          "sha256": "a0d2d9eddd629515646c5fe3e13c83d07713c97ab880fd11e2b5e65db6251623"
+        },
+        {
+          "path": "profile/package.json",
+          "size": 361,
+          "sha256": "03f5f983121651e8d24b8ff34314199305f1638ad0cc45941674b2256e449941"
+        }
+      ]
+    },
+    "darwin-x64": {
+      "platform": "darwin",
+      "arch": "x64",
+      "runtimeRoot": "runtime/darwin-x64",
+      "nodeBinary": "runtime/darwin-x64/node/bin/node",
+      "dshEntrypoint": "runtime/darwin-x64/dsh/apps/cli/lib/bin.js",
+      "profilePath": "profile/package.json",
+      "files": []
+    },
+    "linux-arm64": {
+      "platform": "linux",
+      "arch": "arm64",
+      "runtimeRoot": "runtime/linux-arm64",
+      "nodeBinary": "runtime/linux-arm64/node/bin/node",
+      "dshEntrypoint": "runtime/linux-arm64/dsh/apps/cli/lib/bin.js",
+      "profilePath": "profile/package.json",
+      "files": []
+    },
+    "linux-x64": {
+      "platform": "linux",
+      "arch": "x64",
+      "runtimeRoot": "runtime/linux-x64",
+      "nodeBinary": "runtime/linux-x64/node/bin/node",
+      "dshEntrypoint": "runtime/linux-x64/dsh/apps/cli/lib/bin.js",
+      "profilePath": "profile/package.json",
+      "files": []
+    },
+    "win32-x64": {
+      "platform": "win32",
+      "arch": "x64",
+      "runtimeRoot": "runtime/win32-x64",
+      "nodeBinary": "runtime/win32-x64/node/node.exe",
+      "dshEntrypoint": "runtime/win32-x64/dsh/apps/cli/lib/bin.js",
+      "profilePath": "profile/package.json",
+      "files": []
+    }
+  }
+}

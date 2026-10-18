@@ -4,10 +4,6 @@ import type {
   WorkbenchActionId
 } from '../../../shared/native-overlay'
 import { normalizeApprovalProfile } from '../../../domain/approval-profile'
-import {
-  PERSISTENCE_DATASETS,
-  type PersistenceDataset
-} from '../../../shared/persistence'
 import type { TerminalDimensions } from '../../../shared/terminal'
 import type { WorkbenchBounds } from '../../../shared/workbench'
 import {
@@ -60,6 +56,7 @@ import type {
   ConfigureBuiltinModelProviderCommand,
   ConfigureDiscoveredModelProviderCommand,
   ConfigureWorkflowTemplateNodeCommand,
+  ConversationCapabilitySelection,
   CopyWorkflowTemplateCommand,
   CopyWorkflowTemplateNodeCommand,
   CreateKnowledgeNoteCommand,
@@ -83,6 +80,7 @@ import type {
   IngestLocalRepositoryCommand,
   IngestRemoteRepositoryCommand,
   ListRepositoryBranchesQuery,
+  ListConversationTurnsQuery,
   ListScheduleRunsQuery,
   ManageKnowledgeSourceCommand,
   ManageWorkflowNodeExecutionCommand,
@@ -161,7 +159,6 @@ const workbenchActions = new Set<WorkbenchActionId>([
   'browser',
   'terminal'
 ])
-const persistenceDatasets = new Set<PersistenceDataset>(PERSISTENCE_DATASETS)
 const workflowNodeTypes = new Set<WorkflowNodeType>([
   'ai_generate',
   'human_input',
@@ -1257,6 +1254,80 @@ function requireConversationApprovalProfile(
   return { approvalProfileId: record.approvalProfileId as import('../../../domain/approval-profile').ApprovalProfileId }
 }
 
+function requireConversationCapabilities(
+  value: unknown,
+  channel: string
+): ConversationCapabilitySelection {
+  const record = requireRecord(value, channel, 'command.capabilities')
+  requireAllowedFields(
+    record,
+    ['skill', 'connectorBindings', 'mcpServerIds'],
+    channel,
+    'command.capabilities'
+  )
+  const capabilities: ConversationCapabilitySelection = {}
+  if (record.skill !== undefined) {
+    try {
+      const skill = normalizeToolDefinitionReference(record.skill)
+      if (skill.kind !== 'skill') {
+        invalidIpcPayload(channel, 'command.capabilities.skill.kind')
+      }
+      capabilities.skill = skill
+    } catch {
+      invalidIpcPayload(channel, 'command.capabilities.skill')
+    }
+  }
+  if (record.connectorBindings !== undefined) {
+    if (
+      !Array.isArray(record.connectorBindings) ||
+      record.connectorBindings.length > 32
+    ) {
+      invalidIpcPayload(channel, 'command.capabilities.connectorBindings')
+    }
+    capabilities.connectorBindings = record.connectorBindings.map(
+      (value, index) => {
+        const field = `command.capabilities.connectorBindings.${index}`
+        const binding = requireRecord(value, channel, field)
+        requireAllowedFields(
+          binding,
+          ['service', 'connectorId'],
+          channel,
+          field
+        )
+        return {
+          service: requireString(
+            binding.service,
+            channel,
+            `${field}.service`,
+            { maxLength: 160 }
+          ),
+          connectorId: requireEntityId(
+            binding.connectorId,
+            channel,
+            `${field}.connectorId`
+          )
+        }
+      }
+    )
+  }
+  if (record.mcpServerIds !== undefined) {
+    if (
+      !Array.isArray(record.mcpServerIds) ||
+      record.mcpServerIds.length > 32
+    ) {
+      invalidIpcPayload(channel, 'command.capabilities.mcpServerIds')
+    }
+    capabilities.mcpServerIds = record.mcpServerIds.map((value, index) =>
+      requireEntityId(
+        value,
+        channel,
+        `command.capabilities.mcpServerIds.${index}`
+      )
+    )
+  }
+  return capabilities
+}
+
 export function requireCreateConversationCommand(
   value: unknown,
   channel: string
@@ -1281,7 +1352,8 @@ export function requireCreateConversationCommand(
       'approvalProfileId',
       'applicationLocale',
       'references',
-      'attachments'
+      'attachments',
+      'capabilities'
     ],
     channel,
     'command'
@@ -1419,6 +1491,14 @@ export function requireCreateConversationCommand(
             channel
           )
         }),
+    ...(record.capabilities === undefined
+      ? {}
+      : {
+          capabilities: requireConversationCapabilities(
+            record.capabilities,
+            channel
+          )
+        }),
     ...(record.modelProfileId === undefined
       ? {}
       : {
@@ -1471,10 +1551,12 @@ export function requireAppendConversationMessageCommand(
       'expectedRevision',
       'modelProfileId',
       'reasoningMode',
+      'contextMode',
       'approvalProfileId',
       'applicationLocale',
       'references',
-      'attachments'
+      'attachments',
+      'capabilities'
     ],
     channel,
     'command'
@@ -1499,6 +1581,14 @@ export function requireAppendConversationMessageCommand(
             channel
           )
         }),
+    ...(record.capabilities === undefined
+      ? {}
+      : {
+          capabilities: requireConversationCapabilities(
+            record.capabilities,
+            channel
+          )
+        }),
     ...(record.modelProfileId === undefined
       ? {}
       : {
@@ -1516,6 +1606,14 @@ export function requireAppendConversationMessageCommand(
             record.reasoningMode,
             channel,
             'command.reasoningMode'
+          )
+        }),
+    ...(record.contextMode === undefined
+      ? {}
+      : {
+          contextMode: requireConversationContextMode(
+            record.contextMode,
+            channel
           )
         }),
     ...(record.applicationLocale === undefined
@@ -3947,7 +4045,7 @@ export function requireRecentConversationQuery(
   const record = requireRecord(value, channel, 'query')
   requireAllowedFields(
     record,
-    ['kind', 'workspaceId', 'folderPath', 'updatedAfter'],
+    ['kind', 'workspaceId', 'folderPath', 'updatedAfter', 'cursor', 'limit'],
     channel,
     'query'
   )
@@ -3983,7 +4081,22 @@ export function requireRecentConversationQuery(
             channel,
             'query.updatedAfter'
           )
+        }),
+    ...(record.cursor === undefined
+      ? {}
+      : {
+          cursor: requireString(record.cursor, channel, 'query.cursor', {
+            maxLength: 512
+          })
+        }),
+    ...(record.limit === undefined
+      ? {}
+      : {
+          limit: requirePositiveInteger(record.limit, channel, 'query.limit')
         })
+  }
+  if (query.limit !== undefined && query.limit > 100) {
+    invalidIpcPayload(channel, 'query.limit')
   }
   if (query.workspaceId && query.folderPath) {
     invalidIpcPayload(channel, 'query.workspaceId')
@@ -3995,6 +4108,48 @@ export function requireRecentConversationQuery(
     invalidIpcPayload(channel, 'query.kind')
   }
   return query
+}
+
+export function requireListConversationTurnsQuery(
+  value: unknown,
+  channel: string
+): ListConversationTurnsQuery {
+  const record = requireRecord(value, channel, 'query')
+  requireAllowedFields(
+    record,
+    ['sessionId', 'cursor', 'anchorTurnId', 'limit'],
+    channel,
+    'query'
+  )
+  const limit = requirePositiveInteger(record.limit, channel, 'query.limit')
+  if (limit > 100) invalidIpcPayload(channel, 'query.limit')
+  if (record.cursor !== undefined && record.anchorTurnId !== undefined) {
+    invalidIpcPayload(channel, 'query.cursor')
+  }
+  return {
+    sessionId: requireEntityId(
+      record.sessionId,
+      channel,
+      'query.sessionId'
+    ),
+    ...(record.cursor === undefined
+      ? {}
+      : {
+          cursor: requireString(record.cursor, channel, 'query.cursor', {
+            maxLength: 512
+          })
+        }),
+    ...(record.anchorTurnId === undefined
+      ? {}
+      : {
+          anchorTurnId: requireEntityId(
+            record.anchorTurnId,
+            channel,
+            'query.anchorTurnId'
+          )
+        }),
+    limit
+  }
 }
 
 export function requireWorkflowNodeIdCommand(
@@ -4394,108 +4549,9 @@ export function requireReorderWorkflowNodesCommand(
   }
 }
 
-export function requirePersistenceDataset(
-  value: unknown,
-  channel: string
-): PersistenceDataset {
-  if (!persistenceDatasets.has(value as PersistenceDataset)) {
-    invalidIpcPayload(channel, 'dataset')
-  }
-  return value as PersistenceDataset
-}
-
 export function requireRevision(value: unknown, channel: string): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
     invalidIpcPayload(channel, 'expectedRevision')
-  }
-  return value
-}
-
-export function requirePersistenceValue(
-  dataset: PersistenceDataset,
-  value: unknown,
-  channel: string
-): unknown {
-  const record = requireRecord(value, channel, 'value')
-  if (dataset === 'workspaceNavigation') {
-    if (
-      record.version !== 1 ||
-      !Array.isArray(record.spaces) ||
-      !isRecord(record.requirementsBySpace)
-    ) {
-      invalidIpcPayload(channel, 'value')
-    }
-    for (const [index, space] of record.spaces.entries()) {
-      const item = requireRecord(space, channel, `value.spaces.${index}`)
-      requireString(item.path, channel, `value.spaces.${index}.path`)
-      requireString(item.label, channel, `value.spaces.${index}.label`)
-      requireString(
-        item.description,
-        channel,
-        `value.spaces.${index}.description`,
-        { allowEmpty: true }
-      )
-    }
-    for (const [spacePath, requirements] of Object.entries(
-      record.requirementsBySpace
-    )) {
-      if (!Array.isArray(requirements)) {
-        invalidIpcPayload(channel, `value.requirementsBySpace.${spacePath}`)
-      }
-      for (const [index, requirement] of requirements.entries()) {
-        const item = requireRecord(
-          requirement,
-          channel,
-          `value.requirementsBySpace.${spacePath}.${index}`
-        )
-        requireString(
-          item.id,
-          channel,
-          `value.requirementsBySpace.${spacePath}.${index}.id`
-        )
-        requireString(
-          item.title,
-          channel,
-          `value.requirementsBySpace.${spacePath}.${index}.title`
-        )
-        if (item.stage !== undefined && !isRequirementStageId(item.stage)) {
-          invalidIpcPayload(
-            channel,
-            `value.requirementsBySpace.${spacePath}.${index}.stage`
-          )
-        }
-      }
-    }
-    return value
-  }
-  if (dataset === 'chatSessions') {
-    if (record.version !== 4 || !Array.isArray(record.sessions)) {
-      invalidIpcPayload(channel, 'value')
-    }
-    for (const [index, session] of record.sessions.entries()) {
-      const item = requireRecord(session, channel, `value.sessions.${index}`)
-      requireString(item.id, channel, `value.sessions.${index}.id`)
-      requireString(item.title, channel, `value.sessions.${index}.title`)
-      requireString(
-        item.spacePath,
-        channel,
-        `value.sessions.${index}.spacePath`
-      )
-      if (!Array.isArray(item.messages)) {
-        invalidIpcPayload(channel, `value.sessions.${index}.messages`)
-      }
-    }
-    return value
-  }
-  if (record.version !== 1 || !isRecord(record.resourcesBySpace)) {
-    invalidIpcPayload(channel, 'value')
-  }
-  for (const [spacePath, resources] of Object.entries(
-    record.resourcesBySpace
-  )) {
-    if (!Array.isArray(resources)) {
-      invalidIpcPayload(channel, `value.resourcesBySpace.${spacePath}`)
-    }
   }
   return value
 }
@@ -4617,38 +4673,17 @@ export function requireStartAiRunInput(
     record.modelProfileId === undefined
       ? undefined
       : requireString(record.modelProfileId, channel, 'input.modelProfileId')
-  if (record.nodeId !== undefined) {
-    const nodeId = requireEntityId(record.nodeId, channel, 'input.nodeId')
-    const nodeRunId = requireEntityId(
-      record.nodeRunId,
-      channel,
-      'input.nodeRunId'
-    )
-    if (record.stageId !== undefined && !isRequirementStageId(record.stageId)) {
-      invalidIpcPayload(channel, 'input.stageId')
-    }
-    return {
-      requirementId,
-      nodeId,
-      nodeRunId,
-      ...(record.stageId
-        ? { stageId: record.stageId as RequirementStageId }
-        : {}),
-      ...(modelProfileId ? { modelProfileId } : {})
-    }
-  }
-  if (!isRequirementStageId(record.stageId)) {
-    invalidIpcPayload(channel, 'input.stageId')
-  }
-  const nodeRunId =
-    record.nodeRunId === undefined
-      ? undefined
-      : requireEntityId(record.nodeRunId, channel, 'input.nodeRunId')
+  const nodeId = requireEntityId(record.nodeId, channel, 'input.nodeId')
+  const nodeRunId = requireEntityId(
+    record.nodeRunId,
+    channel,
+    'input.nodeRunId'
+  )
   return {
     requirementId,
-    stageId: record.stageId as RequirementStageId,
-    ...(modelProfileId ? { modelProfileId } : {}),
-    ...(nodeRunId ? { nodeRunId } : {})
+    nodeId,
+    nodeRunId,
+    ...(modelProfileId ? { modelProfileId } : {})
   }
 }
 
@@ -4949,13 +4984,6 @@ function requireAiGenerateExecutor(
     channel,
     'command.node.executor.artifact'
   )
-  if (
-    record.legacyStageId !== undefined &&
-    !isRequirementStageId(record.legacyStageId)
-  ) {
-    invalidIpcPayload(channel, 'command.node.executor.legacyStageId')
-  }
-  const legacyStageId = record.legacyStageId as RequirementStageId | undefined
   const context =
     record.context === undefined
       ? undefined
@@ -4983,7 +5011,6 @@ function requireAiGenerateExecutor(
       )
     },
     ...(context ? { context } : {}),
-    ...(legacyStageId ? { legacyStageId } : {})
   }
 }
 

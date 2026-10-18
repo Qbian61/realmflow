@@ -98,13 +98,33 @@ describe('SqliteFollowUpSuggestionRepository', () => {
     const sessions = new SqliteChatSessionRepository(database)
     const suggestions = new SqliteFollowUpSuggestionRepository(database)
     const conversation = completedConversation()
+    conversation.turns.push({
+      id: 'turn-2',
+      sessionId: 'conversation-1',
+      index: 1,
+      userMessageId: 'user-2',
+      assistantMessageId: 'assistant-2',
+      status: 'completed',
+      createdAt: 101,
+      completedAt: 103
+    })
     conversation.messages.push({
       id: 'user-2',
+      turnId: 'turn-2',
       role: 'user',
       status: 'completed',
       content: 'Next',
       sortOrder: 2,
       createdAt: 101
+    }, {
+      id: 'assistant-2',
+      turnId: 'turn-2',
+      role: 'assistant',
+      status: 'completed',
+      content: 'Next answer',
+      sortOrder: 3,
+      createdAt: 102,
+      completedAt: 103
     })
     await sessions.save(conversation, 0)
 
@@ -225,9 +245,23 @@ function completedConversation(): ChatSessionRecord {
     knowledgeScope: { kind: 'none' },
     title: 'Conversation',
     sortOrder: 0,
+    turns: [
+      {
+        id: 'turn-1',
+        sessionId: 'conversation-1',
+        index: 0,
+        userMessageId: 'user-1',
+        assistantMessageId: 'assistant-1',
+        runId: 'run-1',
+        status: 'completed',
+        createdAt: 10,
+        completedAt: 30
+      }
+    ],
     messages: [
       {
         id: 'user-1',
+        turnId: 'turn-1',
         role: 'user',
         status: 'completed',
         content: 'Question',
@@ -236,6 +270,7 @@ function completedConversation(): ChatSessionRecord {
       },
       {
         id: 'assistant-1',
+        turnId: 'turn-1',
         role: 'assistant',
         status: 'completed',
         content: 'Answer',

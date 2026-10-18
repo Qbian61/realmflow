@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState
 import { ChevronDown, Ellipsis, ListFilter, MessageCircle } from "lucide-react";
 import { NavLink } from "react-router-dom";
 import type { WorkspaceSpace } from "../../domain/workspace";
-import type { ChatSession } from "../../domain/chat-session";
+import type { RecentConversationDto } from "../../../shared/business";
 import type {
   RecentConversationFilters,
   RecentConversationKindFilter,
@@ -12,8 +12,6 @@ import type {
 import { useLocalization } from "../../localization/LocalizationProvider";
 import {
   IconButton,
-  ListPagination,
-  useListPagination,
   Select,
 } from "../../components/ui";
 import { RecentSessionPreview } from "./RecentSessionPreview";
@@ -21,13 +19,16 @@ import { ConversationActionsMenu } from "./ConversationActionsMenu";
 import { ConversationActionDialog } from "./ConversationActionDialog";
 
 type RecentSessionsProps = {
-  sessions: ChatSession[];
+  sessions: RecentConversationDto[];
   spaces: WorkspaceSpace[];
   folderPaths: string[];
   filters: RecentConversationFilters;
   open: boolean;
   loading: boolean;
+  totalCount: number;
+  hasMore: boolean;
   onToggle: () => void;
+  onLoadMore: () => void | Promise<void>;
   onFilterChange: (patch: Partial<RecentConversationFilters>) => void;
   onRename: (sessionId: string, title: string) => Promise<unknown>;
   onDelete: (sessionId: string) => Promise<boolean>;
@@ -35,10 +36,11 @@ type RecentSessionsProps = {
 
 type ActivePreview = {
   anchor: HTMLElement;
-  session: ChatSession;
+  session: RecentConversationDto;
 };
 
 const PREVIEW_DELAY_MS = 280;
+const LOAD_MORE_THRESHOLD_PX = 48;
 
 export function RecentSessions({
   sessions,
@@ -47,7 +49,10 @@ export function RecentSessions({
   filters,
   open,
   loading,
+  totalCount,
+  hasMore,
   onToggle,
+  onLoadMore,
   onFilterChange,
   onRename,
   onDelete,
@@ -57,14 +62,15 @@ export function RecentSessions({
   const [preview, setPreview] = useState<ActivePreview>();
   const [actionMenu, setActionMenu] = useState<{
     anchor: HTMLButtonElement;
-    session: ChatSession;
+    session: RecentConversationDto;
   }>();
   const [dialog, setDialog] = useState<{
     mode: "rename" | "delete";
-    session: ChatSession;
+    session: RecentConversationDto;
   }>();
   const [actionPending, setActionPending] = useState(false);
   const previewTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const loadMorePendingRef = useRef(false);
   const spacesByReference = new Map(
     spaces.flatMap((space) => [
       [space.path, space] as const,
@@ -74,10 +80,7 @@ export function RecentSessions({
   const previewSpace = preview
     ? spaceForSession(preview.session, spacesByReference)
     : undefined;
-  const recentSessions = sessions.filter(
-    (session) => session.kind !== "requirement_node",
-  );
-  const sessionPagination = useListPagination(recentSessions);
+  const recentSessions = sessions;
   const activeFilters =
     filters.kind !== "all" ||
     Boolean(filters.workspaceId || filters.folderPath) ||
@@ -98,7 +101,7 @@ export function RecentSessions({
   }, [clearPreviewTimer]);
   const showPreview = useCallback(
     (
-      session: ChatSession,
+      session: RecentConversationDto,
       anchor: HTMLElement,
       immediate: boolean,
     ): void => {
@@ -126,6 +129,14 @@ export function RecentSessions({
     };
   }, [clearPreviewTimer, dismissPreview]);
 
+  const loadMore = useCallback((): void => {
+    if (loading || !hasMore || loadMorePendingRef.current) return;
+    loadMorePendingRef.current = true;
+    void Promise.resolve(onLoadMore()).finally(() => {
+      loadMorePendingRef.current = false;
+    });
+  }, [hasMore, loading, onLoadMore]);
+
   return (
     <section
       className={open ? "recent-section open" : "recent-section collapsed"}
@@ -140,7 +151,7 @@ export function RecentSessions({
               aria-expanded={open}
               onClick={onToggle}
             >
-              <span>{t("recent.count", { count: recentSessions.length })}</span>
+              <span>{t("recent.count", { count: totalCount })}</span>
               <ChevronDown
                 className={open ? "recent-chevron open" : "recent-chevron"}
                 size={14}
@@ -248,8 +259,22 @@ export function RecentSessions({
         ) : null}
       </div>
       {open && recentSessions.length > 0 ? (
-        <nav className="recent-session-list" aria-label={t("recent.list")}>
-          {sessionPagination.pageItems.map((session) => (
+        <nav
+          className="recent-session-list"
+          aria-label={t("recent.list")}
+          aria-busy={loading}
+          onScroll={(event) => {
+            dismissPreview();
+            const list = event.currentTarget;
+            if (
+              list.scrollHeight - list.scrollTop - list.clientHeight <=
+              LOAD_MORE_THRESHOLD_PX
+            ) {
+              loadMore();
+            }
+          }}
+        >
+          {recentSessions.map((session) => (
             <div
               className={
                 actionMenu?.session.id === session.id
@@ -284,26 +309,30 @@ export function RecentSessions({
                 </span>
                 <span className="recent-session-title">{session.title}</span>
               </NavLink>
-              <IconButton
-                className="recent-session-actions-trigger"
-                size="compact"
-                variant="ghost"
-                aria-label={t("recent.actions.more", { name: session.title })}
-                aria-expanded={actionMenu?.session.id === session.id}
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  dismissPreview();
-                  const anchor = event.currentTarget;
-                  setActionMenu((current) =>
-                    current?.session.id === session.id
-                      ? undefined
-                      : { anchor, session },
-                  );
-                }}
-              >
-                <Ellipsis size={16} strokeWidth={1.8} />
-              </IconButton>
+              <div className="recent-session-row-actions">
+                <IconButton
+                  className="recent-session-actions-trigger"
+                  size="compact"
+                  variant="ghost"
+                  aria-label={t("recent.actions.more", {
+                    name: session.title,
+                  })}
+                  aria-expanded={actionMenu?.session.id === session.id}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    dismissPreview();
+                    const anchor = event.currentTarget;
+                    setActionMenu((current) =>
+                      current?.session.id === session.id
+                        ? undefined
+                        : { anchor, session },
+                    );
+                  }}
+                >
+                  <Ellipsis size={16} strokeWidth={1.8} />
+                </IconButton>
+              </div>
             </div>
           ))}
         </nav>
@@ -313,18 +342,6 @@ export function RecentSessions({
             ? t("recent.loading")
             : t("recent.noMatch")}
         </p>
-      ) : null}
-      {open ? (
-        <ListPagination
-          className="recent-session-pagination"
-          total={recentSessions.length}
-          page={sessionPagination.page}
-          pageSize={sessionPagination.pageSize}
-          onPageChange={(page) => {
-            dismissPreview();
-            sessionPagination.setPage(page);
-          }}
-        />
       ) : null}
       {preview ? (
         <RecentSessionPreview
@@ -410,7 +427,7 @@ function folderBasename(folderPath: string): string {
 }
 
 function sessionContext(
-  session: ChatSession,
+  session: RecentConversationDto,
   spacesByReference: Map<string, WorkspaceSpace>,
   fallback: string,
 ): string {
@@ -422,13 +439,13 @@ function sessionContext(
 }
 
 function spaceForSession(
-  session: ChatSession,
+  session: RecentConversationDto,
   spacesByReference: Map<string, WorkspaceSpace>,
 ): WorkspaceSpace | undefined {
   return (
     (session.workspaceId
       ? spacesByReference.get(session.workspaceId)
-      : undefined) ?? spacesByReference.get(session.spacePath)
+      : undefined)
   );
 }
 

@@ -220,8 +220,7 @@ describe('SqliteContextSources', () => {
     seedArtifactGraph(database)
     seedNodeRun(database)
     await seedModel(database)
-    const firstAssembler = createRealAssembler(database, workspaceRoot, {
-      search: vi.fn().mockResolvedValue([
+    const knowledgeSearch = vi.fn().mockResolvedValue([
         {
           id: 'chunk-current',
           schemaVersion: 1,
@@ -252,6 +251,8 @@ describe('SqliteContextSources', () => {
           fusionRank: 1
         }
       ])
+    const firstAssembler = createRealAssembler(database, workspaceRoot, {
+      search: knowledgeSearch
     })
     const firstRepository = createContextRepository(
       database,
@@ -265,6 +266,8 @@ describe('SqliteContextSources', () => {
     ).nodeRuns.get('node-run-1')
     expect(first.prompt).toContain('Original requirement')
     expect(first.prompt).toContain('Ancestor A')
+    expect(first.prompt).not.toContain('Immutable indexed knowledge')
+    expect(knowledgeSearch).not.toHaveBeenCalled()
     expect(firstCheckpoint?.checkpoint).toMatchObject({
       contextSnapshotId: first.contextSnapshotId,
       modelProfileId: 'profile-1'
@@ -274,25 +277,15 @@ describe('SqliteContextSources', () => {
     ).contextSnapshots.get(first.contextSnapshotId ?? '')
     expect(firstSnapshot).toMatchObject({
       id: first.contextSnapshotId,
-      checksum: expect.stringMatching(/^sha256:/),
-      sources: expect.arrayContaining([
+      checksum: expect.stringMatching(/^sha256:/)
+    })
+    expect(firstSnapshot?.sources).not.toEqual(
+      expect.arrayContaining([
         expect.objectContaining({
-          kind: 'knowledge',
-          id: 'chunk-current',
-          sourceId: 'source-current',
-          documentKey: 'docs/architecture.md',
-          generationId: 'generation-current',
-          sourceVersion: 'file:v2',
-          version: 2,
-          denseScore: 0.5,
-          denseRank: 1,
-          bm25Score: 0.75,
-          bm25Rank: 1,
-          fusionScore: 0.6,
-          fusionRank: 1
+          kind: 'knowledge'
         })
       ])
-    })
+    )
 
     database.close()
     database = undefined
@@ -339,11 +332,6 @@ function createContextRepository(
 ) {
   const repositories = createSqliteRepositories(database)
   return new AssembledNodeContextRepository({
-    legacy: {
-      load: async () => {
-        throw new Error('legacy context should not be used')
-      }
-    },
     requirements: repositories.requirements,
     workflows: repositories.requirementWorkflows,
     nodeRuns: repositories.nodeRuns,

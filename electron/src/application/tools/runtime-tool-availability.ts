@@ -16,12 +16,9 @@ const DEFAULT_ELIGIBILITY_CACHE_TTL_MS = 30_000
 export type RuntimeToolEligibilitySnapshot = Map<string, RuntimeToolEligibility>
 
 export type RuntimeToolAvailabilityProvider = {
-  getEligibilitySnapshot?: (
+  getEligibilitySnapshot: (
     catalog?: ToolCatalogState
   ) => Promise<RuntimeToolEligibilitySnapshot>
-  getUnavailableToolIds?: (
-    catalog?: ToolCatalogState
-  ) => Promise<Set<string>>
   invalidate?: () => void
 }
 
@@ -49,19 +46,12 @@ export class CompositeRuntimeToolAvailabilityProvider
   ): Promise<RuntimeToolEligibilitySnapshot> {
     const snapshots = await Promise.all(
       this.providers.map((provider) =>
-        provider.getEligibilitySnapshot
-          ? provider.getEligibilitySnapshot(catalog)
-          : legacyUnavailableSnapshot(provider, catalog)
+        provider.getEligibilitySnapshot(catalog)
       )
     )
     return mergeEligibilitySnapshots(snapshots)
   }
 
-  async getUnavailableToolIds(
-    catalog?: ToolCatalogState
-  ): Promise<Set<string>> {
-    return nonReadyToolIds(await this.getEligibilitySnapshot(catalog))
-  }
 }
 
 export class WebRuntimeToolAvailabilityProvider
@@ -145,11 +135,6 @@ export class WebRuntimeToolAvailabilityProvider
     ])
   }
 
-  async getUnavailableToolIds(
-    catalog?: ToolCatalogState
-  ): Promise<Set<string>> {
-    return nonReadyToolIds(await this.getEligibilitySnapshot(catalog))
-  }
 }
 
 export class McpRuntimeToolAvailabilityProvider
@@ -197,11 +182,6 @@ export class McpRuntimeToolAvailabilityProvider
     )
   }
 
-  async getUnavailableToolIds(
-    catalog?: ToolCatalogState
-  ): Promise<Set<string>> {
-    return nonReadyToolIds(await this.getEligibilitySnapshot(catalog))
-  }
 }
 
 export class ConnectorRuntimeToolEligibilityService {
@@ -431,26 +411,6 @@ function eligibility(
     expiresAt: checkedAt + ttl,
     dependencyRevision
   }
-}
-
-async function legacyUnavailableSnapshot(
-  provider: RuntimeToolAvailabilityProvider,
-  catalog?: ToolCatalogState
-): Promise<RuntimeToolEligibilitySnapshot> {
-  const ids = await provider.getUnavailableToolIds?.(catalog) ?? new Set()
-  const checkedAt = Date.now()
-  return new Map(
-    [...ids].map((id) => [
-      id,
-      eligibility(
-        'unavailable',
-        'runtime_dependency_unavailable',
-        checkedAt,
-        0,
-        'legacy'
-      )
-    ])
-  )
 }
 
 function mergeEligibilitySnapshots(

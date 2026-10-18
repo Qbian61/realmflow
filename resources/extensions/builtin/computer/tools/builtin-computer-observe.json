@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.computer.observe",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Observe screen",
   "description": "Capture the screen and accessibility tree.",
   "tags": [

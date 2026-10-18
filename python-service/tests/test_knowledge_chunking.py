@@ -1,11 +1,10 @@
+import json
 import re
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 
-from app import create_app
-from app.api import routes
+from dsh_embedding_worker import handle_line
 from app.services.knowledge_chunking import (
     CHUNKER_VERSION,
     MAX_TOKENS,
@@ -252,38 +251,27 @@ def test_bundled_gte_tokenizer_never_exceeds_model_limit() -> None:
     assert all(chunk["tokenCount"] <= MAX_TOKENS for chunk in chunks)
 
 
-def test_authenticated_chunk_documents_route_uses_strict_contract() -> None:
-    app = create_app(auth_token="session-secret")
-    app.dependency_overrides[routes.get_local_embedding_service] = (
-        FakeChunkingService
-    )
-    client = TestClient(
-        app,
-        headers={"Authorization": "Bearer session-secret"},
-    )
-
-    response = client.post(
-        "/api/v1/knowledge/chunk-documents",
-        json={
-            "chunkerVersion": "realmflow-token-aware-v1",
-            "documents": [{"documentKey": "doc", "content": "alpha"}],
-        },
+def test_embedding_worker_chunk_documents_uses_strict_contract() -> None:
+    response = handle_line(
+        FakeChunkingService(),
+        json.dumps(
+            {
+                "id": 1,
+                "method": "chunk",
+                "params": {
+                    "documents": [
+                        {"documentKey": "doc", "content": "alpha"}
+                    ]
+                },
+            }
+        ),
     )
 
-    assert response.status_code == 200
-    assert response.json()["documents"][0]["chunks"][0]["tokenCount"] == 3
-    assert client.post(
-        "/api/v1/knowledge/chunk-documents",
-        json={
-            "chunkerVersion": "wrong",
-            "documents": [{"documentKey": "doc", "content": "alpha"}],
-        },
-    ).status_code == 422
-    assert client.post(
-        "/api/v1/knowledge/chunk-documents",
-        json={
-            "chunkerVersion": "realmflow-token-aware-v1",
-            "documents": [{"documentKey": "doc", "content": "alpha"}],
-            "unknown": True,
-        },
-    ).status_code == 422
+    assert response["ok"] is True
+    assert response["result"]["documents"][0]["chunks"][0]["tokenCount"] == 3
+    invalid = handle_line(
+        FakeChunkingService(),
+        json.dumps({"id": 2, "method": "chunk", "params": {}}),
+    )
+    assert invalid["ok"] is False
+    assert invalid["error"]["code"] == "embedding_input_invalid"

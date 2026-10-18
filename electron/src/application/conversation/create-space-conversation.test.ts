@@ -35,6 +35,7 @@ describe('CreateSpaceConversationUseCase', () => {
         },
         title: 'Space chat',
         sortOrder: 100,
+        turns: [],
         messages: [],
         createdAt: 100,
         updatedAt: 100

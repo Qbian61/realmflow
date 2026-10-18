@@ -1,42 +1,34 @@
-import {
-  decideAgentRunRecovery,
-  type RunCheckpoint
-} from '../../../domain/agent-run-recovery'
 import type { AgentRuntimeRun } from '../../../domain/agent-runtime'
-import type {
-  AgentRunCheckpointRepository,
-  AgentRuntimeRunRepository
-} from '../ai-run/application/ports'
-
-type RecoveryConfiguration = {
-  profileAvailable: boolean
-  capabilitiesAvailable: boolean
-  modelAvailable: boolean
-  permissionValid: boolean
-  credentialAvailable: boolean
-}
+import type { DshRunManifest } from '../../../domain/dsh-run-manifest'
+import type { DshSessionBinding } from '../../../domain/dsh-session-binding'
+import type { AgentRuntimeRunRepository } from '../ai-run/application/ports'
+import type { DshHistorySyncRunResult } from './dsh/dsh-history-sync'
 
 export type RecoveredRunActivation = { start(): void; cancel?(): void }
 
 type RecoveryDependencies = {
+  runtimeInstanceId: string
   runs: AgentRuntimeRunRepository
-  checkpoints: AgentRunCheckpointRepository
-  validateConfiguration(
+  manifests: {
+    getByRunId(
+      runId: string
+    ): Promise<DshRunManifest | undefined> | DshRunManifest | undefined
+  }
+  sessions: {
+    getByOwner(
+      owner: DshRunManifest['owner']
+    ): Promise<DshSessionBinding | undefined> | DshSessionBinding | undefined
+  }
+  historySync: {
+    syncRun(input: {
+      runtimeInstanceId: string
+      manifest: DshRunManifest
+    }): Promise<DshHistorySyncRunResult> | DshHistorySyncRunResult
+  }
+  resumeSession(
     run: AgentRuntimeRun,
-    checkpoint: RunCheckpoint
-  ): Promise<RecoveryConfiguration>
-  reconcilePendingCalls(
-    run: AgentRuntimeRun,
-    checkpoint: RunCheckpoint
-  ): Promise<
-    Array<{
-      callId: string
-      outcome: 'completed' | 'not_started' | 'unknown'
-    }>
-  >
-  resume(
-    run: AgentRuntimeRun,
-    checkpoint: RunCheckpoint
+    manifest: DshRunManifest,
+    binding: DshSessionBinding
   ): Promise<void | RecoveredRunActivation>
   projectRecoveryEvent(
     run: AgentRuntimeRun,
@@ -50,10 +42,17 @@ type RecoveryDependencies = {
         }
       | { type: 'run.resumed'; data: Record<string, never> }
       | {
+          type: 'run.failed'
+          data: {
+            errorCode: 'interrupted'
+            message: string
+          }
+        }
+      | {
           type: 'run.recovery_blocked'
           data: {
             recoveryReason: string
-            recoveryActions: Array<'resume' | 'branch' | 'cancel'>
+            recoveryActions: Array<'resume' | 'cancel'>
           }
         }
   ): Promise<void>
@@ -67,11 +66,21 @@ export class RecoverAgentRuntimeRunsUseCase {
 
   async execute(): Promise<{
     resumed: number
+    interrupted: number
     blocked: number
     preserved: number
+    syncedEvents: number
+    reconciledProductCommands: number
   }> {
     const unfinished = await this.dependencies.runs.listUnfinished()
-    const result = { resumed: 0, blocked: 0, preserved: 0 }
+    const result = {
+      resumed: 0,
+      interrupted: 0,
+      blocked: 0,
+      preserved: 0,
+      syncedEvents: 0,
+      reconciledProductCommands: 0
+    }
     for (const candidate of unfinished) {
       const run = this.dependencies.runs.getById
         ? await this.dependencies.runs.getById(candidate.id) : candidate
@@ -79,33 +88,64 @@ export class RecoverAgentRuntimeRunsUseCase {
         result.preserved += 1
         continue
       }
-      if (run.status === 'waiting_input' || run.status === 'paused' || run.status === 'recovery_blocked') {
+      if (
+        run.status === 'waiting_input' ||
+        run.status === 'waiting_permission' ||
+        run.status === 'paused' ||
+        run.status === 'recovery_blocked'
+      ) {
         result.preserved += 1
         continue
       }
-      const checkpoint =
-        await this.dependencies.checkpoints.getLatest(run.id)
-      if (!checkpoint) {
-        await this.block(run, 'checkpoint_unavailable')
+      const manifest = await this.dependencies.manifests.getByRunId(run.id)
+      if (!manifest) {
+        await this.block(run, 'dsh_manifest_unavailable')
         result.blocked += 1
         continue
       }
-      const [configuration, pendingCalls] = await Promise.all([
-        this.dependencies.validateConfiguration(run, checkpoint),
-        this.dependencies.reconcilePendingCalls(run, checkpoint)
-      ])
+      const binding = await this.dependencies.sessions.getByOwner(
+        manifest.owner
+      )
+      if (!binding) {
+        await this.block(run, 'dsh_session_unavailable')
+        result.blocked += 1
+        continue
+      }
+      let synced: DshHistorySyncRunResult
+      try {
+        synced = await this.dependencies.historySync.syncRun({
+          runtimeInstanceId: this.dependencies.runtimeInstanceId,
+          manifest
+        })
+      } catch {
+        await this.block(run, 'history_sync_failed')
+        result.blocked += 1
+        continue
+      }
+      result.syncedEvents += synced.projectedEvents
+      result.reconciledProductCommands +=
+        synced.productCommandResultsReconciled
       if (await this.stopped(run.id)) {
         result.preserved += 1
         continue
       }
-      const decision = decideAgentRunRecovery({
-        checkpoint,
-        configuration,
-        pendingCalls
-      })
-      if (decision.action === 'block') {
-        await this.block(run, decision.reason)
-        result.blocked += 1
+      if (!canAutomaticallyResume(run)) {
+        await Promise.all([
+          this.dependencies.runs.transition(
+            run.id,
+            'failed',
+            this.now(),
+            'interrupted:application_restart'
+          ),
+          this.dependencies.projectRecoveryEvent(run, {
+            type: 'run.failed',
+            data: {
+              errorCode: 'interrupted',
+              message: 'Application restarted before the run completed'
+            }
+          })
+        ])
+        result.interrupted += 1
         continue
       }
       await this.dependencies.runs.transition(
@@ -116,10 +156,7 @@ export class RecoverAgentRuntimeRunsUseCase {
       await this.dependencies.projectRecoveryEvent(run, {
         type: 'run.retrying',
         data: {
-          retryCount:
-            run.snapshot.budgets.maxRetries -
-            checkpoint.remainingBudgets.retries +
-            1,
+          retryCount: 1,
           errorCode: 'interrupted'
         }
       })
@@ -129,7 +166,11 @@ export class RecoverAgentRuntimeRunsUseCase {
           result.preserved += 1
           continue
         }
-        activation = await this.dependencies.resume(run, checkpoint)
+        activation = await this.dependencies.resumeSession(
+          run,
+          manifest,
+          binding
+        )
         if (await this.stopped(run.id)) {
           activation?.cancel?.()
           result.preserved += 1
@@ -162,7 +203,14 @@ export class RecoverAgentRuntimeRunsUseCase {
   private async stopped(runId: string): Promise<boolean> {
     if (!this.dependencies.runs.getById) return false
     const current = await this.dependencies.runs.getById(runId)
-    return !current || ['completed', 'failed', 'cancelled', 'paused', 'waiting_input'].includes(current.status)
+    return !current || [
+      'completed',
+      'failed',
+      'cancelled',
+      'paused',
+      'waiting_input',
+      'waiting_permission'
+    ].includes(current.status)
   }
 
   private block(run: AgentRuntimeRun, reason: string): Promise<void> {
@@ -177,9 +225,14 @@ export class RecoverAgentRuntimeRunsUseCase {
         type: 'run.recovery_blocked',
         data: {
           recoveryReason: reason,
-          recoveryActions: ['resume', 'branch', 'cancel']
+          recoveryActions: ['resume', 'cancel']
         }
       })
     ]).then(() => undefined)
   }
+}
+
+function canAutomaticallyResume(run: AgentRuntimeRun): boolean {
+  return run.snapshot.scenarioId === 'workflow-node' ||
+    run.snapshot.scenarioId === 'scheduled'
 }

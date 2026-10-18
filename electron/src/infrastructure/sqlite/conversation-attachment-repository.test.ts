@@ -120,6 +120,109 @@ describe('SqliteConversationAttachmentRepository', () => {
     ])
   })
 
+  it('projects message attachments in their persisted sending order', async () => {
+    const sessions = new SqliteChatSessionRepository(database)
+    await sessions.save(
+      {
+        id: 'conversation-attachments',
+        kind: 'general',
+        knowledgeScope: { kind: 'none' },
+        title: 'Attachment projection',
+        sortOrder: 0,
+        turns: [],
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1
+      },
+      0
+    )
+    for (const attachment of [
+      {
+        id: 'image-first',
+        fileName: 'wireframe.png',
+        mimeType: 'image/png',
+        mediaKind: 'image' as const,
+        checksumSha256: '1'.repeat(64),
+        createdAt: 10
+      },
+      {
+        id: 'document-second',
+        fileName: 'requirements.pdf',
+        mimeType: 'application/pdf',
+        mediaKind: 'document' as const,
+        checksumSha256: '2'.repeat(64),
+        createdAt: 11
+      }
+    ]) {
+      await repository.commitRegistration({
+        blob: {
+          checksumSha256: attachment.checksumSha256,
+          relativePath: `blobs/${attachment.checksumSha256}`,
+          sizeBytes: 100,
+          createdAt: attachment.createdAt
+        },
+        attachment: {
+          ...attachment,
+          ownerId: 'draft-attachments',
+          sizeBytes: 100,
+          source: 'picker',
+          status: 'registered'
+        }
+      })
+    }
+    const session = await sessions.get('conversation-attachments')
+    await sessions.beginTurn({
+      session: session!,
+      expectedRevision: session!.revision,
+      userMessageId: 'message-user',
+      assistantMessageId: 'message-assistant',
+      content: 'Compare these files',
+      attachmentBinding: {
+        draftOwnerId: 'draft-attachments',
+        attachmentIds: ['image-first', 'document-second']
+      },
+      createdAt: 20
+    })
+
+    await expect(sessions.get('conversation-attachments')).resolves.toMatchObject({
+      messages: [
+        {
+          id: 'message-user',
+          attachments: [
+            {
+              id: 'image-first',
+              fileName: 'wireframe.png',
+              mediaKind: 'image'
+            },
+            {
+              id: 'document-second',
+              fileName: 'requirements.pdf',
+              mediaKind: 'document'
+            }
+          ]
+        },
+        { id: 'message-assistant' }
+      ]
+    })
+    await expect(
+      sessions.listTurns({
+        sessionId: 'conversation-attachments',
+        limit: 20
+      })
+    ).resolves.toMatchObject({
+      messages: [
+        {
+          id: 'message-user',
+          attachments: [
+            { id: 'image-first' },
+            { id: 'document-second' }
+          ]
+        },
+        { id: 'message-assistant' }
+      ]
+    })
+  })
+
   it('rolls back the conversation turn when attachment ownership conflicts', async () => {
     const sessions = new SqliteChatSessionRepository(database)
     await sessions.save(
@@ -129,6 +232,7 @@ describe('SqliteConversationAttachmentRepository', () => {
         knowledgeScope: { kind: 'none' },
         title: 'Attachments',
         sortOrder: 0,
+        turns: [],
         messages: [],
         createdAt: 1,
         updatedAt: 1
@@ -203,6 +307,7 @@ describe('SqliteConversationAttachmentRepository', () => {
         knowledgeScope: { kind: 'none' },
         title: 'Chunks',
         sortOrder: 0,
+        turns: [],
         messages: [],
         createdAt: 1,
         updatedAt: 1

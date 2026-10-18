@@ -91,7 +91,11 @@ function chunkResult(symbol?: string) {
   }
 }
 
-function dependencies(current = true, symbol?: string) {
+function dependencies(
+  current = true,
+  symbol?: string,
+  options: { withEmbedding?: boolean } = {}
+) {
   const repository = {
     claimNext: vi.fn().mockResolvedValue(job()),
     getCurrentGenerationManifest: vi.fn().mockResolvedValue(undefined),
@@ -122,13 +126,34 @@ function dependencies(current = true, symbol?: string) {
       })
     )
   }
+  const embedding = {
+    chunkKnowledgeDocuments: vi.fn().mockResolvedValue(chunkResult(symbol)),
+    embedKnowledgeDocuments: vi.fn().mockImplementation(
+      async (documents: Array<{ id: string }>) => ({
+        embeddingModel: 'Alibaba-NLP/gte-multilingual-base',
+        embeddingRevision:
+          '9bbca17d9273fd0d03d5725c7a4b0f6b45142062',
+        dimensions: 768,
+        embeddings: documents.map(({ id }) => ({
+          id,
+          embedding: [1, ...Array(767).fill(0)]
+        }))
+      })
+    )
+  }
   const qdrant = {
     upsertPoints: vi.fn().mockResolvedValue(undefined),
     readGenerationPoints: vi.fn().mockResolvedValue([]),
     verifyGeneration: vi.fn().mockResolvedValue(undefined),
     deleteGeneration: vi.fn().mockResolvedValue(undefined)
   }
-  return { repository, reader, sidecar, qdrant }
+  return {
+    repository,
+    reader,
+    sidecar,
+    ...(options.withEmbedding ? { embedding } : {}),
+    qdrant
+  }
 }
 
 describe('KnowledgeIndexWorker', () => {
@@ -339,6 +364,36 @@ describe('KnowledgeIndexWorker', () => {
       generationId: 'generation-1',
       at: 20
     })
+  })
+
+  it('submits workspace document batches to the DSH embedding service instead of the legacy sidecar embedding endpoint', async () => {
+    const deps = dependencies(true, undefined, { withEmbedding: true })
+    deps.sidecar.embedKnowledgeDocuments.mockRejectedValue(
+      new Error('legacy sidecar embedding should not be used')
+    )
+    const embedding = deps.embedding!
+    const worker = new KnowledgeIndexWorker({
+      ...deps,
+      profile: DEFAULT_VECTOR_INDEX_PROFILE,
+      now: () => 20
+    })
+
+    await expect(worker.runNext()).resolves.toBe('completed')
+
+    expect(embedding.chunkKnowledgeDocuments).toHaveBeenCalledWith(
+      [{ documentKey: 'content', content: 'alpha' }],
+      expect.any(AbortSignal)
+    )
+    expect(embedding.embedKnowledgeDocuments).toHaveBeenCalledWith(
+      [
+        {
+          id: expect.stringMatching(/^[a-f0-9-]{36}$/),
+          text: 'alpha'
+        }
+      ],
+      expect.any(AbortSignal)
+    )
+    expect(deps.sidecar.embedKnowledgeDocuments).not.toHaveBeenCalled()
   })
 
   it('chunks repository documents in timeout-safe batches', async () => {

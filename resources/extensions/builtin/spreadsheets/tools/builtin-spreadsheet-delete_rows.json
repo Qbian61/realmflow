@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.spreadsheet.delete_rows",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Delete spreadsheet rows",
   "description": "Delete structural rows from a spreadsheet session.",
   "tags": [

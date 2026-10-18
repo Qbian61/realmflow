@@ -1,9 +1,15 @@
 import { useState } from "react";
 import { useModelProfiles } from "../../app/hooks/use-model-profiles";
-import { Composer } from "../../components/Composer";
+import {
+  Composer,
+  type ComposerConnectorSelection,
+  type ComposerSkillSelection,
+  toConversationCapabilitySelection,
+} from "../../components/Composer";
 import { useLocalization } from "../../localization/LocalizationProvider";
 import { useToast } from "../toast/ToastProvider";
 import type { ReasoningPreference } from "../../../domain/reasoning-router";
+import type { ConversationCapabilitySelection } from "../../../shared/business";
 import { useDefaultApprovalProfile } from "../permissions/use-default-approval-profile";
 
 type SpaceConversationComposerProps = {
@@ -16,6 +22,7 @@ type SpaceConversationComposerProps = {
     reasoningMode?: ReasoningPreference,
     attachments?: import("../../../shared/conversation-attachments").ConversationAttachmentSubmission,
     approvalProfileId?: import("../../../domain/approval-profile").ApprovalProfileId,
+    capabilities?: ConversationCapabilitySelection,
   ) => void | Promise<void>;
 };
 
@@ -31,6 +38,10 @@ export function SpaceConversationComposer({
   const [selectedApproval, setApprovalProfileId] = useState<import("../../../domain/approval-profile").ApprovalProfileId>();
   const approvalProfileId = selectedApproval ?? defaultApproval;
   const [submitting, setSubmitting] = useState(false);
+  const [selectedSkill, setSelectedSkill] =
+    useState<ComposerSkillSelection>();
+  const [selectedConnector, setSelectedConnector] =
+    useState<ComposerConnectorSelection>();
   const models = useModelProfiles();
 
   const submit = async (): Promise<void> => {
@@ -38,15 +49,33 @@ export function SpaceConversationComposer({
     if (!value || submitting) return;
     setSubmitting(true);
     try {
-      await onCreateSession?.(
-        spacePath,
-        value,
-        models.selectedId || undefined,
-        "auto",
-        undefined,
-        approvalProfileId,
+      const capabilities = toConversationCapabilitySelection(
+        selectedSkill,
+        selectedConnector,
       );
+      if (capabilities) {
+        await onCreateSession?.(
+          spacePath,
+          value,
+          models.selectedId || undefined,
+          "auto",
+          undefined,
+          approvalProfileId,
+          capabilities,
+        );
+      } else {
+        await onCreateSession?.(
+          spacePath,
+          value,
+          models.selectedId || undefined,
+          "auto",
+          undefined,
+          approvalProfileId,
+        );
+      }
       setPrompt("");
+      setSelectedSkill(undefined);
+      setSelectedConnector(undefined);
     } catch {
       toast.error("spaceConversation.failed");
     } finally {
@@ -83,6 +112,10 @@ export function SpaceConversationComposer({
         effectiveModelProfileId={models.effectiveId}
         showContext={false}
         disabled={submitting}
+        selectedSkill={selectedSkill}
+        onSkillChange={setSelectedSkill}
+        selectedConnector={selectedConnector}
+        onConnectorChange={setSelectedConnector}
         onModelProfileChange={models.select}
         onModelPickerOpen={() => void models.refresh()}
         onChange={setPrompt}

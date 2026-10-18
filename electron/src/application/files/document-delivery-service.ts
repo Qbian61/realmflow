@@ -18,7 +18,7 @@ import type {
   SidecarClient,
   SidecarDocumentArtifact,
   SidecarDocumentVerification
-} from '../../sidecar/client'
+} from './private-python-worker-client'
 import type { PdfGenerationService } from './pdf-generation-service'
 import { SecurePathService } from '../../workspace/secure-path-service'
 

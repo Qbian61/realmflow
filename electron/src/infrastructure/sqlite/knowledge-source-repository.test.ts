@@ -1,13 +1,11 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import Database from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createLocalFileSource } from '../../../../domain/local-file-source'
 import { createKnowledgeSource } from '../../../../domain/knowledge-source'
 import { openRealmFlowDatabase, type RealmFlowDatabase } from './database'
 import { SqliteKnowledgeSourceRepository } from './knowledge-source-repository'
-import { applyMigrations, REALMFLOW_MIGRATIONS } from './migrations'
 
 let directory: string
 let database: RealmFlowDatabase
@@ -29,61 +27,6 @@ beforeEach(async () => {
 afterEach(async () => {
   database.close()
   await rm(directory, { recursive: true, force: true })
-})
-
-describe('knowledge source migration', () => {
-  it('preserves existing space resources as registered knowledge sources', async () => {
-    const legacy = new Database(':memory:')
-    legacy.pragma('foreign_keys = ON')
-    applyMigrations(legacy, REALMFLOW_MIGRATIONS.slice(0, 28))
-    legacy
-      .prepare(
-        `INSERT INTO workspaces (
-          id, path, label, description, sort_order, revision, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run('space-1', '/spaces/one', 'One', '', 0, 1, 1, 1)
-    legacy
-      .prepare(
-        `INSERT INTO space_resources (
-          id, workspace_id, name, type, locator, detail, sort_order, revision,
-          created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        'source-1',
-        'space-1',
-        'Architecture',
-        'document',
-        'https://example.com',
-        'example.com',
-        2,
-        4,
-        10,
-        20
-      )
-
-    applyMigrations(legacy)
-
-    expect(
-      legacy.prepare('SELECT * FROM knowledge_sources').get()
-    ).toMatchObject({
-      id: 'source-1',
-      workspace_id: 'space-1',
-      status: 'registered',
-      revision: 4,
-      created_at: 10,
-      updated_at: 20
-    })
-    expect(
-      legacy
-        .prepare(
-          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'space_resources'"
-        )
-        .get()
-    ).toBeUndefined()
-    legacy.close()
-  })
 })
 
 describe('SqliteKnowledgeSourceRepository', () => {

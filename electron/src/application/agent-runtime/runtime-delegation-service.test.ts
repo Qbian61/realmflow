@@ -31,6 +31,7 @@ async function fixture() {
   database = openRealmFlowDatabase(join(directory, 'runtime.db'))
   await new SqliteChatSessionRepository(database).save({
     id: 'parent-session', kind: 'general', title: 'Parent', sortOrder: 0,
+    turns: [],
     messages: [], createdAt: 1, updatedAt: 1
   }, 0)
   const snapshot = createAgentRunSnapshot({ conversationId: 'parent-session' }, {

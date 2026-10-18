@@ -4,7 +4,7 @@ import type {
   PresentationComputeOperation,
   PresentationComputeResult,
   PresentationPreservationRisk
-} from '../../sidecar/client'
+} from './private-python-worker-client'
 
 export type PresentationSessionStatus =
   | 'ready'

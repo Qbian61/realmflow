@@ -16,7 +16,7 @@ import type {
   McpProgress,
   McpRemoteTool,
   McpToolCallResult
-} from './mcp-tool-adapter'
+} from './mcp-client-contract'
 import { PlatformSandboxDriver } from './platform-sandbox-driver'
 
 type SdkTransport = {

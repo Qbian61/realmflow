@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.spreadsheet.set_style",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Style spreadsheet range",
   "description": "Apply deterministic cell style properties to a range.",
   "tags": [

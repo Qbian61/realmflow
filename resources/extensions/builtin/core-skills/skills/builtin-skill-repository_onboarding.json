@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.skill.repository_onboarding",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "name": "Repository onboarding",
   "description": "Identify architecture, tooling, rules, and entry points.",
   "instructionsPath": "instructions/repository_onboarding.md",

@@ -30,7 +30,10 @@ import {
 import { ThemeProvider } from "./theme/ThemeProvider";
 import type { ReasoningPreference } from "../domain/reasoning-router";
 import type { ConversationAttachmentSubmission } from "../shared/conversation-attachments";
-import type { SendFollowUpSuggestionCommand } from "../shared/business";
+import type {
+  ConversationCapabilitySelection,
+  SendFollowUpSuggestionCommand,
+} from "../shared/business";
 
 function AppShell({
   repositories: providedRepositories,
@@ -60,7 +63,10 @@ function AppShell({
     recentSessions,
     recentFolderPaths,
     recentFilters,
+    recentTotalCount,
+    recentSessionsHasMore,
     recentSessionsLoading,
+    loadMoreRecentSessions,
     updateRecentFilters,
     createSpace,
     renameSpace,
@@ -99,6 +105,7 @@ function AppShell({
     reasoningMode: ReasoningPreference = "auto",
     attachments?: ConversationAttachmentSubmission,
     approvalProfileId?: import("../domain/approval-profile").ApprovalProfileId,
+    capabilities?: ConversationCapabilitySelection,
   ): Promise<void> => {
     return createSession(
       spacePath,
@@ -107,6 +114,7 @@ function AppShell({
       reasoningMode,
       attachments,
       approvalProfileId,
+      capabilities,
     ).then(
       (sessionId) => {
         navigate(`/sessions/${sessionId}`);
@@ -131,9 +139,12 @@ function AppShell({
         recentSessions={recentSessions}
         recentFolderPaths={recentFolderPaths}
         recentFilters={recentFilters}
+        recentTotalCount={recentTotalCount}
+        recentSessionsHasMore={recentSessionsHasMore}
         recentSessionsLoading={recentSessionsLoading}
         business={window.realmflow?.business}
         onRecentFilterChange={updateRecentFilters}
+        onLoadMoreRecentSessions={loadMoreRecentSessions}
         onRenameConversation={renameConversation}
         onDeleteConversation={deleteRecentConversation}
         onCreateSpace={createSpace}

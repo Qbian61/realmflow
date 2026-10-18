@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.computer.key",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Press key",
   "description": "Send a controlled key chord.",
   "tags": [

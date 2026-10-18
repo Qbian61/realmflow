@@ -50,7 +50,10 @@ export class SqliteAgentDelegationRepository implements RuntimeDelegationStore {
         const id = createHash('sha256').update(JSON.stringify([runId, requestId, task.id])).digest('hex')
         return {
           runId: `child-${id}`, sessionId: `session-${id}`, parentRunId: runId,
-          rootRunId: root.id, requestId, task, status: 'registered', createdAt: at, updatedAt: at
+          rootRunId: root.id, requestId, ordinal: task.ordinal,
+          agentId: parent.snapshot.agentProfileId,
+          agentName: agentDisplayName(parent.snapshot.agentProfileId),
+          task, status: 'registered', createdAt: at, updatedAt: at
         }
       })
       this.budgets.reserve({
@@ -104,7 +107,7 @@ export class SqliteAgentDelegationRepository implements RuntimeDelegationStore {
       const record = this.get(runId)
       if (!record || record.status !== 'registered') return false
       this.activeParent(record.parentRunId)
-      this.save({ ...record, status: 'running', updatedAt: at })
+      this.save({ ...record, status: 'running', startedAt: at, updatedAt: at })
       return true
     })()
   }
@@ -140,8 +143,23 @@ export class SqliteAgentDelegationRepository implements RuntimeDelegationStore {
           result.status === 'completed' ? null : bounded.summary,
           source ? JSON.stringify(source) : null, record.sessionId, `${runId}:assistant`, runId)
       if (update.changes !== 1) throw new Error('runtime_delegation_session_conflict')
+      const turnUpdate = this.database.prepare(
+        `UPDATE conversation_turns
+         SET status = ?, completed_at = ?
+         WHERE session_id = ? AND run_id = ?
+           AND status NOT IN ('completed', 'failed', 'cancelled')`
+      ).run(result.status, at, record.sessionId, runId)
+      if (turnUpdate.changes !== 1) {
+        throw new Error('runtime_delegation_session_conflict')
+      }
       this.database.prepare('UPDATE chat_sessions SET revision = revision + 1, updated_at = ? WHERE id = ?').run(at, record.sessionId)
-      this.save({ ...record, status: result.status, result: bounded, updatedAt: at })
+      this.save({
+        ...record,
+        status: result.status,
+        result: bounded,
+        completedAt: at,
+        updatedAt: at
+      })
     })()
   }
 
@@ -160,10 +178,26 @@ export class SqliteAgentDelegationRepository implements RuntimeDelegationStore {
         ?, 0, 1, ?, ? FROM chat_sessions WHERE id = ? AND kind IN ('general', 'space')`)
       .run(record.sessionId, sanitizeRuntimeText(record.task.objective).slice(0, 240), record.createdAt, record.createdAt, parentSessionId)
     if (copied.changes !== 1) throw new Error('runtime_scope_denied')
+    const turnId = `${record.runId}:turn`
+    this.database.prepare(`INSERT INTO conversation_turns
+      (id, session_id, turn_index, user_message_id, assistant_message_id,
+        run_id, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(
+        turnId,
+        record.sessionId,
+        0,
+        `${record.runId}:user`,
+        `${record.runId}:assistant`,
+        record.runId,
+        'running',
+        record.createdAt
+      )
     const insert = this.database.prepare(`INSERT INTO chat_messages
-      (id, session_id, role, status, content, run_id, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-    insert.run(`${record.runId}:user`, record.sessionId, 'user', 'completed', record.task.objective, null, 0, record.createdAt)
-    insert.run(`${record.runId}:assistant`, record.sessionId, 'assistant', 'pending', '', record.runId, 1, record.createdAt)
+      (id, session_id, turn_id, role, status, content, run_id, sort_order, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    insert.run(`${record.runId}:user`, record.sessionId, turnId, 'user', 'completed', record.task.objective, null, 0, record.createdAt)
+    insert.run(`${record.runId}:assistant`, record.sessionId, turnId, 'assistant', 'pending', '', record.runId, 1, record.createdAt)
   }
 
   private save(record: RuntimeDelegation): void {
@@ -176,4 +210,13 @@ export class SqliteAgentDelegationRepository implements RuntimeDelegationStore {
     this.database.prepare('INSERT INTO agent_delegation_events (run_id, status, occurred_at) VALUES (?, ?, ?)')
       .run(record.runId, record.status, record.updatedAt)
   }
+}
+
+function agentDisplayName(agentId: string): string {
+  const name = agentId.split('.').at(-1) ?? agentId
+  return name
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((part) => `${part[0]?.toUpperCase() ?? ''}${part.slice(1)}`)
+    .join(' ')
 }

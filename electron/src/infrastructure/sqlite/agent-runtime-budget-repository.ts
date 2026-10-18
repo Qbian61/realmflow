@@ -13,9 +13,6 @@ const ACCOUNT_RUNS = `WITH RECURSIVE account_runs(id) AS (
   UNION
   SELECT r.id FROM agent_runtime_runs r JOIN account_runs a
     ON json_extract(r.snapshot_json, '$.sourceCheckpoint.runId') = a.id
-  JOIN agent_run_checkpoints c ON c.run_id = a.id
-    AND c.ordinal = json_extract(r.snapshot_json, '$.sourceCheckpoint.ordinal')
-    AND c.resume_token = json_extract(r.snapshot_json, '$.sourceCheckpoint.resumeToken')
 )`
 
 /** Child allowances transfer capacity; spending them does not charge the root twice. */
@@ -97,10 +94,7 @@ export class SqliteAgentRuntimeBudgetRepository implements RuntimeBudgetStore {
     while (current.snapshot.sourceCheckpoint) {
       const source = current.snapshot.sourceCheckpoint
       const parent = this.runs.getById(source.runId)
-      const checkpoint = this.database.prepare(`SELECT 1 FROM agent_run_checkpoints
-        WHERE run_id = ? AND ordinal = ? AND resume_token = ?`)
-        .get(source.runId, source.ordinal, source.resumeToken)
-      if (seen.has(current.id) || !checkpoint || !parent ||
+      if (seen.has(current.id) || !parent ||
           current.snapshot.parentRunId !== parent.id ||
           parent.snapshot.rootRunId !== run.snapshot.rootRunId ||
           !isDeepStrictEqual(parent.snapshot.scope, run.snapshot.scope)) {

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.realmflow.artifacts.read",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "name": "Read artifact",
   "description": "Read formal artifact content or references.",
   "tags": [

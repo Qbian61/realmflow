@@ -1,4 +1,3 @@
-import { createCipheriv, randomBytes } from 'node:crypto'
 import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -51,30 +50,6 @@ describe('CredentialVault', () => {
       preparedRotations: []
     })
     expect(vault.activeKeyVersion).toBe(1)
-  })
-
-  it('atomically upgrades a raw C01 key and decrypts its existing ciphertext', async () => {
-    const key = randomBytes(32)
-    const nonce = randomBytes(12)
-    const cipher = createCipheriv('aes-256-gcm', key, nonce)
-    const encryptedValue = Buffer.concat([
-      cipher.update('existing-secret', 'utf8'),
-      cipher.final()
-    ])
-    const authTag = cipher.getAuthTag()
-    await writeFile(keyPath, key, { mode: 0o600 })
-
-    const vault = await CredentialVault.open(keyPath)
-
-    expect(
-      vault.decrypt({ encryptedValue, nonce, authTag, keyVersion: 1 })
-    ).toBe('existing-secret')
-    expect(JSON.parse(await readFile(keyPath, 'utf8'))).toMatchObject({
-      formatVersion: 1,
-      activeKeyVersion: 1,
-      keys: [{ version: 1 }],
-      preparedRotations: []
-    })
   })
 
   it('prepares one new key version per request and retains old decryptability', async () => {

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "packageId": "realmflow.builtin.presentations",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Presentations",
   "description": "Revision-safe local PPTX inspection and structured editing.",
   "publisher": {

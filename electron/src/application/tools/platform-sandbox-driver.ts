@@ -1,6 +1,6 @@
 import { constants } from 'node:fs'
 import { access, realpath } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { dirname, isAbsolute } from 'node:path'
 
 export type SandboxedCommand = {
   executable: string
@@ -51,12 +51,22 @@ export class PlatformSandboxDriver implements SandboxCommandPort {
     })
     const executable = await realpath(input.executable)
     const cwd = await realpath(input.cwd)
+    const readableArgumentPaths = (
+      await Promise.all(
+        input.arguments.map((argument) =>
+          isAbsolute(argument)
+            ? realpath(argument).catch(() => undefined)
+            : Promise.resolve(undefined)
+        )
+      )
+    ).filter((path): path is string => path !== undefined)
     if (this.platform === 'darwin') {
       return macOsCommand(
         this.sandboxExecutable,
         executable,
         input.arguments,
-        cwd
+        cwd,
+        readableArgumentPaths
       )
     }
     if (this.platform === 'linux') {
@@ -81,7 +91,8 @@ function macOsCommand(
   sandboxExecutable: string,
   executable: string,
   arguments_: string[],
-  cwd: string
+  cwd: string,
+  readableArgumentPaths: string[]
 ): SandboxedCommand {
   const readableRoots = [
     '/System',
@@ -90,7 +101,8 @@ function macOsCommand(
     '/sbin',
     '/dev',
     dirname(dirname(executable)),
-    cwd
+    cwd,
+    ...readableArgumentPaths
   ]
   const profile = [
     '(version 1)',

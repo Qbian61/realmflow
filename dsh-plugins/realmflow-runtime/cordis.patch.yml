@@ -1,0 +1,18 @@
+# RealmFlow DSH runtime boundary plugins. These entries are control-plane
+# adapters only; capability execution remains in DSH packages or RF_DSH_PLUGIN
+# implementations selected by the accepted run manifest.
+
+- insert:
+    - id: realmflow-run-manifest-loader
+      name: '@realmflow/dsh-runtime/run-manifest-loader'
+      config:
+        manifestPath: !!js process.env.REALMFLOW_DSH_MANIFEST_PATH
+        publisherProcessId: !!js process.env.REALMFLOW_DSH_PUBLISHER_PID
+        publisherTokenDigest: !!js process.env.REALMFLOW_DSH_PUBLISHER_TOKEN_DIGEST
+        requireImmutableDigest: true
+
+    - id: realmflow-runtime-authority
+      name: '@realmflow/dsh-runtime/runtime-authority'
+      config:
+        denyByDefault: true
+        emitDeniedEvents: true

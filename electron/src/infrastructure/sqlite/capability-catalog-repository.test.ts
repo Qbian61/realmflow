@@ -212,47 +212,6 @@ describe('SqliteCapabilityCatalogRepository', () => {
     ])
   })
 
-  it('synchronizes legacy projections idempotently and advances revisions', async () => {
-    const repository = await createRepository()
-    const version1 = definition({ source: 'builtin' })
-    const current = installation(version1, {
-      id: `legacy-installation.${version1.id}`
-    })
-
-    await repository.synchronizeLegacy([
-      { definition: version1, installation: current }
-    ])
-    await repository.synchronizeLegacy([
-      { definition: version1, installation: current }
-    ])
-    const version2 = definition({
-      version: '2.0.0',
-      source: 'builtin',
-      manifestDigest: 'd'.repeat(64),
-      publishedAt: 200
-    })
-    await repository.synchronizeLegacy([
-      {
-        definition: version2,
-        installation: installation(version2, {
-          id: current.id,
-          enabled: false,
-          status: 'installed_disabled',
-          installedAt: 200,
-          updatedAt: 200
-        })
-      }
-    ])
-
-    await expect(repository.listInstallations()).resolves.toEqual([
-      expect.objectContaining({
-        capabilityVersion: '2.0.0',
-        enabled: false,
-        revision: 2,
-        installedAt: 100
-      })
-    ])
-  })
 })
 
 async function createRepository(): Promise<SqliteCapabilityCatalogRepository> {

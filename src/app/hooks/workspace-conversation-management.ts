@@ -1,5 +1,8 @@
 import type { Dispatch } from 'react'
-import type { BusinessApi } from '../../../shared/business'
+import type {
+  BusinessApi,
+  RecentConversationDto
+} from '../../../shared/business'
 import type { WorkspaceAction } from '../../application/workspace/workspace-reducer'
 import type { ChatSession } from '../../domain/chat-session'
 import type { RecentConversationFilters } from '../../features/sessions/recent-conversation-filters'
@@ -8,6 +11,7 @@ import { mapConversation } from '../mappers/business-mappers'
 type Dependencies = {
   business?: BusinessApi
   sessions: ChatSession[]
+  recentConversations?: RecentConversationDto[]
   dispatch: Dispatch<WorkspaceAction>
   filters: RecentConversationFilters
   refresh: (filters: RecentConversationFilters) => Promise<void>
@@ -20,6 +24,7 @@ type Dependencies = {
 export function createConversationManagementActions({
   business,
   sessions,
+  recentConversations = [],
   dispatch,
   filters,
   refresh,
@@ -32,11 +37,17 @@ export function createConversationManagementActions({
       title: string
     ): Promise<ChatSession | undefined> {
       const session = sessions.find((item) => item.id === sessionId)
+      const recent = recentConversations.find((item) => item.id === sessionId)
       const normalizedTitle = title.trim()
-      if (!session || !normalizedTitle || normalizedTitle.length > 240) {
+      if (
+        (!session && !recent) ||
+        !normalizedTitle ||
+        normalizedTitle.length > 240
+      ) {
         return undefined
       }
       if (!business) {
+        if (!session) return undefined
         const renamed = {
           ...session,
           title: normalizedTitle,
@@ -50,7 +61,7 @@ export function createConversationManagementActions({
         const renamed = mapConversation(
           await business.renameConversation({
             id: sessionId,
-            expectedRevision: session.revision ?? 0,
+            expectedRevision: session?.revision ?? recent?.revision ?? 0,
             title: normalizedTitle
           })
         )
@@ -66,8 +77,10 @@ export function createConversationManagementActions({
 
     async deleteConversation(sessionId: string): Promise<boolean> {
       const session = sessions.find((item) => item.id === sessionId)
-      if (!session) return false
+      const recent = recentConversations.find((item) => item.id === sessionId)
+      if (!session && !recent) return false
       if (!business) {
+        if (!session) return false
         dispatch({
           type: 'sessions-replaced',
           sessions: sessions.filter((item) => item.id !== sessionId)
@@ -77,7 +90,7 @@ export function createConversationManagementActions({
       try {
         const result = await business.deleteConversation({
           id: sessionId,
-          expectedRevision: session.revision ?? 0
+          expectedRevision: session?.revision ?? recent?.revision ?? 0
         })
         if (result.status === 'conflict') {
           dispatch({

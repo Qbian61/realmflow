@@ -1,9 +1,12 @@
+import { readFile as readManagedFile } from 'node:fs/promises'
 import { basename } from 'node:path'
+import type { ConversationAttachmentDescriptor } from '../../../../domain/conversation-input'
 import type {
   ConversationAttachmentPickerResult,
   PickConversationAttachmentsCommand,
   RemoveConversationAttachmentCommand
 } from '../../../../shared/conversation-attachments'
+import type { OpenedSessionFiles } from '../../../../shared/workspace'
 import type { ConversationAttachmentRegistrationResult } from './conversation-attachment-registry'
 
 type Dependencies = {
@@ -19,10 +22,25 @@ type Dependencies = {
       source: 'picker'
       paths: readonly string[]
     }): Promise<ConversationAttachmentRegistrationResult>
+    resolveManagedPath?(
+      repository: {
+        resolveBlobPath(attachmentId: string): Promise<string>
+      },
+      attachmentId: string
+    ): Promise<string>
   }
   repository: {
     softDelete(id: string, ownerId: string): Promise<void>
+    get?(id: string): Promise<ConversationAttachmentDescriptor | undefined>
+    resolveBlobPath?(attachmentId: string): Promise<string>
   }
+  workspace: {
+    openSessionFiles(
+      paths: string[],
+      displayNames?: string[]
+    ): Promise<OpenedSessionFiles>
+  }
+  readFile?: (path: string) => Promise<Buffer>
 }
 
 export class ManageConversationAttachments {
@@ -87,6 +105,73 @@ export class ManageConversationAttachments {
     )
   }
 
+  async readImage(attachmentId: string): Promise<string> {
+    const { registry, repository } = this.dependencies
+    if (
+      !registry.resolveManagedPath ||
+      !repository.get ||
+      !repository.resolveBlobPath
+    ) {
+      throw unavailableImage()
+    }
+    try {
+      const attachment = await repository.get(attachmentId)
+      if (
+        !attachment ||
+        attachment.mediaKind !== 'image' ||
+        attachment.status !== 'ready' ||
+        !attachment.mimeType.startsWith('image/')
+      ) {
+        throw unavailableImage()
+      }
+      const path = await registry.resolveManagedPath(
+        { resolveBlobPath: repository.resolveBlobPath.bind(repository) },
+        attachmentId
+      )
+      const content = await (this.dependencies.readFile ?? readManagedFile)(path)
+      return `data:${attachment.mimeType};base64,${content.toString('base64')}`
+    } catch {
+      throw unavailableImage()
+    }
+  }
+
+  async open(attachmentId: string): Promise<OpenedSessionFiles> {
+    const { registry, repository, workspace } = this.dependencies
+    if (
+      !registry.resolveManagedPath ||
+      !repository.get ||
+      !repository.resolveBlobPath
+    ) {
+      throw unavailableAttachment()
+    }
+    try {
+      const attachment = await repository.get(attachmentId)
+      if (!attachment || attachment.status !== 'ready') {
+        throw unavailableAttachment()
+      }
+      const path = await registry.resolveManagedPath(
+        { resolveBlobPath: repository.resolveBlobPath.bind(repository) },
+        attachmentId
+      )
+      const selection = await workspace.openSessionFiles(
+        [path],
+        [attachment.fileName]
+      )
+      if (selection.files.length !== 1) throw unavailableAttachment()
+      return {
+        binding: {
+          ...selection.binding,
+          rootName: attachment.fileName
+        },
+        files: selection.files.map((file, index) =>
+          index === 0 ? { ...file, name: attachment.fileName } : file
+        )
+      }
+    } catch {
+      throw unavailableAttachment()
+    }
+  }
+
   private once<T>(
     operation: string,
     requestId: string,
@@ -101,4 +186,12 @@ export class ManageConversationAttachments {
       if (this.requests.get(key) === result) this.requests.delete(key)
     })
   }
+}
+
+function unavailableImage(): Error {
+  return new Error('Conversation image attachment is unavailable')
+}
+
+function unavailableAttachment(): Error {
+  return new Error('Conversation attachment is unavailable')
 }

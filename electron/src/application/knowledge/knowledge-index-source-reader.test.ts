@@ -12,7 +12,7 @@ describe('MainKnowledgeIndexSourceReader', () => {
     if (directory) await rm(directory, { recursive: true, force: true })
   })
 
-  it('freezes the current D02 managed file content and detects changes', async () => {
+  it('freezes managed file content from workspace rootPath and detects changes', async () => {
     directory = await mkdtemp(join(tmpdir(), 'realmflow-index-reader-'))
     const relativePath = '.realmflow/knowledge/files/source-1/notes.md'
     const path = join(directory, relativePath)
@@ -65,7 +65,8 @@ describe('MainKnowledgeIndexSourceReader', () => {
       workspaces: {
         get: vi.fn().mockResolvedValue({
           id: 'space-1',
-          path: directory
+          path: '/spaces/space-1',
+          rootPath: directory
         })
       } as never,
       contentExtractor
@@ -150,7 +151,8 @@ describe('MainKnowledgeIndexSourceReader', () => {
       workspaces: {
         get: vi.fn().mockResolvedValue({
           id: 'space-1',
-          path: directory
+          path: '/spaces/space-1',
+          rootPath: directory
         })
       } as never,
       contentExtractor: {

@@ -101,7 +101,7 @@ export class LocalFileIngestionService {
     const workspace = await this.dependencies.workspaces.get(command.workspaceId)
     if (!workspace) throw new Error(`Workspace not found: ${command.workspaceId}`)
     const workspacePath = await this.securePaths.canonicalizeDirectory(
-      workspace.path
+      requireWorkspaceRoot(workspace)
     )
     const sourcePaths = await Promise.all(
       command.filePaths.map((filePath) =>
@@ -209,12 +209,13 @@ export class LocalFileIngestionService {
     }
 
     const workspace = await this.requireWorkspace(current.workspaceId)
+    const workspaceRoot = requireWorkspaceRoot(workspace)
     const managed = await this.securePaths.resolveExistingPath(
-      workspace.path,
+      workspaceRoot,
       current.managedRelativePath!
     )
     const staging = await this.securePaths.resolvePathForCreation(
-      workspace.path,
+      workspaceRoot,
       posix.join(
         '.realmflow',
         'tmp',
@@ -260,7 +261,7 @@ export class LocalFileIngestionService {
     if (localFile?.storageMode === 'managed_copy') {
       const workspace = await this.requireWorkspace(localFile.workspaceId)
       const managed = await this.securePaths.resolvePathForCreation(
-        workspace.path,
+        requireWorkspaceRoot(workspace),
         localFile.managedRelativePath!
       )
       await rm(dirname(managed.targetPath), { recursive: true, force: true })
@@ -284,7 +285,7 @@ export class LocalFileIngestionService {
       let workspacePath: string
       try {
         workspacePath = await this.securePaths.canonicalizeDirectory(
-          workspace.path
+          requireWorkspaceRoot(workspace)
         )
       } catch {
         continue
@@ -460,7 +461,7 @@ export class LocalFileIngestionService {
     const workspace = await this.requireWorkspace(localFile.workspaceId)
     return (
       await this.securePaths.resolveExistingPath(
-        workspace.path,
+        requireWorkspaceRoot(workspace),
         localFile.managedRelativePath!
       )
     ).targetPath
@@ -480,6 +481,12 @@ function validateCommand(command: IngestLocalFilesCommand): void {
   ) {
     throw new Error('Local file storage mode is invalid')
   }
+}
+
+function requireWorkspaceRoot(workspace: { rootPath?: string }): string {
+  const rootPath = workspace.rootPath?.trim()
+  if (!rootPath) throw new Error('Workspace root is not configured')
+  return rootPath
 }
 
 async function assertFileUnchanged(

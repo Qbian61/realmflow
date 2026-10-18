@@ -10,6 +10,7 @@ import type {
 import type { SendConversationMessageUseCase } from './send-conversation-message'
 import type { ReasoningPreference } from '../../../../domain/reasoning-router'
 import type { ConversationAttachmentSubmission } from '../../../../shared/conversation-attachments'
+import type { ConversationCapabilitySelection } from '../../../../shared/business'
 
 type CreateSpaceConversationCommand = {
   id: string
@@ -27,6 +28,7 @@ type CreateSpaceConversationCommand = {
   approvalProfileId?: import('../../../../domain/approval-profile').ApprovalProfileId
   applicationLocale?: 'zh-CN' | 'en' | 'ja'
   attachments?: ConversationAttachmentSubmission
+  capabilities?: ConversationCapabilitySelection
 }
 
 type Dependencies = {
@@ -79,6 +81,7 @@ export class CreateSpaceConversationUseCase {
         knowledgeScope: input.knowledgeScope,
         title,
         sortOrder: now,
+        turns: [],
         messages: [],
         createdAt: now,
         updatedAt: now
@@ -97,7 +100,8 @@ export class CreateSpaceConversationUseCase {
       ...(input.applicationLocale
         ? { applicationLocale: input.applicationLocale }
         : {}),
-      ...(input.attachments ? { attachments: input.attachments } : {})
+      ...(input.attachments ? { attachments: input.attachments } : {}),
+      ...(input.capabilities ? { capabilities: input.capabilities } : {})
     })
   }
 }

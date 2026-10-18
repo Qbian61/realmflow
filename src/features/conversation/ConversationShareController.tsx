@@ -26,7 +26,9 @@ import {
 } from "../../components/ui";
 import { useLocalization } from "../../localization/LocalizationProvider";
 import { useToast } from "../toast/ToastProvider";
-import { ConversationMessageList } from "./ConversationMessageList";
+import type { ConversationTurn } from "../../../domain/conversation-turn";
+import { ConversationTurnList } from "./ConversationTurnList";
+import { assembleConversationTurnViews } from "./conversation-turn-view";
 import {
   ConversationShareCard,
   type ShareableConversationMessage,
@@ -34,6 +36,7 @@ import {
 
 type Props = {
   title: string;
+  turns: readonly ConversationTurn[];
   messages: readonly ShareableConversationMessage[];
   children: (shareMessage: (messageId: string) => void) => ReactNode;
 };
@@ -46,6 +49,7 @@ type SharePng = {
 
 export function ConversationShareController({
   title,
+  turns,
   messages,
   children,
 }: Props): JSX.Element {
@@ -74,6 +78,10 @@ export function ConversationShareController({
   const selectedMessages = useMemo(
     () => eligible.filter((message) => selectedIds.includes(message.id)),
     [eligible, selectedIds],
+  );
+  const turnViews = useMemo(
+    () => assembleConversationTurnViews(turns, messages),
+    [messages, turns],
   );
   const allSelected =
     eligibleIds.length > 0 &&
@@ -218,8 +226,8 @@ export function ConversationShareController({
                   </IconButton>
                 </DialogHeader>
                 <DialogBody className="conversation-share-selection">
-                  <ConversationMessageList
-                    messages={eligible}
+                  <ConversationTurnList
+                    turns={turnViews}
                     selection={{
                       eligibleIds,
                       selectedIds,
@@ -230,10 +238,12 @@ export function ConversationShareController({
                     labels={{
                       messages: t("chat.share.messages"),
                       messageIndex: t("chat.messageIndex"),
-                      jumpToMessage: (index, preview) =>
+                      jumpToTurn: (index, preview) =>
                         t("chat.jumpToMessage", { index, preview }),
-                      tool: t("chat.tool"),
-                      generating: t("chat.generating"),
+                      openAttachment: (name) =>
+                        t("chat.openAttachment", { name }),
+                      thinking: t("chat.thinking"),
+                      planningNext: t("chat.planningNext"),
                     }}
                   />
                 </DialogBody>

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.spreadsheet.save",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Save spreadsheet",
   "description": "Atomically commit the current spreadsheet revision.",
   "tags": [

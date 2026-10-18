@@ -28,21 +28,6 @@ export class SpaceConversationContextAssembler {
     private readonly maxCharacters = DEFAULT_MAX_CHARACTERS
   ) {}
 
-  async assemble(
-    workspaceId: string,
-    query: string | readonly RetrievalQuery[]
-  ): Promise<string | undefined> {
-    return this.assembleScope({ kind: 'workspace', workspaceId }, query)
-  }
-
-  async assembleScope(
-    scope: KnowledgeSearchScope,
-    query: string | readonly RetrievalQuery[]
-  ): Promise<string | undefined> {
-    const snapshot = await this.assembleSnapshot(scope, query)
-    return snapshot.content || undefined
-  }
-
   async assembleSnapshot(
     scope: KnowledgeSearchScope,
     query: string | readonly RetrievalQuery[]

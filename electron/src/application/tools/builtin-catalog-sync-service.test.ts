@@ -145,7 +145,7 @@ describe('BuiltinCatalogSyncService', () => {
       (await projections.getCatalog()).packages
         .filter(({ packageId }) => packageId === 'realmflow.builtin.domain')
         .map(({ version }) => version)
-    ).toEqual(['1.0.0', '1.0.2'])
+    ).toEqual(['1.0.0', '1.0.3'])
   })
 })
 

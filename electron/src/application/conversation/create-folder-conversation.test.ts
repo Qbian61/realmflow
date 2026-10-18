@@ -36,6 +36,7 @@ describe('CreateFolderConversationUseCase', () => {
         folderPath: '/canonical/project',
         title: 'Folder chat',
         sortOrder: 100,
+        turns: [],
         messages: [],
         createdAt: 100,
         updatedAt: 100

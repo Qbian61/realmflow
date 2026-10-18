@@ -391,6 +391,9 @@ function businessScope(context: PermissionContext): ToolBusinessScope {
   if (context.workspaceId) {
     return { kind: 'workspace', workspaceId: context.workspaceId }
   }
+  if (context.folderSessionId) {
+    return { kind: 'folder', folderSessionId: context.folderSessionId }
+  }
   throw new Error('Process permission requires a bound business scope')
 }
 

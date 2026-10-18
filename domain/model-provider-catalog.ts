@@ -7,7 +7,7 @@ import type {
 } from "./model";
 import { MODEL_PROVIDER_CATALOG_SEEDS } from "./model-provider-catalog-data";
 
-export const MODEL_CATALOG_VERSION = 1;
+export const MODEL_CATALOG_VERSION = 3;
 
 export type BuiltinModelProviderId =
   | "amazon-bedrock"
@@ -62,6 +62,12 @@ export type BuiltinModelProviderDefinition = Readonly<{
     | "aws"
     | "oauth";
   recommendedGroup: "recommended" | "builtin";
+  catalogSource: Readonly<{
+    documentationUrl: string;
+    verifiedAt: string;
+    upstreamPackage: string;
+    sourceProviderId: string;
+  }>;
   provider: Readonly<ModelProvider>;
   models: readonly CatalogModelDefinition[];
   defaultProfile: Readonly<ModelProfile>;
@@ -91,6 +97,7 @@ function freezeDefinition(
   return Object.freeze({
     ...seed,
     catalogVersion: MODEL_CATALOG_VERSION,
+    catalogSource: Object.freeze({ ...seed.catalogSource }),
     provider: Object.freeze({
       ...seed.provider,
       source: "builtin",

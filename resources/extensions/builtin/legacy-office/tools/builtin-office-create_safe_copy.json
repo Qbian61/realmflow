@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.office.create_safe_copy",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "name": "Create safe Office copy",
   "description": "Materialize an Office template or remove macros into a new modern Office document.",
   "tags": [

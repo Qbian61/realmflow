@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.browser.wait_for",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Wait for browser text",
   "description": "Wait for visible text in the current Run browser and return a new sanitized snapshot. Invalidates old refs.",
   "tags": [

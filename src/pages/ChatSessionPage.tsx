@@ -1,12 +1,20 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Search, X } from "lucide-react";
 import { Navigate, useParams } from "react-router-dom";
-import { Composer } from "../components/Composer";
-import { Toolbar } from "../components/ui";
+import {
+  Composer,
+  type ComposerConnectorSelection,
+  type ComposerSkillSelection,
+  toConversationCapabilitySelection,
+} from "../components/Composer";
+import { Button, Field, IconButton, Toolbar } from "../components/ui";
 import type { ChatSession } from "../domain/chat-session";
 import type { WorkspaceSpace } from "../domain/workspace";
 import { useModelProfiles } from "../app/hooks/use-model-profiles";
 import { ConversationMessageFooter } from "../features/conversation/ConversationMessageFooter";
-import { ConversationMessageList } from "../features/conversation/ConversationMessageList";
+import { ConversationTurnList } from "../features/conversation/ConversationTurnList";
+import { assembleConversationTurnViews } from "../features/conversation/conversation-turn-view";
+import { useConversationTurnPages } from "../features/conversation/use-conversation-turn-pages";
 import { FollowUpSuggestionList } from "../features/conversation/FollowUpSuggestionList";
 import { ConversationShareController } from "../features/conversation/ConversationShareController";
 import { KnowledgeNoteCapture } from "../features/conversation/KnowledgeNoteCapture";
@@ -17,6 +25,11 @@ import { useLocalization } from "../localization/LocalizationProvider";
 import type { ReasoningPreference } from "../../domain/reasoning-router";
 import type { ConversationAttachmentDescriptor } from "../../domain/conversation-input";
 import type { ConversationAttachmentSubmission } from "../../shared/conversation-attachments";
+import type {
+  ConversationCapabilitySelection,
+  ConversationTranscriptSearchResultDto,
+} from "../../shared/business";
+import type { ConversationTurnView } from "../../domain/conversation-turn";
 
 type ChatSessionPageProps = {
   sessions: ChatSession[];
@@ -30,6 +43,7 @@ type ChatSessionPageProps = {
     attachments?: ConversationAttachmentSubmission,
     approvalProfileId?: import("../../domain/approval-profile").ApprovalProfileId,
     contextMode?: "auto" | "fresh" | "continuation",
+    capabilities?: ConversationCapabilitySelection,
   ) => void | Promise<void>;
   onSendFollowUpSuggestion?: (command: {
     sessionId: string;
@@ -63,10 +77,22 @@ export default function ChatSessionPage({
     Array<{ fileName: string; message: string }>
   >([]);
   const [attachmentBusy, setAttachmentBusy] = useState(false);
-  const [allowImageEgress, setAllowImageEgress] = useState(false);
+  const [selectedSkill, setSelectedSkill] =
+    useState<ComposerSkillSelection>();
+  const [selectedConnector, setSelectedConnector] =
+    useState<ComposerConnectorSelection>();
   const [copiedMessageId, setCopiedMessageId] = useState("");
   const [sendingSuggestionSetId, setSendingSuggestionSetId] = useState("");
   const [cancellingRunId, setCancellingRunId] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<
+    ConversationTranscriptSearchResultDto[]
+  >([]);
+  const [searching, setSearching] = useState(false);
+  const [searchWindow, setSearchWindow] = useState<
+    ConversationTurnView[] | undefined
+  >();
+  const [targetTurnId, setTargetTurnId] = useState("");
   const session = sessions.find((item) => item.id === sessionId);
   const [selectedApproval, setSelectedApproval] = useState<{
     sessionId?: string; value: import("../../domain/approval-profile").ApprovalProfileId
@@ -74,6 +100,23 @@ export default function ChatSessionPage({
   const approvalProfileId = selectedApproval && selectedApproval.sessionId === sessionId
     ? selectedApproval.value : session?.approvalProfileId ?? "protected";
   const models = useModelProfiles(session?.modelProfileId);
+
+  useEffect(() => {
+    setSearchQuery("");
+    setSearchResults([]);
+    setSearchWindow(undefined);
+    setTargetTurnId("");
+    setSelectedSkill(undefined);
+    setSelectedConnector(undefined);
+  }, [sessionId]);
+
+  const liveTurnViews = session
+    ? assembleConversationTurnViews(session.turns, session.messages)
+    : [];
+  const turnPages = useConversationTurnPages({
+    sessionId: session?.id ?? "",
+    liveTurns: liveTurnViews,
+  });
 
   if (!session) {
     return loading ? (
@@ -128,10 +171,25 @@ export default function ChatSessionPage({
           ? {
               draftId: draftId.current,
               attachmentIds: attachments.map(({ id }) => id),
-              allowImageEgress,
+              allowImageEgress: hasImageAttachments(attachments),
             }
           : undefined;
-      if (submission) {
+      const capabilities = toConversationCapabilitySelection(
+        selectedSkill,
+        selectedConnector,
+      );
+      if (capabilities) {
+        await onAppendMessage(
+          session.id,
+          content,
+          models.selectedId || undefined,
+          "auto",
+          submission,
+          approvalProfileId,
+          "auto",
+          capabilities,
+        );
+      } else {
         await onAppendMessage(
           session.id,
           content,
@@ -141,34 +199,72 @@ export default function ChatSessionPage({
           approvalProfileId,
           "auto",
         );
-      } else {
-        await onAppendMessage(
-          session.id,
-          content,
-          models.selectedId || undefined,
-          "auto",
-          undefined,
-          approvalProfileId,
-          "auto",
-        );
       }
       if (clearPrompt) {
         setPrompt("");
         setAttachments([]);
         setAttachmentErrors([]);
-        setAllowImageEgress(false);
+        setSelectedSkill(undefined);
+        setSelectedConnector(undefined);
         draftId.current = crypto.randomUUID();
       }
-    } catch {
-      toast.error("chat.sendFailed");
+    } catch (error) {
+      toast.error(
+        conversationSendFailureMessageKey(error, Boolean(session.folderPath)),
+      );
     } finally {
       setSubmitting(false);
     }
   };
 
-  const latestAssistantIndex = session.messages
-    .map((message) => message.role === "assistant")
-    .lastIndexOf(true);
+  const displayedTurnViews = searchWindow ?? turnPages.turns;
+  const searchTranscript = async (): Promise<void> => {
+    const query = searchQuery.trim();
+    const api = window.realmflow?.business;
+    if (!api || !query || searching) return;
+    setSearching(true);
+    try {
+      setSearchResults(
+        await api.searchConversationTranscript({
+          sessionId: session.id,
+          query,
+          limit: 12,
+        }),
+      );
+    } catch {
+      setSearchResults([]);
+      toast.error("chat.searchFailed");
+    } finally {
+      setSearching(false);
+    }
+  };
+  const openSearchResult = async (
+    result: ConversationTranscriptSearchResultDto,
+  ): Promise<void> => {
+    const api = window.realmflow?.business;
+    if (!api) return;
+    setSearching(true);
+    try {
+      const page = await api.listConversationTurns({
+        sessionId: session.id,
+        anchorTurnId: result.turnId,
+        limit: 50,
+      });
+      setSearchWindow(page.turns);
+      setTargetTurnId(result.turnId);
+      setSearchResults([]);
+    } catch {
+      toast.error("chat.searchFailed");
+    } finally {
+      setSearching(false);
+    }
+  };
+  const clearSearch = (): void => {
+    setSearchQuery("");
+    setSearchResults([]);
+    setSearchWindow(undefined);
+    setTargetTurnId("");
+  };
   const openGeneratedArtifact = async (
     messageId: string,
     path: string,
@@ -185,6 +281,23 @@ export default function ChatSessionPage({
       const messageKey = artifactOpenFailureMessageKey(error);
       toast.error(messageKey, {
         dedupeKey: `${messageKey}:${messageId}:${path}`,
+      });
+    }
+  };
+  const openConversationAttachment = async (
+    attachmentId: string,
+  ): Promise<void> => {
+    const api = window.realmflow?.conversationAttachments;
+    if (!api || !workbench) return;
+    try {
+      const selection = await api.open(attachmentId);
+      if (selection.files.length === 0) {
+        throw new Error("Conversation attachment selection was empty");
+      }
+      workbench.openWorkspaceSelection(selection);
+    } catch {
+      toast.error("chat.openAttachmentFailed", {
+        dedupeKey: `chat.openAttachmentFailed:${attachmentId}`,
       });
     }
   };
@@ -205,11 +318,80 @@ export default function ChatSessionPage({
               {contextLabel}
             </p>
           </div>
+          <form
+            className="chat-session-search"
+            role="search"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void searchTranscript();
+            }}
+          >
+            <Field
+              name="conversation-search"
+              className="chat-session-search-field"
+              label={<span className="sr-only">{t("chat.search")}</span>}
+              endAdornment={
+                <span className="chat-session-search-actions">
+                  {searchQuery ? (
+                    <IconButton
+                      size="compact"
+                      variant="ghost"
+                      aria-label={t("chat.searchClear")}
+                      title={t("chat.searchClear")}
+                      onClick={clearSearch}
+                    >
+                      <X aria-hidden="true" size={14} />
+                    </IconButton>
+                  ) : null}
+                  <IconButton
+                    type="submit"
+                    size="compact"
+                    variant="ghost"
+                    aria-label={t("chat.searchSubmit")}
+                    title={t("chat.searchSubmit")}
+                    disabled={searching || !searchQuery.trim()}
+                  >
+                    <Search aria-hidden="true" size={14} />
+                  </IconButton>
+                </span>
+              }
+            >
+              <input
+                type="search"
+                value={searchQuery}
+                aria-label={t("chat.search")}
+                placeholder={t("chat.searchPlaceholder")}
+                onChange={(event) => setSearchQuery(event.currentTarget.value)}
+              />
+            </Field>
+            {searchResults.length > 0 ? (
+              <div
+                className="ui-menu ui-menu--compact chat-session-search-results"
+                role="listbox"
+                aria-label={t("chat.searchResults")}
+              >
+                {searchResults.map((result) => (
+                  <Button
+                    className="ui-menu-item"
+                    role="option"
+                    variant="ghost"
+                    size="compact"
+                    aria-selected="false"
+                    key={result.messageId}
+                    onClick={() => void openSearchResult(result)}
+                  >
+                    <span>{result.content}</span>
+                  </Button>
+                ))}
+              </div>
+            ) : null}
+          </form>
         </Toolbar>
       </WorkspaceHeaderPortal>
       <div className="chat-session-page">
         <ConversationShareController
           title={session.title}
+          turns={session.turns}
           messages={session.messages}
         >
           {(shareMessage) => (
@@ -220,32 +402,38 @@ export default function ChatSessionPage({
               messages={session.messages}
             >
               {(selection) => (
-                <ConversationMessageList
-                  messages={session.messages}
+                <ConversationTurnList
+                  turns={displayedTurnViews}
+                  hasEarlierTurns={
+                    searchWindow === undefined && turnPages.hasEarlierTurns
+                  }
+                  loadingEarlierTurns={turnPages.loadingEarlierTurns}
+                  onLoadEarlier={
+                    searchWindow === undefined
+                      ? turnPages.loadEarlierTurns
+                      : undefined
+                  }
+                  targetTurnId={targetTurnId}
                   selection={selection}
                   labels={{
                     messages: t("chat.messages"),
                     messageIndex: t("chat.messageIndex"),
-                    jumpToMessage: (index, preview) =>
+                    jumpToTurn: (index, preview) =>
                       t("chat.jumpToMessage", { index, preview }),
-                    tool: t("chat.tool"),
-                    generating: t("chat.generating"),
+                    openAttachment: (name) =>
+                      t("chat.openAttachment", { name }),
+                    thinking: t("chat.thinking"),
+                    planningNext: t("chat.planningNext"),
                   }}
+                  onOpenAttachment={openConversationAttachment}
                   onOpenGeneratedArtifact={openGeneratedArtifact}
-                  renderFooter={(message, messageIndex) => {
-                    if (
-                      (message.role !== "user" &&
-                        message.role !== "assistant") ||
-                      message.status === "pending"
-                    ) {
+                  renderFooter={(message, turn) => {
+                    if (message.status === "pending") {
                       return null;
                     }
                     const retryContent =
                       message.role === "assistant"
-                        ? session.messages
-                            .slice(0, messageIndex)
-                            .reverse()
-                            .find((item) => item.role === "user")?.content
+                        ? turn.userMessage.content
                         : undefined;
                     const messageTimestamp =
                       message.role === "assistant"
@@ -260,7 +448,7 @@ export default function ChatSessionPage({
                         modelName={message.modelName}
                         aiGeneratedLabel={
                           message.role === "assistant" &&
-                          messageIndex === latestAssistantIndex
+                          turn.isLast
                             ? t("chat.aiGenerated")
                             : undefined
                         }
@@ -290,11 +478,11 @@ export default function ChatSessionPage({
                             : undefined
                         }
                         retryDisabled={
-                          submitting || messageIndex !== latestAssistantIndex
+                          submitting || !turn.isLast
                         }
                         />
                         {message.role === "assistant" &&
-                        messageIndex === latestAssistantIndex &&
+                        turn.isLast &&
                         message.followUp ? (
                           <FollowUpSuggestionList
                             followUp={message.followUp}
@@ -400,8 +588,10 @@ export default function ChatSessionPage({
             attachments={attachments}
             attachmentErrors={attachmentErrors}
             attachmentBusy={attachmentBusy}
-            allowImageEgress={allowImageEgress}
-            onImageEgressChange={setAllowImageEgress}
+            selectedSkill={selectedSkill}
+            onSkillChange={setSelectedSkill}
+            selectedConnector={selectedConnector}
+            onConnectorChange={setSelectedConnector}
             onPickAttachments={() => {
               const api = window.realmflow?.conversationAttachments;
               if (!api || attachmentBusy) return;
@@ -480,4 +670,28 @@ export function artifactOpenFailureMessageKey(
   )
     ? "chat.openArtifactMissing"
     : "chat.openArtifactFailed";
+}
+
+function conversationSendFailureMessageKey(
+  error: unknown,
+  hasFolderContext: boolean,
+): "chat.sendFailed" | "chat.folderUnavailable" {
+  if (!hasFolderContext) return "chat.sendFailed";
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "";
+  return /绑定的文件夹不可用|bound folder is unavailable|folder conversation context is unavailable|\bENOENT\b|no such file or directory|realpath|file not found/i.test(
+    message,
+  )
+    ? "chat.folderUnavailable"
+    : "chat.sendFailed";
+}
+
+function hasImageAttachments(
+  attachments: readonly ConversationAttachmentDescriptor[],
+): boolean {
+  return attachments.some((attachment) => attachment.mediaKind === "image");
 }

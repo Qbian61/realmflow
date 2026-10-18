@@ -58,6 +58,15 @@ export function registerWorkspaceIpc({
     }
   )
   ipcMain.handle(
+    IPC_COMMAND_CHANNELS.workspaceBindSessionDirectory,
+    async (_event, rootPath: unknown) => {
+      const channel = IPC_COMMAND_CHANNELS.workspaceBindSessionDirectory
+      return workspace.bindSessionDirectory(
+        requireString(rootPath, channel, 'rootPath')
+      )
+    }
+  )
+  ipcMain.handle(
     IPC_COMMAND_CHANNELS.workspaceChooseFolder,
     async (_event, ...values) => {
       requireNoIpcPayload(values, IPC_COMMAND_CHANNELS.workspaceChooseFolder)

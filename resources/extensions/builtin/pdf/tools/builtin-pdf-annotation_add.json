@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.pdf.annotation_add",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "name": "Add PDF annotation",
   "description": "Add a visible text annotation to a PDF page.",
   "tags": [

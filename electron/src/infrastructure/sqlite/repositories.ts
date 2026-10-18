@@ -8,6 +8,12 @@ import {
   type AssistantTurnProjection
 } from '../../../../domain/assistant-turn'
 import type { ConversationProcessingSnapshot } from '../../../../domain/conversation-processor'
+import type { ConversationMessageAttachment } from '../../../../domain/conversation-input'
+import {
+  validateConversationTurns,
+  type ConversationTurn,
+  type ConversationTurnMessage
+} from '../../../../domain/conversation-turn'
 import { normalizeApprovalProfile } from '../../../../domain/approval-profile'
 import type {
   AssistantMessageFollowUp,
@@ -53,6 +59,7 @@ import type {
   ChatSessionRecord,
   ChatSessionRepository,
   ConversationManagementRepository,
+  ConversationTurnPageRepository,
   ContextSnapshotRepository,
   DeletionMetadata,
   DeletionLifecycleRepository,
@@ -80,6 +87,7 @@ import type {
   NodeTodoTransitionRecord,
   RecentConversationList,
   RecentConversationQuery,
+  RecentConversationRecord,
   RequirementRecord,
   RequirementRepository,
   RequirementWorkflowRepository,
@@ -234,8 +242,15 @@ type ChatSessionRow = {
   updated_at: number
 }
 
+type RecentConversationRow = ChatSessionRow & {
+  turn_count: number
+  latest_turn_status: ConversationTurn['status'] | null
+  latest_answer_preview: string | null
+}
+
 type ChatMessageRow = {
   id: string
+  turn_id: string
   role: ChatMessageRecord['role']
   status: ChatMessageRecord['status']
   content: string
@@ -252,6 +267,51 @@ type ChatMessageRow = {
   sort_order: number
   created_at: number
   completed_at: number | null
+}
+
+type ConversationMessageAttachmentRow = {
+  id: string
+  owner_id: string
+  file_name: string
+  mime_type: string
+  media_kind: ConversationMessageAttachment['mediaKind']
+  size_bytes: number
+  status: ConversationMessageAttachment['status']
+  error_code: string | null
+  error_message: string | null
+}
+
+type ConversationTurnRow = {
+  id: string
+  session_id: string
+  turn_index: number
+  user_message_id: string
+  assistant_message_id: string
+  run_id: string | null
+  status: ConversationTurn['status']
+  created_at: number
+  completed_at: number | null
+}
+
+type ConversationTurnPageRow = ConversationTurnRow & {
+  user_id: string
+  user_status: ConversationTurnMessage['status']
+  user_content: string
+  user_model_name: string | null
+  user_error: string | null
+  user_source_json: string | null
+  user_attachments_json: string
+  user_created_at: number
+  user_completed_at: number | null
+  assistant_id: string
+  assistant_status: ConversationTurnMessage['status']
+  assistant_content: string
+  assistant_model_name: string | null
+  assistant_error: string | null
+  assistant_source_json: string | null
+  assistant_created_at: number
+  assistant_completed_at: number | null
+  projection_json: string | null
 }
 
 type ArtifactRow = {
@@ -489,7 +549,9 @@ export type SqliteRepositories = {
   }
   workflowDispatches: WorkflowDispatchRepository
   workflowTemplates: WorkflowTemplateRepository
-  chatSessions: ChatSessionRepository & ConversationManagementRepository
+  chatSessions: ChatSessionRepository &
+    ConversationManagementRepository &
+    ConversationTurnPageRepository
   artifacts: ArtifactMetadataRepository
   aiRuns: AiRunRepository
   modelPool: ModelPoolRepository
@@ -1919,17 +1981,29 @@ export class SqliteWorkflowTemplateRepository implements WorkflowTemplateReposit
 
 export class SqliteChatSessionRepository implements
   ChatSessionRepository,
-  ConversationManagementRepository {
+  ConversationManagementRepository,
+  ConversationTurnPageRepository {
   private readonly getMessages: Database.Statement<[string], ChatMessageRow>
+  private readonly getTurns: Database.Statement<
+    [string],
+    ConversationTurnRow
+  >
 
   constructor(private readonly database: Database.Database) {
     this.getMessages = database.prepare(
-      `SELECT id, role, status, content, model_name, run_id, error, question_id, todo_id,
+      `SELECT id, turn_id, role, status, content, model_name, run_id, error, question_id, todo_id,
               tool_call_id, artifact_id, processing_json, source_json, sort_order,
               created_at, completed_at,
               (SELECT projection_json FROM assistant_turn_projections
                WHERE run_id = chat_messages.run_id) AS projection_json
        FROM chat_messages WHERE session_id = ? ORDER BY sort_order, id`
+    )
+    this.getTurns = database.prepare(
+      `SELECT id, session_id, turn_index, user_message_id,
+              assistant_message_id, run_id, status, created_at, completed_at
+       FROM conversation_turns
+       WHERE session_id = ?
+       ORDER BY turn_index, id`
     )
   }
 
@@ -1966,6 +2040,10 @@ export class SqliteChatSessionRepository implements
   async listRecent(
     query: RecentConversationQuery = {}
   ): Promise<RecentConversationList> {
+    const limit = query.limit ?? 50
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      throw new Error('recent_conversation_page_invalid')
+    }
     const clauses = ["kind IN ('general', 'space')"]
     const values: Array<string | number> = []
     if (query.kind) {
@@ -1984,15 +2062,53 @@ export class SqliteChatSessionRepository implements
       clauses.push('updated_at >= ?')
       values.push(query.updatedAfter)
     }
-    const conversations = (
+    const cursor = decodeRecentConversationCursor(query.cursor, query)
+    const totalCount = this.database
+      .prepare(
+        `SELECT COUNT(*) FROM chat_sessions
+         WHERE ${clauses.join(' AND ')}`
+      )
+      .pluck()
+      .get(...values) as number
+    const pageClauses = [...clauses]
+    const pageValues = [...values]
+    if (cursor) {
+      pageClauses.push(
+        '(chat_sessions.updated_at < ? OR (chat_sessions.updated_at = ? AND chat_sessions.id > ?))'
+      )
+      pageValues.push(cursor.updatedAt, cursor.updatedAt, cursor.id)
+    }
+    const rows = (
       this.database
         .prepare(
-          `SELECT * FROM chat_sessions
-           WHERE ${clauses.join(' AND ')}
-           ORDER BY updated_at DESC, id`
+          `SELECT chat_sessions.*,
+                  (
+                    SELECT COUNT(*)
+                    FROM conversation_turns
+                    WHERE session_id = chat_sessions.id
+                  ) AS turn_count,
+                  latest_turn.status AS latest_turn_status,
+                  SUBSTR(latest_answer.content, 1, 280) AS latest_answer_preview
+           FROM chat_sessions
+           LEFT JOIN conversation_turns latest_turn
+             ON latest_turn.session_id = chat_sessions.id
+            AND latest_turn.turn_index = (
+              SELECT MAX(turn_index)
+              FROM conversation_turns
+              WHERE session_id = chat_sessions.id
+            )
+           LEFT JOIN chat_messages latest_answer
+             ON latest_answer.id = latest_turn.assistant_message_id
+            AND latest_answer.session_id = chat_sessions.id
+            AND latest_answer.role = 'assistant'
+           WHERE ${pageClauses.join(' AND ')}
+           ORDER BY chat_sessions.updated_at DESC, chat_sessions.id
+           LIMIT ?`
         )
-        .all(...values) as ChatSessionRow[]
-    ).map((row) => this.mapSession(row))
+        .all(...pageValues, limit + 1) as RecentConversationRow[]
+    )
+    const hasMore = rows.length > limit
+    const conversations = rows.slice(0, limit).map(mapRecentConversation)
     const folderPaths = (
       this.database
         .prepare(
@@ -2003,7 +2119,148 @@ export class SqliteChatSessionRepository implements
         )
         .all() as Array<{ folder_path: string }>
     ).map((row) => row.folder_path)
-    return { conversations, folderPaths }
+    const last = conversations.at(-1)
+    return {
+      conversations,
+      folderPaths,
+      totalCount,
+      ...(hasMore && last
+        ? { nextCursor: encodeRecentConversationCursor(query, last) }
+        : {})
+    }
+  }
+
+  async listTurns(query: {
+    sessionId: string
+    cursor?: string
+    anchorTurnId?: string
+    limit: number
+  }) {
+    if (
+      !query.sessionId.trim() ||
+      (query.cursor !== undefined && query.anchorTurnId !== undefined) ||
+      !Number.isSafeInteger(query.limit) ||
+      query.limit < 1 ||
+      query.limit > 100
+    ) {
+      throw new Error('conversation_turn_page_invalid')
+    }
+    const anchorIndex = query.anchorTurnId === undefined
+      ? undefined
+      : this.database.prepare(
+        `SELECT turn_index
+         FROM conversation_turns
+         WHERE id = ? AND session_id = ?`
+      ).pluck().get(query.anchorTurnId, query.sessionId) as number | undefined
+    if (query.anchorTurnId !== undefined && anchorIndex === undefined) {
+      throw new Error('conversation_turn_anchor_invalid')
+    }
+    const beforeIndex = anchorIndex === undefined
+      ? decodeTurnCursor(query.cursor, query.sessionId)
+      : anchorIndex + 1
+    const totalCount = this.database
+      .prepare(
+        'SELECT COUNT(*) FROM conversation_turns WHERE session_id = ?'
+      )
+      .pluck()
+      .get(query.sessionId) as number
+    const rows = this.database
+      .prepare(
+        `WITH page AS (
+           SELECT id, session_id, turn_index, user_message_id,
+                  assistant_message_id, run_id, status, created_at,
+                  completed_at
+           FROM conversation_turns
+           WHERE session_id = ?
+             AND (? IS NULL OR turn_index < ?)
+           ORDER BY turn_index DESC, id DESC
+           LIMIT ?
+         )
+         SELECT page.*,
+                user.id AS user_id,
+                user.status AS user_status,
+                user.content AS user_content,
+                user.model_name AS user_model_name,
+                user.error AS user_error,
+                user.source_json AS user_source_json,
+                (
+                  SELECT json_group_array(json_object(
+                    'id', attachment.id,
+                    'fileName', attachment.file_name,
+                    'mimeType', attachment.mime_type,
+                    'mediaKind', attachment.media_kind,
+                    'sizeBytes', attachment.size_bytes,
+                    'status', attachment.status,
+                    'errorCode', attachment.error_code,
+                    'errorMessage', attachment.error_message
+                  ))
+                  FROM (
+                    SELECT id, file_name, mime_type, media_kind, size_bytes,
+                           status, error_code, error_message
+                    FROM conversation_attachments
+                    WHERE owner_type = 'message'
+                      AND owner_id = user.id
+                      AND deleted_at IS NULL
+                    ORDER BY created_at, id
+                  ) attachment
+                ) AS user_attachments_json,
+                user.created_at AS user_created_at,
+                user.completed_at AS user_completed_at,
+                assistant.id AS assistant_id,
+                assistant.status AS assistant_status,
+                assistant.content AS assistant_content,
+                assistant.model_name AS assistant_model_name,
+                assistant.error AS assistant_error,
+                assistant.source_json AS assistant_source_json,
+                assistant.created_at AS assistant_created_at,
+                assistant.completed_at AS assistant_completed_at,
+                projection.projection_json
+         FROM page
+         JOIN chat_messages user
+           ON user.id = page.user_message_id
+          AND user.session_id = page.session_id
+          AND user.turn_id = page.id
+          AND user.role = 'user'
+         JOIN chat_messages assistant
+           ON assistant.id = page.assistant_message_id
+          AND assistant.session_id = page.session_id
+          AND assistant.turn_id = page.id
+          AND assistant.role = 'assistant'
+         LEFT JOIN assistant_turn_projections projection
+           ON projection.run_id = page.run_id
+          AND projection.assistant_message_id = page.assistant_message_id
+         ORDER BY page.turn_index, page.id`
+      )
+      .all(
+        query.sessionId,
+        beforeIndex ?? null,
+        beforeIndex ?? null,
+        query.limit
+      ) as ConversationTurnPageRow[]
+    const turns = rows.map(mapConversationTurnPageRow)
+    const messages = rows.flatMap((row) => [
+      mapConversationTurnPageMessage(row, 'user'),
+      mapConversationTurnPageMessage(row, 'assistant')
+    ])
+    const projections = rows.flatMap((row) =>
+      row.projection_json
+        ? [JSON.parse(row.projection_json) as AssistantTurnProjection]
+        : []
+    )
+    const oldestIndex = turns[0]?.index
+    return {
+      turns,
+      messages,
+      projections,
+      ...(rows.length === query.limit &&
+      oldestIndex !== undefined &&
+      oldestIndex > 0
+        ? {
+            nextCursor: encodeTurnCursor(query.sessionId, oldestIndex)
+          }
+        : {}),
+      totalCount
+    }
   }
 
   async save(
@@ -2060,12 +2317,31 @@ export class SqliteChatSessionRepository implements
       if (base.messages.some((message) => message.status === 'pending')) {
         return { status: 'active' as const, entity: base }
       }
+      const turnId = `${input.userMessageId}:turn`
+      const turnIndex =
+        base.turns.reduce(
+          (maximum, turn) => Math.max(maximum, turn.index),
+          -1
+        ) + 1
       const updated: ChatSessionRecord = {
         ...base,
+        turns: [
+          ...base.turns,
+          {
+            id: turnId,
+            sessionId: input.session.id,
+            index: turnIndex,
+            userMessageId: input.userMessageId,
+            assistantMessageId: input.assistantMessageId,
+            status: 'pending',
+            createdAt: input.createdAt
+          }
+        ],
         messages: [
           ...base.messages,
           {
             id: input.userMessageId,
+            turnId,
             role: 'user',
             status: 'completed',
             content: input.content,
@@ -2076,6 +2352,7 @@ export class SqliteChatSessionRepository implements
           },
           {
             id: input.assistantMessageId,
+            turnId,
             role: 'assistant',
             status: 'pending',
             content: '',
@@ -2137,7 +2414,12 @@ export class SqliteChatSessionRepository implements
           )
           .run(input.userMessageId, ...attachmentIds)
       }
-      return { status: 'started' as const, entity: saved.entity }
+      return {
+        status: 'started' as const,
+        entity: input.attachmentBinding
+          ? this.getSync(input.session.id) ?? saved.entity
+          : saved.entity
+      }
     })()
   }
 
@@ -2168,15 +2450,15 @@ export class SqliteChatSessionRepository implements
         current,
         input.assistantMessageId,
         { runId: input.runId },
+        { runId: input.runId, status: 'running' },
         input.updatedAt
       )
     })()
   }
 
-  async rebindTurnRun(input: {
+  async markTurnRetrying(input: {
     sessionId: string
     assistantMessageId: string
-    previousRunId: string
     runId: string
     modelName: string
     expectedRevision: number
@@ -2188,23 +2470,25 @@ export class SqliteChatSessionRepository implements
         current,
         input.assistantMessageId
       )
-      if (
-        assistant.runId === input.runId &&
-        assistant.modelName === input.modelName
-      ) {
+      const turn = current.turns.find(
+        (item) => item.id === assistant.turnId
+      )
+      if (turn?.status === 'retrying' && assistant.modelName === input.modelName) {
         return { status: 'idempotent' as const, entity: current }
       }
       if (
         current.revision !== input.expectedRevision ||
         assistant.status !== 'pending' ||
-        assistant.runId !== input.previousRunId
+        assistant.runId !== input.runId ||
+        turn?.runId !== input.runId
       ) {
         return { status: 'conflict' as const, entity: current }
       }
       return this.updateTurnMessage(
         current,
         input.assistantMessageId,
-        { runId: input.runId, modelName: input.modelName },
+        { modelName: input.modelName },
+        { status: 'retrying' },
         input.updatedAt
       )
     })()
@@ -2280,6 +2564,15 @@ export class SqliteChatSessionRepository implements
       ) {
         throw new Error('Completed conversation response is empty')
       }
+      if (
+        input.status === 'completed' &&
+        completedProjection &&
+        completedProjection.answer !== input.content
+      ) {
+        throw new Error(
+          'Assistant projection answer must equal the persisted message content'
+        )
+      }
       return this.updateTurnMessage(
         current,
         input.assistantMessageId,
@@ -2289,6 +2582,10 @@ export class SqliteChatSessionRepository implements
           completedAt: input.updatedAt,
           ...(input.error ? { error: input.error } : {}),
           ...(input.source ? { source: input.source } : {})
+        },
+        {
+          status: input.status,
+          completedAt: input.updatedAt
         },
         input.updatedAt
       )
@@ -2370,8 +2667,16 @@ export class SqliteChatSessionRepository implements
          SET revision = revision + 1, updated_at = ?
          WHERE id = ?`
       )
+      const failTurns = this.database.prepare(
+        `UPDATE conversation_turns
+         SET status = 'failed', completed_at = ?
+         WHERE session_id = ? AND status NOT IN (
+           'completed', 'failed', 'cancelled'
+         )`
+      )
       for (const sessionId of sessionIds) {
         failMessages.run(input.error, input.updatedAt, sessionId)
+        failTurns.run(input.updatedAt, sessionId)
         updateSession.run(input.updatedAt, sessionId)
       }
       return sessionIds.length
@@ -2449,6 +2754,8 @@ export class SqliteChatSessionRepository implements
     entity: ChatSessionRecord,
     expectedRevision: number
   ): SaveResult<ChatSessionRecord> {
+    validateConversationTurns(entity.turns)
+    assertConversationTurnBindings(entity)
     const approvalProfileId = normalizeApprovalProfile(entity.approvalProfileId ?? 'protected')
     const knowledgeScope =
       entity.knowledgeScope ??
@@ -2467,6 +2774,7 @@ export class SqliteChatSessionRepository implements
     }
     if (current) {
       assertRawConversationInputsImmutable(current.messages, entity.messages)
+      assertConversationTurnIdentityImmutable(current.turns, entity.turns)
     }
     const revision = expectedRevision + 1
     this.database
@@ -2506,12 +2814,52 @@ export class SqliteChatSessionRepository implements
         entity.createdAt,
         entity.updatedAt
       )
+    const insertTurn = this.database.prepare(
+      `INSERT INTO conversation_turns (
+        id, session_id, turn_index, user_message_id, assistant_message_id,
+        run_id, status, created_at, completed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    const updateTurn = this.database.prepare(
+      `UPDATE conversation_turns
+       SET run_id = ?, status = ?, completed_at = ?
+       WHERE id = ? AND session_id = ?`
+    )
+    const existingTurnIds = new Set(
+      current?.turns.map((turn) => turn.id) ?? []
+    )
+    for (const turn of entity.turns) {
+      if (!existingTurnIds.has(turn.id)) {
+        insertTurn.run(
+          turn.id,
+          turn.sessionId,
+          turn.index,
+          turn.userMessageId,
+          turn.assistantMessageId,
+          turn.runId ?? null,
+          turn.status,
+          turn.createdAt,
+          turn.completedAt ?? null
+        )
+        continue
+      }
+      const updated = updateTurn.run(
+        turn.runId ?? null,
+        turn.status,
+        turn.completedAt ?? null,
+        turn.id,
+        entity.id
+      )
+      if (updated.changes !== 1) {
+        throw new Error(`Conversation turn conflict: ${turn.id}`)
+      }
+    }
     const insertMessage = this.database.prepare(
       `INSERT INTO chat_messages (
-        id, session_id, role, status, content, model_name, run_id, error, question_id,
+        id, session_id, turn_id, role, status, content, model_name, run_id, error, question_id,
         todo_id, tool_call_id, artifact_id, processing_json, source_json, sort_order,
         created_at, completed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     const updateMessage = this.database.prepare(
       `UPDATE chat_messages
@@ -2528,6 +2876,7 @@ export class SqliteChatSessionRepository implements
         insertMessage.run(
           message.id,
           entity.id,
+          message.turnId,
           message.role,
           message.status,
           message.content,
@@ -2597,11 +2946,21 @@ export class SqliteChatSessionRepository implements
     current: Revisioned<ChatSessionRecord>,
     messageId: string,
     changes: Partial<ChatMessageRecord>,
+    turnChanges: Partial<
+      Pick<ConversationTurn, 'runId' | 'status' | 'completedAt'>
+    >,
     updatedAt: number
   ) {
+    const message = current.messages.find((item) => item.id === messageId)
+    if (!message) {
+      throw new Error(`Conversation message not found: ${messageId}`)
+    }
     const saved = this.saveSync(
       {
         ...current,
+        turns: current.turns.map((turn) =>
+          turn.id === message.turnId ? { ...turn, ...turnChanges } : turn
+        ),
         messages: current.messages.map((message) =>
           message.id === messageId ? { ...message, ...changes } : message
         ),
@@ -2644,6 +3003,10 @@ export class SqliteChatSessionRepository implements
   }
 
   private mapSession(row: ChatSessionRow): Revisioned<ChatSessionRecord> {
+    const messageRows = this.getMessages.all(row.id) as ChatMessageRow[]
+    const attachmentsByMessageId = this.getMessageAttachments(
+      messageRows.map((message) => message.id)
+    )
     return {
       id: row.id,
       approvalProfileId: normalizeApprovalProfile(row.approval_profile_id),
@@ -2659,9 +3022,24 @@ export class SqliteChatSessionRepository implements
       title: row.title,
       sortOrder: row.sort_order,
       revision: row.revision,
-      messages: (this.getMessages.all(row.id) as ChatMessageRow[]).map(
-        (message) => ({
+      turns: (
+        this.getTurns.all(row.id) as ConversationTurnRow[]
+      ).map((turn) => ({
+        id: turn.id,
+        sessionId: turn.session_id,
+        index: turn.turn_index,
+        userMessageId: turn.user_message_id,
+        assistantMessageId: turn.assistant_message_id,
+        ...(turn.run_id ? { runId: turn.run_id } : {}),
+        status: turn.status,
+        createdAt: turn.created_at,
+        ...(turn.completed_at === null
+          ? {}
+          : { completedAt: turn.completed_at })
+      })),
+      messages: messageRows.map((message) => ({
           id: message.id,
+          turnId: message.turn_id,
           role: message.role,
           status: message.status,
           content: message.content,
@@ -2693,6 +3071,9 @@ export class SqliteChatSessionRepository implements
           ...(message.role === 'assistant'
             ? { followUp: this.getMessageFollowUp(message.id) }
             : {}),
+          ...(attachmentsByMessageId.has(message.id)
+            ? { attachments: attachmentsByMessageId.get(message.id)! }
+            : {}),
           ...(message.projection_json
             ? {
                 execution: JSON.parse(
@@ -2705,11 +3086,37 @@ export class SqliteChatSessionRepository implements
           ...(message.completed_at === null
             ? {}
             : { completedAt: message.completed_at })
-        })
-      ),
+        })),
       createdAt: row.created_at,
       updatedAt: row.updated_at
     }
+  }
+
+  private getMessageAttachments(
+    messageIds: readonly string[]
+  ): Map<string, ConversationMessageAttachment[]> {
+    const result = new Map<string, ConversationMessageAttachment[]>()
+    for (let offset = 0; offset < messageIds.length; offset += 500) {
+      const batch = messageIds.slice(offset, offset + 500)
+      const placeholders = batch.map(() => '?').join(', ')
+      const rows = this.database
+        .prepare(
+          `SELECT id, owner_id, file_name, mime_type, media_kind, size_bytes,
+                  status, error_code, error_message
+           FROM conversation_attachments
+           WHERE owner_type = 'message'
+             AND owner_id IN (${placeholders})
+             AND deleted_at IS NULL
+           ORDER BY owner_id, created_at, id`
+        )
+        .all(...batch) as ConversationMessageAttachmentRow[]
+      for (const attachment of rows) {
+        const owned = result.get(attachment.owner_id) ?? []
+        owned.push(mapConversationMessageAttachment(attachment))
+        result.set(attachment.owner_id, owned)
+      }
+    }
+    return result
   }
 }
 
@@ -2739,6 +3146,8 @@ export class SqliteArtifactMetadataRepository implements ArtifactMetadataReposit
     entity: ArtifactMetadataRecord,
     expectedRevision: number
   ): Promise<SaveResult<ArtifactMetadataRecord>> {
+    if (!entity.nodeId) throw new Error('Artifact node ID is required')
+    if (!entity.nodeRunId) throw new Error('Artifact node run is required')
     return this.database.transaction(() => {
       const current = mapArtifactOptional(
         this.database
@@ -2751,7 +3160,6 @@ export class SqliteArtifactMetadataRepository implements ArtifactMetadataReposit
       if (!current && expectedRevision !== 0) {
         throw new Error(`Artifact metadata not found: ${entity.id}`)
       }
-      const nodeRunId = entity.nodeRunId ?? current?.nodeRunId
       const isValid = entity.isValid ?? current?.isValid ?? true
       if (entity.isPrimary && isValid) {
         this.database
@@ -2759,7 +3167,7 @@ export class SqliteArtifactMetadataRepository implements ArtifactMetadataReposit
             `UPDATE artifacts SET is_primary = 0, revision = revision + 1,
               updated_at = ?
              WHERE requirement_id = ?
-               AND (node_id = ? OR (? IS NULL AND stage_id = ?))
+               AND node_id = ?
                AND is_primary = 1
                AND is_valid = 1
                AND id <> ?`
@@ -2767,9 +3175,7 @@ export class SqliteArtifactMetadataRepository implements ArtifactMetadataReposit
           .run(
             entity.updatedAt,
             entity.requirementId,
-            entity.nodeId ?? null,
-            entity.nodeId ?? null,
-            entity.stageId,
+            entity.nodeId,
             entity.id
           )
       }
@@ -2798,8 +3204,8 @@ export class SqliteArtifactMetadataRepository implements ArtifactMetadataReposit
           entity.id,
           entity.requirementId,
           entity.stageId,
-          entity.nodeId ?? null,
-          nodeRunId ?? null,
+          entity.nodeId,
+          entity.nodeRunId,
           entity.relativePath,
           entity.kind,
           entity.checksum,
@@ -2815,7 +3221,7 @@ export class SqliteArtifactMetadataRepository implements ArtifactMetadataReposit
         status: 'saved' as const,
         entity: {
           ...entity,
-          ...(nodeRunId ? { nodeRunId, isValid } : {}),
+          isValid,
           revision
         }
       }
@@ -3020,37 +3426,19 @@ export class SqliteArtifactMetadataRepository implements ArtifactMetadataReposit
 
   async invalidateByNodeRunIds(
     nodeRunIds: readonly string[],
-    updatedAt: number,
-    legacyNodeIds: readonly string[] = []
+    updatedAt: number
   ): Promise<number> {
     const uniqueIds = [...new Set(nodeRunIds)]
-    const uniqueNodeIds = [...new Set(legacyNodeIds)]
-    if (uniqueIds.length === 0 && uniqueNodeIds.length === 0) return 0
-    const predicates: string[] = []
-    const parameters: string[] = []
-    if (uniqueIds.length > 0) {
-      predicates.push(
-        `node_run_id IN (${uniqueIds.map(() => '?').join(', ')})`
-      )
-      parameters.push(...uniqueIds)
-    }
-    if (uniqueNodeIds.length > 0) {
-      predicates.push(
-        `(node_run_id IS NULL AND node_id IN (${uniqueNodeIds
-          .map(() => '?')
-          .join(', ')}))`
-      )
-      parameters.push(...uniqueNodeIds)
-    }
+    if (uniqueIds.length === 0) return 0
     return this.database
       .prepare(
         `UPDATE artifacts
          SET is_primary = 0, is_valid = 0,
              revision = revision + 1, updated_at = ?
-         WHERE (${predicates.join(' OR ')})
+         WHERE node_run_id IN (${uniqueIds.map(() => '?').join(', ')})
            AND is_valid = 1`
       )
-      .run(updatedAt, ...parameters).changes
+      .run(updatedAt, ...uniqueIds).changes
   }
 }
 
@@ -5295,6 +5683,25 @@ export class SqliteModelPoolRepository implements ModelPoolRepository {
     }
   }
 
+  async clearConversationModelProfileReferences(
+    profileIds: readonly string[],
+    updatedAt: number
+  ): Promise<number> {
+    const uniqueProfileIds = Array.from(new Set(profileIds))
+    if (uniqueProfileIds.length === 0) return 0
+    const clear = this.database.prepare(
+      `UPDATE chat_sessions
+       SET model_profile_id = NULL,
+           revision = revision + 1,
+           updated_at = ?
+       WHERE model_profile_id = ?`
+    )
+    return uniqueProfileIds.reduce(
+      (total, profileId) => total + clear.run(updatedAt, profileId).changes,
+      0
+    )
+  }
+
   async deleteProfile(id: string, expectedRevision: number): Promise<boolean> {
     return this.database.transaction(() => {
       this.database
@@ -6043,12 +6450,14 @@ function mapRequirementRequired(
 }
 
 function mapArtifact(row: ArtifactRow): Revisioned<ArtifactMetadataRecord> {
+  if (!row.node_id) throw new Error('Artifact node ID is required')
+  if (!row.node_run_id) throw new Error('Artifact node run is required')
   return {
     id: row.id,
     requirementId: row.requirement_id,
     stageId: row.stage_id,
-    ...(row.node_id ? { nodeId: row.node_id } : {}),
-    ...(row.node_run_id ? { nodeRunId: row.node_run_id } : {}),
+    nodeId: row.node_id,
+    nodeRunId: row.node_run_id,
     relativePath: row.relative_path,
     kind: row.kind,
     checksum: row.checksum,
@@ -6059,7 +6468,7 @@ function mapArtifact(row: ArtifactRow): Revisioned<ArtifactMetadataRecord> {
       ? { verificationReceiptId: row.verification_receipt_id }
       : {}),
     isPrimary: row.is_primary === 1,
-    ...(row.node_run_id ? { isValid: row.is_valid === 1 } : {}),
+    isValid: row.is_valid === 1,
     revision: row.revision,
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -6563,6 +6972,260 @@ function assertRawConversationInputsImmutable(
       JSON.stringify(candidate.processing) !== JSON.stringify(message.processing)
     ) {
       throw new Error('Conversation raw user input is immutable')
+    }
+  }
+}
+
+function assertConversationTurnBindings(entity: ChatSessionRecord): void {
+  const messages = new Map(
+    entity.messages.map((message) => [message.id, message])
+  )
+  for (const turn of entity.turns) {
+    if (turn.sessionId !== entity.id) {
+      throw new Error('Conversation turn belongs to a different session')
+    }
+    const user = messages.get(turn.userMessageId)
+    const assistant = messages.get(turn.assistantMessageId)
+    if (
+      !user ||
+      user.turnId !== turn.id ||
+      user.role !== 'user' ||
+      !assistant ||
+      assistant.turnId !== turn.id ||
+      assistant.role !== 'assistant'
+    ) {
+      throw new Error(
+        'Conversation turn must bind exactly one user and assistant message'
+      )
+    }
+  }
+  if (
+    entity.messages.some(
+      (message) =>
+        !entity.turns.some((turn) => turn.id === message.turnId)
+    )
+  ) {
+    throw new Error('Conversation message must belong to a persisted turn')
+  }
+}
+
+function mapRecentConversation(
+  row: RecentConversationRow
+): RecentConversationRecord {
+  return {
+    id: row.id,
+    approvalProfileId: normalizeApprovalProfile(row.approval_profile_id),
+    kind: row.kind as RecentConversationRecord['kind'],
+    ...(row.workspace_id ? { workspaceId: row.workspace_id } : {}),
+    ...(row.folder_path ? { folderPath: row.folder_path } : {}),
+    ...(row.model_profile_id
+      ? { modelProfileId: row.model_profile_id }
+      : {}),
+    title: row.title,
+    sortOrder: row.sort_order,
+    revision: row.revision,
+    turnCount: row.turn_count,
+    ...(row.latest_turn_status
+      ? { latestTurnStatus: row.latest_turn_status }
+      : {}),
+    ...(row.latest_answer_preview
+      ? { latestAnswerPreview: row.latest_answer_preview }
+      : {}),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  }
+}
+
+function mapConversationTurnPageRow(
+  row: ConversationTurnPageRow
+): ConversationTurn {
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    index: row.turn_index,
+    userMessageId: row.user_message_id,
+    assistantMessageId: row.assistant_message_id,
+    ...(row.run_id ? { runId: row.run_id } : {}),
+    status: row.status,
+    createdAt: row.created_at,
+    ...(row.completed_at === null
+      ? {}
+      : { completedAt: row.completed_at })
+  }
+}
+
+function mapConversationMessageAttachment(
+  row: ConversationMessageAttachmentRow
+): ConversationMessageAttachment {
+  return {
+    id: row.id,
+    fileName: row.file_name,
+    mimeType: row.mime_type,
+    mediaKind: row.media_kind,
+    sizeBytes: row.size_bytes,
+    status: row.status,
+    ...(row.error_code ? { errorCode: row.error_code } : {}),
+    ...(row.error_message ? { errorMessage: row.error_message } : {})
+  }
+}
+
+function mapConversationTurnPageMessage(
+  row: ConversationTurnPageRow,
+  role: 'user' | 'assistant'
+): ConversationTurnMessage {
+  const prefix = role === 'user' ? 'user' : 'assistant'
+  const sourceJson = row[`${prefix}_source_json`]
+  const attachments =
+    role === 'user'
+      ? parseConversationMessageAttachments(row.user_attachments_json)
+      : []
+  return {
+    id: row[`${prefix}_id`],
+    sessionId: row.session_id,
+    turnId: row.id,
+    role,
+    status: row[`${prefix}_status`],
+    content: row[`${prefix}_content`],
+    ...(row[`${prefix}_model_name`]
+      ? { modelName: row[`${prefix}_model_name`]! }
+      : {}),
+    ...(row[`${prefix}_error`]
+      ? { error: row[`${prefix}_error`]! }
+      : {}),
+    ...(sourceJson
+      ? {
+          source: JSON.parse(sourceJson) as ConversationMessageSource
+        }
+      : {}),
+    ...(attachments.length > 0 ? { attachments } : {}),
+    createdAt: row[`${prefix}_created_at`],
+    ...(row[`${prefix}_completed_at`] === null
+      ? {}
+      : { completedAt: row[`${prefix}_completed_at`]! })
+  }
+}
+
+function parseConversationMessageAttachments(
+  value: string
+): ConversationMessageAttachment[] {
+  const attachments = JSON.parse(value) as Array<
+    ConversationMessageAttachment & {
+      errorCode: string | null
+      errorMessage: string | null
+    }
+  >
+  return attachments.map(({ errorCode, errorMessage, ...attachment }) => ({
+    ...attachment,
+    ...(errorCode ? { errorCode } : {}),
+    ...(errorMessage ? { errorMessage } : {})
+  }))
+}
+
+function encodeRecentConversationCursor(
+  query: RecentConversationQuery,
+  conversation: RecentConversationRecord
+): string {
+  return Buffer.from(
+    JSON.stringify({
+      version: 1,
+      query: recentConversationQueryKey(query),
+      updatedAt: conversation.updatedAt,
+      id: conversation.id
+    }),
+    'utf8'
+  ).toString('base64url')
+}
+
+function decodeRecentConversationCursor(
+  cursor: string | undefined,
+  query: RecentConversationQuery
+): { updatedAt: number; id: string } | undefined {
+  if (cursor === undefined) return undefined
+  try {
+    const parsed = JSON.parse(
+      Buffer.from(cursor, 'base64url').toString('utf8')
+    ) as {
+      version?: unknown
+      query?: unknown
+      updatedAt?: unknown
+      id?: unknown
+    }
+    if (
+      parsed.version !== 1 ||
+      parsed.query !== recentConversationQueryKey(query) ||
+      !Number.isSafeInteger(parsed.updatedAt) ||
+      (parsed.updatedAt as number) < 0 ||
+      typeof parsed.id !== 'string' ||
+      parsed.id.length === 0
+    ) {
+      throw new Error('invalid')
+    }
+    return { updatedAt: parsed.updatedAt as number, id: parsed.id }
+  } catch {
+    throw new Error('recent_conversation_cursor_invalid')
+  }
+}
+
+function recentConversationQueryKey(query: RecentConversationQuery): string {
+  return JSON.stringify([
+    query.kind ?? null,
+    query.workspaceId ?? null,
+    query.folderPath ?? null,
+    query.updatedAfter ?? null
+  ])
+}
+
+function encodeTurnCursor(sessionId: string, beforeIndex: number): string {
+  return Buffer.from(
+    JSON.stringify({ version: 1, sessionId, beforeIndex }),
+    'utf8'
+  ).toString('base64url')
+}
+
+function decodeTurnCursor(
+  cursor: string | undefined,
+  sessionId: string
+): number | undefined {
+  if (cursor === undefined) return undefined
+  try {
+    const parsed = JSON.parse(
+      Buffer.from(cursor, 'base64url').toString('utf8')
+    ) as {
+      version?: unknown
+      sessionId?: unknown
+      beforeIndex?: unknown
+    }
+    if (
+      parsed.version !== 1 ||
+      parsed.sessionId !== sessionId ||
+      !Number.isSafeInteger(parsed.beforeIndex) ||
+      (parsed.beforeIndex as number) <= 0
+    ) {
+      throw new Error('invalid')
+    }
+    return parsed.beforeIndex as number
+  } catch {
+    throw new Error('conversation_turn_cursor_invalid')
+  }
+}
+
+function assertConversationTurnIdentityImmutable(
+  current: readonly ConversationTurn[],
+  next: readonly ConversationTurn[]
+): void {
+  const nextById = new Map(next.map((turn) => [turn.id, turn]))
+  for (const turn of current) {
+    const candidate = nextById.get(turn.id)
+    if (
+      !candidate ||
+      candidate.sessionId !== turn.sessionId ||
+      candidate.index !== turn.index ||
+      candidate.userMessageId !== turn.userMessageId ||
+      candidate.assistantMessageId !== turn.assistantMessageId ||
+      candidate.createdAt !== turn.createdAt ||
+      (turn.runId !== undefined && candidate.runId !== turn.runId)
+    ) {
+      throw new Error('Conversation turn identity is immutable')
     }
   }
 }

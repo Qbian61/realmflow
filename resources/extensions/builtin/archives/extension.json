@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "packageId": "realmflow.builtin.archives",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "name": "Archives",
   "description": "Bounded local archive inspection, extraction, and creation.",
   "publisher": {

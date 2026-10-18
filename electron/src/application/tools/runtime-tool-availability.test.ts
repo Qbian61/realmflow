@@ -16,6 +16,7 @@ import {
   CompositeRuntimeToolAvailabilityProvider,
   ConnectorRuntimeToolEligibilityService,
   McpRuntimeToolAvailabilityProvider,
+  nonReadyToolIds,
   WebRuntimeToolAvailabilityProvider
 } from './runtime-tool-availability'
 
@@ -92,7 +93,7 @@ describe('Runtime Tool availability providers', () => {
     })
   })
 
-  it('derives legacy unavailable IDs from structured eligibility snapshots', async () => {
+  it('combines structured eligibility snapshots from every registered provider', async () => {
     const provider = new CompositeRuntimeToolAvailabilityProvider([
       {
         getEligibilitySnapshot: async () =>
@@ -110,12 +111,25 @@ describe('Runtime Tool availability providers', () => {
           ])
       },
       {
-        getUnavailableToolIds: async () => new Set(['mcp.docs.search'])
+        getEligibilitySnapshot: async () =>
+          new Map([
+            [
+              'mcp.docs.search',
+              {
+                status: 'unavailable',
+                reasonCode: 'mcp_server_unavailable',
+                checkedAt: 2,
+                expiresAt: 32,
+                dependencyRevision: 'mcp:docs:2'
+              }
+            ]
+          ])
       }
     ])
 
-    await expect(provider.getUnavailableToolIds(webCatalog()))
-      .resolves.toEqual(new Set(['builtin.web.search', 'mcp.docs.search']))
+    expect(
+      nonReadyToolIds(await provider.getEligibilitySnapshot(webCatalog()))
+    ).toEqual(new Set(['builtin.web.search', 'mcp.docs.search']))
   })
 
   it('hides web search while the search provider is disabled but keeps web fetch visible', async () => {
@@ -128,8 +142,9 @@ describe('Runtime Tool availability providers', () => {
       }
     })
 
-    await expect(provider.getUnavailableToolIds(webCatalog()))
-      .resolves.toEqual(new Set(['builtin.web.search']))
+    expect(
+      nonReadyToolIds(await provider.getEligibilitySnapshot(webCatalog()))
+    ).toEqual(new Set(['builtin.web.search']))
   })
 
   it('hides Brave web search when its credential handle is missing', async () => {
@@ -144,8 +159,9 @@ describe('Runtime Tool availability providers', () => {
       }
     })
 
-    await expect(provider.getUnavailableToolIds(webCatalog()))
-      .resolves.toEqual(new Set(['builtin.web.search']))
+    expect(
+      nonReadyToolIds(await provider.getEligibilitySnapshot(webCatalog()))
+    ).toEqual(new Set(['builtin.web.search']))
   })
 
   it('keeps configured web search visible', async () => {
@@ -160,8 +176,9 @@ describe('Runtime Tool availability providers', () => {
       }
     })
 
-    await expect(provider.getUnavailableToolIds(webCatalog()))
-      .resolves.toEqual(new Set())
+    expect(
+      nonReadyToolIds(await provider.getEligibilitySnapshot(webCatalog()))
+    ).toEqual(new Set())
   })
 
   it('hides MCP tools when the server is disabled, unavailable, or missing credentials', async () => {
@@ -182,7 +199,9 @@ describe('Runtime Tool availability providers', () => {
       }
     })
 
-    await expect(provider.getUnavailableToolIds(catalog)).resolves.toEqual(
+    expect(
+      nonReadyToolIds(await provider.getEligibilitySnapshot(catalog))
+    ).toEqual(
       new Set([
         'mcp.disabled.search',
         'mcp.unavailable.search',
@@ -203,8 +222,11 @@ describe('Runtime Tool availability providers', () => {
       }
     })
 
-    await expect(provider.getUnavailableToolIds(mcpCatalog('ready')))
-      .resolves.toEqual(new Set())
+    expect(
+      nonReadyToolIds(
+        await provider.getEligibilitySnapshot(mcpCatalog('ready'))
+      )
+    ).toEqual(new Set())
   })
 
   it('reports Connector action tools with missing credential handles as unavailable without resolving secrets', async () => {
@@ -257,14 +279,43 @@ describe('Runtime Tool availability providers', () => {
     })
   })
 
-  it('combines unavailable tool IDs from every registered provider', async () => {
+  it('combines unavailable tool IDs from every structured provider', async () => {
     const provider = new CompositeRuntimeToolAvailabilityProvider([
-      { getUnavailableToolIds: async () => new Set(['builtin.web.search']) },
-      { getUnavailableToolIds: async () => new Set(['mcp.docs.search']) }
+      {
+        getEligibilitySnapshot: async () =>
+          new Map([
+            [
+              'builtin.web.search',
+              {
+                status: 'unavailable',
+                reasonCode: 'web_search_disabled',
+                checkedAt: 1,
+                expiresAt: 31,
+                dependencyRevision: 'web-provider:1'
+              }
+            ]
+          ])
+      },
+      {
+        getEligibilitySnapshot: async () =>
+          new Map([
+            [
+              'mcp.docs.search',
+              {
+                status: 'unavailable',
+                reasonCode: 'mcp_server_unavailable',
+                checkedAt: 2,
+                expiresAt: 32,
+                dependencyRevision: 'mcp:docs:2'
+              }
+            ]
+          ])
+      }
     ])
 
-    await expect(provider.getUnavailableToolIds(webCatalog()))
-      .resolves.toEqual(new Set(['builtin.web.search', 'mcp.docs.search']))
+    expect(
+      nonReadyToolIds(await provider.getEligibilitySnapshot(webCatalog()))
+    ).toEqual(new Set(['builtin.web.search', 'mcp.docs.search']))
   })
 })
 

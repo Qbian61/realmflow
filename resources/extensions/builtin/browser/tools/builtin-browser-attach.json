@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.browser.attach",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Attach browser profile",
   "description": "Resume an owned local login profile after explicit profile-specific approval.",
   "tags": [

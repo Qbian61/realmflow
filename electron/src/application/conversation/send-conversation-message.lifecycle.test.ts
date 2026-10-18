@@ -160,6 +160,110 @@ describe('SendConversationMessageUseCase lifecycle', () => {
     })
   })
 
+  it('clears partial assistant content when a manifest root violation fails the run', async () => {
+    const harness = createHarness([
+      event(1, 'answer.delta', { delta: 'Leaked marker prefix' }),
+      event(2, 'run.failed', {
+        message: 'Filesystem tool path is outside the manifest roots',
+        errorCode: 'manifest_root_violation'
+      })
+    ])
+    const updates: Revisioned<ChatSessionRecord>[] = []
+
+    const result = await harness.useCase.execute({
+      ...command(),
+      onUpdate: (conversation) => updates.push(conversation)
+    })
+
+    expect(harness.finishTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'failed',
+        content: '',
+        error: 'Filesystem tool path is outside the manifest roots'
+      })
+    )
+    expect(result.messages.at(-1)).toMatchObject({
+      status: 'failed',
+      content: '',
+      error: 'Filesystem tool path is outside the manifest roots',
+      execution: expect.objectContaining({
+        answer: ''
+      })
+    })
+    expect(updates.at(-1)?.messages.at(-1)).toMatchObject({
+      status: 'failed',
+      content: '',
+      error: 'Filesystem tool path is outside the manifest roots'
+    })
+  })
+
+  it('persists a terminal failure projection when the Sidecar stream disconnects mid Tool call', async () => {
+    const timeline = {
+      appendAndProject: vi.fn().mockResolvedValue(true)
+    }
+    const harness = createHarness(
+      [
+        event(1, 'run.started', {}),
+        event(2, 'tool.call.requested', {
+          toolCall: {
+            index: 0,
+            id: 'call-1',
+            name: 'rf_builtin_process_run_12345678',
+            arguments: '{"command":"python3 -c \\"print(1)\\""}'
+          }
+        })
+      ],
+      undefined,
+      {
+        streamError: new Error('Sidecar event stream disconnected'),
+        timeline
+      }
+    )
+    const updates: Revisioned<ChatSessionRecord>[] = []
+
+    const result = await harness.useCase.execute({
+      ...command(),
+      onUpdate: (conversation) => updates.push(conversation)
+    })
+
+    expect(result.messages.at(-1)).toMatchObject({
+      status: 'failed',
+      error: 'Sidecar event stream disconnected'
+    })
+    expect(timeline.appendAndProject).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        type: 'run.failed',
+        data: expect.objectContaining({
+          message: 'Sidecar event stream disconnected',
+          errorCode: 'stream_error'
+        })
+      }),
+      expect.objectContaining({
+        status: 'failed',
+        toolCalls: [
+          expect.objectContaining({
+            callId: 'call-1',
+            status: 'failed',
+            errorCode: 'stream_error',
+            error: 'Sidecar event stream disconnected'
+          })
+        ]
+      })
+    )
+    expect(updates.at(-1)?.messages.at(-1)).toMatchObject({
+      status: 'failed',
+      execution: expect.objectContaining({
+        status: 'failed',
+        toolCalls: [
+          expect.objectContaining({
+            callId: 'call-1',
+            status: 'failed'
+          })
+        ]
+      })
+    })
+  })
+
   it('finalizes a waiting-input boundary without replacing it with an error', async () => {
     const harness = createHarness([
       event(1, 'run.started', {}),
@@ -279,7 +383,16 @@ function createHarness(
     unresolvedItems: string[]
     artifactSummaries: []
     executionOutcome: 'completed'
-  }) => void | Promise<void>
+  }) => void | Promise<void>,
+  options: {
+    streamError?: Error
+    timeline?: {
+      appendAndProject: (
+        event: unknown,
+        projection: unknown
+      ) => Promise<boolean>
+    }
+  } = {}
 ) {
   const initial = session(1, [])
   const started = pendingSession(2)
@@ -298,7 +411,7 @@ function createHarness(
     status: 'updated',
     entity: bound
   })
-  const rebindTurnRun = vi.fn()
+  const markTurnRetrying = vi.fn()
   const finishTurn = vi.fn().mockImplementation(async (input) => ({
     status: 'updated',
     entity: {
@@ -324,11 +437,11 @@ function createHarness(
     listByNodeRun: vi.fn(),
     listRecent: vi.fn(),
     save: vi.fn(async () => {
-      throw new Error('legacy aggregate save must not be used')
+      throw new Error('aggregate save must not be used')
     }),
     beginTurn,
     bindTurnRun,
-    rebindTurnRun,
+    markTurnRetrying,
     finishTurn,
     recoverPendingTurns: vi.fn(),
     delete: vi.fn()
@@ -346,8 +459,10 @@ function createHarness(
         cancelRun,
         streamEvents: async function* () {
           yield* events
+          if (options.streamError) throw options.streamError
         }
       },
+      ...(options.timeline ? { timeline: options.timeline } : {}),
       now: () => 200,
       createId: () => 'message-1:assistant',
       onCompleted
@@ -373,6 +488,29 @@ function session(
     kind: 'general',
     title: 'Hello',
     sortOrder: 1,
+    turns:
+      messages.length === 0
+        ? []
+        : [
+            {
+              id: 'message-1:turn',
+              sessionId: 'conversation-1',
+              index: 0,
+              userMessageId: 'message-1',
+              assistantMessageId: 'message-1:assistant',
+              status:
+                messages.at(-1)?.status === 'completed'
+                  ? 'completed'
+                  : messages.at(-1)?.status === 'failed'
+                    ? 'failed'
+                    : 'running',
+              createdAt: 200,
+              ...(messages.at(-1)?.status === 'completed' ||
+              messages.at(-1)?.status === 'failed'
+                ? { completedAt: 200 }
+                : {})
+            }
+          ],
     messages,
     revision,
     createdAt: 1,
@@ -384,6 +522,7 @@ function pendingSession(revision: number): Revisioned<ChatSessionRecord> {
   return session(revision, [
     {
       id: 'message-1',
+      turnId: 'message-1:turn',
       role: 'user',
       status: 'completed',
       content: 'Hello',
@@ -392,6 +531,7 @@ function pendingSession(revision: number): Revisioned<ChatSessionRecord> {
     },
     {
       id: 'message-1:assistant',
+      turnId: 'message-1:turn',
       role: 'assistant',
       status: 'pending',
       content: '',

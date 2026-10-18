@@ -1,0 +1,21 @@
+{
+  "name": "@realmflow/dsh-profile",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@deepseek-ai/dsh-acp-app"
+      ]
+    }
+  },
+  "realmflow": {
+    "dshProfile": {
+      "immutable": true,
+      "stdout": "acp",
+      "manifestRequired": true
+    }
+  }
+}

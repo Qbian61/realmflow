@@ -45,7 +45,12 @@ describe('RecoverInterruptedRunsUseCase', () => {
     const repository = new FakeAiRunRepository()
     const recordCall = vi.fn().mockResolvedValue(undefined)
     await repository.save({
-      ...createAiRun('run-1', 'requirement-1', 'analysis'),
+      ...createAiRun(
+        'run-1',
+        'requirement-1',
+        'analysis',
+        'node-analysis'
+      ),
       status: 'running',
       workspaceId: 'workspace-1',
       modelProfileId: 'profile-1',
@@ -77,10 +82,11 @@ describe('RecoverInterruptedRunsUseCase', () => {
     expect(repository.runs.get('run-2')?.status).toBe('interrupted')
     expect(repository.runs.get('run-3')?.status).toBe('completed')
     expect(recordCall).toHaveBeenNthCalledWith(1, {
-      source: 'workflow_stage',
+      source: 'workflow_node',
       modelProfileId: 'profile-1',
       workspaceId: 'workspace-1',
       requirementId: 'requirement-1',
+      nodeId: 'node-analysis',
       aiRunId: 'run-1',
       contextSnapshotId: 'snapshot-1',
       startedAt: 100,
@@ -109,7 +115,12 @@ describe('RecoverInterruptedRunsUseCase', () => {
   it('keeps the interrupted state when metric persistence fails', async () => {
     const repository = new FakeAiRunRepository()
     await repository.save({
-      ...createAiRun('run-1', 'requirement-1', 'analysis'),
+      ...createAiRun(
+        'run-1',
+        'requirement-1',
+        'analysis',
+        'node-analysis'
+      ),
       status: 'running',
       workspaceId: 'workspace-1',
       modelProfileId: 'profile-1',

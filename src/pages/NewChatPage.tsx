@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { Plus, Search } from "lucide-react";
-import { Composer } from "../components/Composer";
+import {
+  Composer,
+  type ComposerConnectorSelection,
+  type ComposerSkillSelection,
+  toConversationCapabilitySelection,
+} from "../components/Composer";
 import { IconButton } from "../components/ui";
 import {
   CreateTemplateDialog,
@@ -15,6 +20,7 @@ import type { Translator } from "../localization/translate";
 import type { ReasoningPreference } from "../../domain/reasoning-router";
 import type { ConversationAttachmentDescriptor } from "../../domain/conversation-input";
 import type { ConversationAttachmentSubmission } from "../../shared/conversation-attachments";
+import type { ConversationCapabilitySelection } from "../../shared/business";
 import { useDefaultApprovalProfile } from "../features/permissions/use-default-approval-profile";
 
 function createBuiltinTemplates(t: Translator): TemplateDefinition[] {
@@ -115,6 +121,7 @@ type NewChatPageProps = {
     reasoningMode?: ReasoningPreference,
     attachments?: ConversationAttachmentSubmission,
     approvalProfileId?: import("../../domain/approval-profile").ApprovalProfileId,
+    capabilities?: ConversationCapabilitySelection,
   ) => void | Promise<void>;
 };
 
@@ -139,7 +146,10 @@ export function NewChatPage({
     Array<{ fileName: string; message: string }>
   >([]);
   const [attachmentBusy, setAttachmentBusy] = useState(false);
-  const [allowImageEgress, setAllowImageEgress] = useState(false);
+  const [selectedSkill, setSelectedSkill] =
+    useState<ComposerSkillSelection>();
+  const [selectedConnector, setSelectedConnector] =
+    useState<ComposerConnectorSelection>();
   const models = useModelProfiles();
   const [selectedFolder, setSelectedFolder] = useState<{
     value: string;
@@ -191,10 +201,24 @@ export function NewChatPage({
             ? {
                 draftId: draftId.current,
                 attachmentIds: attachments.map(({ id }) => id),
-                allowImageEgress,
+                allowImageEgress: hasImageAttachments(attachments),
               }
             : undefined;
-        if (submission) {
+        const capabilities = toConversationCapabilitySelection(
+          selectedSkill,
+          selectedConnector,
+        );
+        if (capabilities) {
+          await onCreateSession(
+            selectedWorkspace,
+            nextPrompt,
+            models.selectedId || undefined,
+            "auto",
+            submission,
+            approvalProfileId,
+            capabilities,
+          );
+        } else {
           await onCreateSession(
             selectedWorkspace,
             nextPrompt,
@@ -203,20 +227,12 @@ export function NewChatPage({
             submission,
             approvalProfileId,
           );
-        } else {
-          await onCreateSession(
-            selectedWorkspace,
-            nextPrompt,
-            models.selectedId || undefined,
-            "auto",
-            undefined,
-            approvalProfileId,
-          );
         }
         setPrompt("");
         setAttachments([]);
         setAttachmentErrors([]);
-        setAllowImageEgress(false);
+        setSelectedSkill(undefined);
+        setSelectedConnector(undefined);
         draftId.current = crypto.randomUUID();
       } catch {
         toast.error("newChat.createFailed");
@@ -264,8 +280,10 @@ export function NewChatPage({
           attachments={attachments}
           attachmentErrors={attachmentErrors}
           attachmentBusy={attachmentBusy}
-          allowImageEgress={allowImageEgress}
-          onImageEgressChange={setAllowImageEgress}
+          selectedSkill={selectedSkill}
+          onSkillChange={setSelectedSkill}
+          selectedConnector={selectedConnector}
+          onConnectorChange={setSelectedConnector}
           onPickAttachments={() => {
             const api = window.realmflow?.conversationAttachments;
             if (!api || attachmentBusy) return;
@@ -478,4 +496,10 @@ export function NewChatPage({
       )}
     </div>
   );
+}
+
+function hasImageAttachments(
+  attachments: readonly ConversationAttachmentDescriptor[],
+): boolean {
+  return attachments.some((attachment) => attachment.mediaKind === "image");
 }

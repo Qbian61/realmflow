@@ -169,7 +169,11 @@ async function resolveCwd(
     optional: true,
     allowEmpty: true
   })
-  if (relativePath === undefined || relativePath === '') {
+  if (
+    relativePath === undefined ||
+    relativePath === '' ||
+    relativePath === '.'
+  ) {
     return securePaths.canonicalizeDirectory(root)
   }
   const resolved = await securePaths.resolveExistingPath(root, relativePath)

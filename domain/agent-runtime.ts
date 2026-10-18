@@ -2,6 +2,7 @@ import type { ReasoningDecision } from './reasoning-router'
 import type { ResponseLanguageSnapshot } from './response-language'
 import type { ToolPolicySnapshot } from './tool-policy'
 import { createApprovalProfileSnapshot, type ApprovalProfileId, type ApprovalProfileSnapshot } from './approval-profile'
+import type { DshSessionBindingLifecycleStatus } from './dsh-session-binding'
 import type { RunModelFacingSnapshot } from './tool-catalog'
 import type { ToolDefinitionReference } from './tool-definition'
 
@@ -143,6 +144,7 @@ export type AgentRunSnapshot = {
   scheduleRunId?: string
   selectedSkill?: ToolDefinitionReference
   connectorBindings?: unknown[]
+  mcpServerIds?: string[]
   contextSnapshotId?: string
   triggerBindingId?: string
   triggerEventId?: string
@@ -197,6 +199,7 @@ type AgentRunContext = {
   scheduleRunId?: string
   skill?: ToolDefinitionReference
   connectorBindings?: unknown[]
+  mcpServerIds?: string[]
   contextSnapshotId?: string
   triggerBindingId?: string
   triggerEventId?: string
@@ -366,6 +369,9 @@ export function createAgentRunSnapshot(
       : {}),
     ...(context.skill ? { selectedSkill: structuredClone(context.skill) } : {}),
     ...(context.connectorBindings ? { connectorBindings: structuredClone(context.connectorBindings) } : {}),
+    ...(context.mcpServerIds
+      ? { mcpServerIds: structuredClone(context.mcpServerIds) }
+      : {}),
     ...(context.contextSnapshotId
       ? { contextSnapshotId: context.contextSnapshotId }
       : {}),
@@ -478,6 +484,25 @@ export function isTerminalAgentRunLifecycle(
     status === 'failed' ||
     status === 'cancelled'
   )
+}
+
+export function mapDshSessionLifecycleToAgentRunLifecycle(
+  status: DshSessionBindingLifecycleStatus
+): AgentRunLifecycleStatus {
+  switch (status) {
+    case 'active':
+    case 'closing':
+      return 'running'
+    case 'paused':
+    case 'closed':
+      return 'paused'
+    case 'cancelled':
+      return 'cancelled'
+    case 'failed':
+      return 'failed'
+    case 'reset':
+      return 'recovery_blocked'
+  }
 }
 
 export function resolveAgentRunScope(

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.skill.knowledge_curation",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "name": "Knowledge curation",
   "description": "Retrieve, distill, and save durable project knowledge.",
   "instructionsPath": "instructions/knowledge_curation.md",

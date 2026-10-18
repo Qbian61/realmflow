@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.archives.create",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "name": "Create archive",
   "description": "Create a new local archive from authorized files and directories.",
   "tags": [

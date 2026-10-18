@@ -1,27 +1,22 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
+import { useEffect, useReducer, useRef, useState } from 'react'
 import type { ChatSessionRepository, WorkspaceNavigationRepository } from '../../application/ports/repositories'
-import {
-  createWorkspaceState,
-  workspaceReducer
-} from '../../application/workspace/workspace-reducer'
+import { createWorkspaceState, workspaceReducer } from '../../application/workspace/workspace-reducer'
 import { titleFromPrompt } from '../../domain/chat-session'
-import type { BusinessApi } from '../../../shared/business'
+import type {
+  BusinessApi,
+  ConversationCapabilitySelection
+} from '../../../shared/business'
 import type { ReasoningPreference } from '../../../domain/reasoning-router'
 import type { ConversationAttachmentSubmission } from '../../../shared/conversation-attachments'
-import {
-  readRecentConversationFilters,
-  toRecentConversationQuery,
-  updateRecentConversationFilters,
-  writeRecentConversationFilters,
-  type RecentConversationFilters
-} from '../../features/sessions/recent-conversation-filters'
-import {
-  mapBusinessNavigation,
-  mapConversation
-} from '../mappers/business-mappers'
+import { mapBusinessNavigation, mapConversation } from '../mappers/business-mappers'
 import { executeCreateSpace } from './workspace-command-errors'
 import { createConversationManagementActions } from './workspace-conversation-management'
+import { createLocalSessionDraft, createLocalSessionTurn } from './workspace-local-session-drafts'
 import { highestSequence, moveToIndex, updateListMembership } from './workspace-list-utils'
+import {
+  toRecentConversation,
+  useRecentConversations
+} from './workspace-recent-conversation'
 import { useActiveConversation } from './use-active-conversation'
 export type WorkspacePersistenceIssue = 'navigation' | 'sessions'
 export type WorkspaceOperationNotice =
@@ -30,6 +25,7 @@ export type WorkspaceOperationNotice =
   | 'space-delete-failed' | 'space-move-failed' | 'requirement-create-failed'
   | 'requirement-rename-failed' | 'requirement-delete-failed'
   | 'requirement-move-failed' | 'conversation-rename-failed' | 'conversation-delete-failed'
+
 export function useWorkspaceController({
   navigationRepository,
   sessionRepository,
@@ -68,16 +64,23 @@ export function useWorkspaceController({
       dispatch({ type: 'session-synced', session: mapConversation(conversation) }),
     onUnavailable: () => updatePersistenceIssue('sessions', true)
   })
-  const [recentSessions, setRecentSessions] = useState(() =>
-    initialSessions.value.filter((session) => session.kind !== 'requirement_node')
-  )
-  const [recentFolderPaths, setRecentFolderPaths] = useState<string[]>([])
-  const [recentFilters, setRecentFilters] = useState(
-    readRecentConversationFilters
-  )
-  const [recentSessionsLoading, setRecentSessionsLoading] = useState(
-    Boolean(business)
-  )
+  const {
+    recentSessions,
+    recentFolderPaths,
+    recentFilters,
+    recentTotalCount,
+    recentSessionsHasMore,
+    recentSessionsLoading,
+    loadMoreRecentSessions,
+    updateRecentFilters,
+    refreshRecentConversations
+  } = useRecentConversations({
+    business,
+    initialSessions: initialSessions.value,
+    onAvailabilityChange: (available) =>
+      updatePersistenceIssue('sessions', !available),
+    onInitialLoadComplete: () => setSessionsLoading(false)
+  })
   const navigationRevisionRef = useRef(initialNavigation.revision)
   const sessionRevisionRef = useRef(initialSessions.revision)
   const skipNextNavigationSaveRef = useRef(true)
@@ -101,35 +104,6 @@ export function useWorkspaceController({
   const sessionSequenceRef = useRef(Date.now())
   const pendingConversationReadyRef = useRef(
     new Map<string, (sessionId: string) => void>()
-  )
-  const recentRequestSequenceRef = useRef(0)
-  const recentFiltersRef = useRef(recentFilters)
-  const refreshRecentConversations = useCallback(
-    async (filters: RecentConversationFilters): Promise<void> => {
-      if (!business) return
-      const requestSequence = ++recentRequestSequenceRef.current
-      setRecentSessionsLoading(true)
-      try {
-        const query = toRecentConversationQuery(filters)
-        const result = await business.listRecentConversations(query)
-        if (requestSequence !== recentRequestSequenceRef.current) return
-        const conversations = result.conversations.map(mapConversation)
-        setRecentSessions(conversations)
-        setRecentFolderPaths(result.folderPaths)
-        for (const session of [...conversations].reverse())
-          dispatch({ type: 'session-synced', session })
-        updatePersistenceIssue('sessions', false)
-      } catch {
-        if (requestSequence === recentRequestSequenceRef.current)
-          updatePersistenceIssue('sessions', true)
-      } finally {
-        if (requestSequence === recentRequestSequenceRef.current) {
-          setRecentSessionsLoading(false)
-          setSessionsLoading(false)
-        }
-      }
-    },
-    [business]
   )
   useEffect(() => {
     if (!business) return
@@ -157,13 +131,6 @@ export function useWorkspaceController({
     }
   }, [business])
   useEffect(() => {
-    if (!business) return
-    void refreshRecentConversations(recentFilters)
-    return () => {
-      recentRequestSequenceRef.current += 1
-    }
-  }, [business, recentFilters, refreshRecentConversations])
-  useEffect(() => {
     if (!business?.onConversationEvent) return
     return business.onConversationEvent(({ conversation }) => {
       dispatch({
@@ -175,6 +142,19 @@ export function useWorkspaceController({
       )
       pendingConversationReadyRef.current.delete(conversation.id)
     })
+  }, [business])
+  useEffect(() => {
+    if (!business?.onConversationTurnProjection) return
+    return business.onConversationTurnProjection(
+      ({ sessionId, turnId, projection }) => {
+        dispatch({
+          type: 'session-turn-projection-updated',
+          sessionId,
+          turnId,
+          projection
+        })
+      }
+    )
   }, [business])
   useEffect(() => {
     if (business) return
@@ -334,8 +314,9 @@ export function useWorkspaceController({
   const conversationManagement = createConversationManagementActions({
     business,
     sessions: state.sessions,
+    recentConversations: recentSessions,
     dispatch,
-    filters: recentFiltersRef.current,
+    filters: recentFilters,
     refresh: refreshRecentConversations,
     markAvailable: () => updatePersistenceIssue('sessions', false),
     notify: onOperationNotice
@@ -348,18 +329,20 @@ export function useWorkspaceController({
     ),
     recentSessions: business
       ? recentSessions
-      : state.sessions.filter((session) => session.kind !== 'requirement_node'),
+      : state.sessions
+          .filter((session) => session.kind !== 'requirement_node')
+          .map(toRecentConversation),
     recentFolderPaths,
     recentFilters,
+    recentTotalCount: business
+      ? recentTotalCount
+      : state.sessions.filter(
+          (session) => session.kind !== 'requirement_node'
+        ).length,
+    recentSessionsHasMore: business ? recentSessionsHasMore : false,
     recentSessionsLoading,
-    updateRecentFilters(patch: Partial<RecentConversationFilters>) {
-      setRecentFilters((current) => {
-        const next = updateRecentConversationFilters(current, patch)
-        recentFiltersRef.current = next
-        writeRecentConversationFilters(next)
-        return next
-      })
-    },
+    loadMoreRecentSessions,
+    updateRecentFilters,
     createSpace(label: string) {
       if (business) {
         void executeCreateSpace(
@@ -569,7 +552,8 @@ export function useWorkspaceController({
       modelProfileId?: string,
       reasoningMode: ReasoningPreference = 'auto',
       attachments?: ConversationAttachmentSubmission,
-      approvalProfileId: import('../../../domain/approval-profile').ApprovalProfileId = 'protected'
+      approvalProfileId: import('../../../domain/approval-profile').ApprovalProfileId = 'protected',
+      capabilities?: ConversationCapabilitySelection
     ): Promise<string> {
       sessionSequenceRef.current += 1
       const now = Date.now()
@@ -599,6 +583,7 @@ export function useWorkspaceController({
               ...(folderBindingId ? { folderBindingId } : {}),
               ...(modelProfileId ? { modelProfileId } : {}),
               ...(attachments ? { attachments } : {}),
+              ...(capabilities ? { capabilities } : {}),
               applicationLocale,
               approvalProfileId,
               reasoningMode,
@@ -611,7 +596,7 @@ export function useWorkspaceController({
                 session: mapConversation(conversation)
               })
               updatePersistenceIssue('sessions', false)
-              await refreshRecentConversations(recentFiltersRef.current)
+              await refreshRecentConversations()
               return sessionId
             })
           return await Promise.race([firstCommittedSnapshot, completed])
@@ -623,23 +608,15 @@ export function useWorkspaceController({
       } else {
         dispatch({
           type: 'session-created',
-          session: {
-            id: sessionId,
+          session: createLocalSessionDraft({
+            sessionId,
             knowledgeScope,
             title: titleFromPrompt(prompt),
             spacePath: space?.path ?? '',
-            ...(folderBindingId ? { folderPath: folderBindingId } : {}),
-            messages: [
-              {
-                id: `${sessionId}-message-1`,
-                content: prompt,
-                createdAt: now,
-                role: 'user'
-              }
-            ],
-            createdAt: now,
-            updatedAt: now
-          }
+            ...(folderBindingId ? { folderBindingId } : {}),
+            prompt,
+            createdAt: now
+          })
         })
       }
       return sessionId
@@ -651,7 +628,8 @@ export function useWorkspaceController({
       reasoningMode: ReasoningPreference = 'auto',
       attachments?: ConversationAttachmentSubmission,
       approvalProfileId?: import('../../../domain/approval-profile').ApprovalProfileId,
-      contextMode: 'auto' | 'fresh' | 'continuation' = 'auto'
+      contextMode: 'auto' | 'fresh' | 'continuation' = 'auto',
+      capabilities?: ConversationCapabilitySelection
     ): Promise<void> {
       const session = state.sessions.find((item) => item.id === sessionId)
       if (!session) return
@@ -663,6 +641,7 @@ export function useWorkspaceController({
             expectedRevision: session.revision ?? 0,
             ...(modelProfileId ? { modelProfileId } : {}),
             ...(attachments ? { attachments } : {}),
+            ...(capabilities ? { capabilities } : {}),
             applicationLocale,
             ...(approvalProfileId ? { approvalProfileId } : {}),
             contextMode,
@@ -673,17 +652,20 @@ export function useWorkspaceController({
           session: mapConversation(conversation)
         })
         updatePersistenceIssue('sessions', false)
-        await refreshRecentConversations(recentFiltersRef.current)
+        await refreshRecentConversations()
       } else {
-        dispatch({
-          type: 'session-message-appended',
+        const createdAt = Date.now()
+        const nextTurn = createLocalSessionTurn({
           sessionId,
-          message: {
-            id: `${sessionId}-message-${session.messages.length + 1}`,
-            content,
-            createdAt: Date.now(),
-            role: 'user'
-          }
+          turnIndex: session.turns.length,
+          content,
+          createdAt
+        })
+        dispatch({
+          type: 'session-turn-appended',
+          sessionId,
+          turn: nextTurn.turn,
+          messages: nextTurn.messages
         })
       }
     },

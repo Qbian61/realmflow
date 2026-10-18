@@ -150,7 +150,7 @@ describe('SQLite workflow rollback repository', () => {
     ])
   })
 
-  it('invalidates artifacts by node run and lists only valid primary artifacts', async () => {
+  it('invalidates artifacts by node run only', async () => {
     const repositories = createSqliteRepositories(database)
     await repositories.nodeRuns.save(
       nodeRun('analysis-1', 'node-analysis', 1, 100),
@@ -162,27 +162,13 @@ describe('SQLite workflow rollback repository', () => {
     )
     const historical = artifact('artifact-1', 'analysis-1', 1, 110)
     await repositories.artifacts.save(historical, 0)
-    database
-      .prepare(
-        `INSERT INTO artifacts (
-          id, requirement_id, stage_id, node_id, node_run_id, relative_path,
-          kind, checksum, version, byte_size, is_primary, is_valid, revision,
-          created_at, updated_at
-        ) VALUES (
-          'artifact-legacy', 'requirement-1', 'analysis', 'node-analysis',
-          NULL, 'artifacts/legacy.md', 'markdown', 'sha256:legacy', 1, 1,
-          0, 1, 1, 115, 115
-        )`
-      )
-      .run()
 
     await expect(
       repositories.artifacts.invalidateByNodeRunIds(
         ['analysis-1'],
-        130,
-        ['node-analysis']
+        130
       )
-    ).resolves.toBe(2)
+    ).resolves.toBe(1)
     await expect(
       repositories.artifacts.listByRequirement('requirement-1')
     ).resolves.toEqual([])
@@ -202,20 +188,6 @@ describe('SQLite workflow rollback repository', () => {
         .get()
     ).toEqual({
       node_run_id: 'analysis-1',
-      is_primary: 0,
-      is_valid: 0,
-      revision: 2,
-      updated_at: 130
-    })
-    expect(
-      database
-        .prepare(
-          `SELECT node_run_id, is_primary, is_valid, revision, updated_at
-           FROM artifacts WHERE id = 'artifact-legacy'`
-        )
-        .get()
-    ).toEqual({
-      node_run_id: null,
       is_primary: 0,
       is_valid: 0,
       revision: 2,

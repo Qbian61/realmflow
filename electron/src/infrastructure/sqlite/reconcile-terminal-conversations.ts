@@ -1,5 +1,4 @@
 import type Database from 'better-sqlite3'
-import type { RunCheckpoint } from '../../../../domain/agent-run-recovery'
 import { createAssistantTurnProjection, projectAssistantTurn, type AssistantRunEvent } from '../../../../domain/assistant-turn'
 import type { SqliteAssistantRunEventStore } from './assistant-run-event-store'
 import type { ConversationGeneratedArtifactService } from '../../application/conversation/conversation-generated-artifacts'
@@ -11,12 +10,12 @@ export async function reconcileTerminalConversations(
   timeline: SqliteAssistantRunEventStore,
   artifacts?: Pick<ConversationGeneratedArtifactService, 'finalizeRun'>
 ): Promise<void> {
+  await timeline.rebuildMissingProjections()
   const rows = database.prepare(`
     SELECT r.id, r.lifecycle_status, r.updated_at, r.created_at,
-           m.id AS message_id, m.session_id, c.checkpoint_json
+           m.id AS message_id, m.session_id, m.turn_id
     FROM agent_runtime_runs r
     JOIN chat_messages m ON m.run_id = r.id AND m.role = 'assistant'
-    LEFT JOIN agent_run_checkpoints c ON c.run_id = r.id AND c.ordinal = r.current_checkpoint_ordinal
     WHERE r.lifecycle_status IN ('completed', 'failed', 'cancelled')
       AND (m.status = 'pending'
         OR (r.lifecycle_status = 'completed' AND m.status <> 'completed')
@@ -36,14 +35,14 @@ export async function reconcileTerminalConversations(
     ORDER BY r.created_at, r.id
   `).all() as Array<{
     id: string; lifecycle_status: 'completed' | 'failed' | 'cancelled'
-    updated_at: number; created_at: number; message_id: string; session_id: string; checkpoint_json: string | null
+    updated_at: number; created_at: number; message_id: string; session_id: string
+    turn_id: string
   }>
   for (const row of rows) {
-    const checkpoint = row.checkpoint_json ? JSON.parse(row.checkpoint_json) as RunCheckpoint : undefined
     const current = await timeline.getSnapshot(row.id) ?? createAssistantTurnProjection({
-      runId: row.id, assistantMessageId: row.message_id, startedAt: row.created_at
+      runId: row.id, turnId: row.turn_id,
+      assistantMessageId: row.message_id, startedAt: row.created_at
     })
-    const answer = checkpoint?.messageWindow.find((message) => message.id === `answer:${row.id}`)?.content
     const source = await artifacts?.finalizeRun({
       runId: row.id, conversationId: row.session_id, assistantMessageId: row.message_id, status: row.lifecycle_status
     })
@@ -51,8 +50,7 @@ export async function reconcileTerminalConversations(
       await timeline.repairRecoveredTerminalDelivery(
         { ...current, status: row.lifecycle_status },
         row.updated_at,
-        source,
-        answer
+        source
       )
       continue
     }
@@ -61,12 +59,11 @@ export async function reconcileTerminalConversations(
       id: `${row.id}:conversation-reconcile:${sequence}`,
       runId: row.id, sequence, timestamp: row.updated_at,
     }
-    const data = answer !== undefined ? { recoveredAnswer: answer } : {}
     const event: AssistantRunEvent = row.lifecycle_status === 'failed'
-      ? { ...base, type: 'run.failed', data: { ...data, message: 'Conversation run failed' } }
+      ? { ...base, type: 'run.failed', data: { message: 'Conversation run failed' } }
       : row.lifecycle_status === 'cancelled'
-        ? { ...base, type: 'run.cancelled', data: { ...data, message: 'Conversation run cancelled' } }
-        : { ...base, type: 'run.completed', data }
+        ? { ...base, type: 'run.cancelled', data: { message: 'Conversation run cancelled' } }
+        : { ...base, type: 'run.completed', data: {} }
     await timeline.appendRecoveredAndProject(event, projectAssistantTurn(current, event), source)
   }
 }

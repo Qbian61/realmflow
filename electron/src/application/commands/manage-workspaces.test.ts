@@ -1529,7 +1529,7 @@ describe('workspace and requirement commands', () => {
     })
     const originalSpace = await createSpace.execute({
       id: 'space-old',
-      name: 'Legacy Space'
+      name: 'Original Space'
     })
 
     await selectRoot.execute({

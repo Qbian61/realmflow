@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.presentation.add_slide",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Add presentation slide",
   "description": "Add a blank slide at an explicit position.",
   "tags": [

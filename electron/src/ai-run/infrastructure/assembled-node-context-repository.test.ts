@@ -89,7 +89,6 @@ function createHarness(input: {
     .mockResolvedValue('# Requirement body')
   const transaction = vi.fn(async (operation) => operation())
   const repository = new AssembledNodeContextRepository({
-    legacy: { load: vi.fn() },
     requirements: {
       get: vi.fn().mockResolvedValue({
         id: 'requirement-1',
@@ -210,7 +209,7 @@ describe('AssembledNodeContextRepository', () => {
         attachmentPaths: [],
         includeRequirementBody: true,
         predecessorArtifacts: 'direct',
-        includeSpaceKnowledge: true
+        includeSpaceKnowledge: false
       })
     )
     expect(transaction).toHaveBeenCalledOnce()

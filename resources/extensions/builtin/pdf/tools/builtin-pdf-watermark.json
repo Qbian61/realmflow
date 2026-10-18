@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.pdf.watermark",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "name": "Watermark PDF pages",
   "description": "Draw a text watermark on explicit PDF pages.",
   "tags": [

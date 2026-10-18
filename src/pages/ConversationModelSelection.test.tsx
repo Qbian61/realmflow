@@ -4,6 +4,7 @@ import {
   render as testingRender,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, vi } from "vitest";
@@ -93,6 +94,206 @@ describe("conversation model selection", () => {
     );
   });
 
+  it("opens the skill picker and binds the selected Skill to one new-chat submission", async () => {
+    installModelPool();
+    window.realmflow = {
+      ...window.realmflow,
+      toolCatalog: {
+        list: vi.fn().mockResolvedValue({
+          packages: [],
+          tools: [],
+          skills: [
+            {
+              kind: "skill",
+              id: "builtin.skill.code_review",
+              version: "1.0.2",
+              definitionDigest: "c".repeat(64),
+              status: "enabled",
+              definition: {
+                name: "Code review",
+                description: "Review code changes",
+              },
+              display: {
+                name: "代码审查",
+                description: "查找缺陷、回归风险和缺失测试",
+              },
+            },
+          ],
+        }),
+      } as never,
+      conversationAttachments: {
+        pick: vi.fn().mockResolvedValue({
+          accepted: [
+            {
+              id: "attachment-scope",
+              ownerId: "draft-scope",
+              fileName: "scope.md",
+              mimeType: "text/markdown",
+              mediaKind: "document",
+              sizeBytes: 256,
+              checksumSha256: "b".repeat(64),
+              source: "picker",
+              status: "registered",
+              createdAt: 1,
+            },
+          ],
+          rejected: [],
+        }),
+        remove: vi.fn().mockResolvedValue(undefined),
+        readImage: vi.fn().mockResolvedValue(""),
+        open: vi.fn(),
+      },
+    } as typeof window.realmflow;
+    const onCreateSession = vi.fn().mockResolvedValue(undefined);
+    render(
+      <NewChatPage
+        spaces={[
+          {
+            id: "space-product",
+            path: "/spaces/product",
+            label: "产品空间",
+            description: "Product workspace",
+          },
+        ]}
+        onCreateSession={onCreateSession}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("combobox", { name: "工作空间" }));
+    fireEvent.click(screen.getByRole("option", { name: "产品空间" }));
+    fireEvent.click(screen.getByRole("combobox", { name: "对话模型" }));
+    fireEvent.click(screen.getByRole("option", { name: "Fast Model" }));
+    fireEvent.click(screen.getByRole("combobox", { name: "权限模式" }));
+    fireEvent.click(screen.getByRole("option", { name: "受信任执行" }));
+    fireEvent.click(screen.getByRole("button", { name: "打开添加菜单" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "添加文件" }));
+    expect(await screen.findByText("scope.md")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "打开添加菜单" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "技能" }));
+    const skillDialog = await screen.findByRole("dialog", {
+      name: "选择技能",
+    });
+    expect(skillDialog).toBeVisible();
+    fireEvent.click(
+      within(skillDialog).getByRole("button", { name: "代码审查" }),
+    );
+    expect(
+      within(screen.getByLabelText("已选技能")).getByText("代码审查"),
+    ).toBeVisible();
+    fireEvent.change(screen.getByLabelText("对话内容"), {
+      target: { value: "Review current changes" },
+    });
+
+    expect(screen.getByLabelText("对话内容")).toHaveValue(
+      "Review current changes",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "发送消息" }));
+
+    await waitFor(() =>
+      expect(onCreateSession).toHaveBeenCalledWith(
+        "/spaces/product",
+        "Review current changes",
+        "profile-fast",
+        "auto",
+        expect.objectContaining({
+          attachmentIds: ["attachment-scope"],
+          allowImageEgress: false,
+          draftId: expect.any(String),
+        }),
+        "trusted",
+        {
+          skill: {
+            kind: "skill",
+            id: "builtin.skill.code_review",
+            version: "1.0.2",
+            digest: "c".repeat(64),
+          },
+        },
+      ),
+    );
+  });
+
+  it("shows an explicit connector empty state without inserting prompt text", async () => {
+    installModelPool();
+    window.realmflow = {
+      ...window.realmflow,
+      business: {
+        ...window.realmflow!.business,
+        listConnectors: vi.fn().mockResolvedValue([]),
+      },
+      toolCatalog: {
+        listMcpServers: vi.fn().mockResolvedValue([]),
+      } as never,
+    } as typeof window.realmflow;
+    render(<NewChatPage onCreateSession={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "打开添加菜单" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "连接器" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "选择连接器" });
+    expect(dialog).toBeVisible();
+    expect(within(dialog).getByText("当前没有已配置的连接器或 MCP")).toBeVisible();
+    expect(
+      within(dialog).getByRole("button", { name: "配置连接器" }),
+    ).toBeVisible();
+    expect(screen.getByLabelText("对话内容")).toHaveValue("");
+  });
+
+  it("binds one selected MCP server to a new-chat submission", async () => {
+    installModelPool();
+    window.realmflow = {
+      ...window.realmflow,
+      business: {
+        ...window.realmflow!.business,
+        listConnectors: vi.fn().mockResolvedValue([]),
+      },
+      toolCatalog: {
+        listMcpServers: vi.fn().mockResolvedValue([
+          {
+            id: "mcp.tc-p1-local",
+            name: "本地 Mock MCP",
+            identity: "a".repeat(64),
+            enabled: true,
+            transport: {
+              kind: "stdio",
+              command: "/usr/bin/node",
+              arguments: ["/test-space/scripts/mock-mcp-server.mjs"],
+              credentialNames: [],
+            },
+            revision: 1,
+            hasCredentials: {},
+          },
+        ]),
+      } as never,
+    } as typeof window.realmflow;
+    const onCreateSession = vi.fn().mockResolvedValue(undefined);
+    render(<NewChatPage onCreateSession={onCreateSession} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "打开添加菜单" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "连接器" }));
+    const dialog = await screen.findByRole("dialog", { name: "选择连接器" });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "本地 Mock MCP" }),
+    );
+    fireEvent.change(screen.getByLabelText("对话内容"), {
+      target: { value: "Call MCP ping" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送消息" }));
+
+    await waitFor(() =>
+      expect(onCreateSession).toHaveBeenCalledWith(
+        "none",
+        "Call MCP ping",
+        undefined,
+        "auto",
+        undefined,
+        "protected",
+        { mcpServerIds: ["mcp.tc-p1-local"] },
+      ),
+    );
+  });
+
   it("passes the selected enabled profile when continuing a conversation", async () => {
     installModelPool();
     const onAppendMessage = vi.fn();
@@ -108,6 +309,7 @@ describe("conversation model selection", () => {
                     id: "session-1",
                     title: "Rollout",
                     spacePath: "/spaces/store",
+                    turns: [],
                     messages: [],
                     createdAt: 1,
                     updatedAt: 1,
@@ -158,10 +360,22 @@ describe("conversation model selection", () => {
             element={
               <ChatSessionPage
                 sessions={[{
-                  id: "session-1", title: "Active", spacePath: "", messages: [{
-                    id: "assistant-1", role: "assistant", status: "pending",
-                    content: "", runId: "run-1", createdAt: 1,
-                  }], createdAt: 1, updatedAt: 1,
+                  id: "session-1", title: "Active", spacePath: "",
+                  turns: [{
+                    id: "turn-1", sessionId: "session-1", index: 0,
+                    userMessageId: "user-1", assistantMessageId: "assistant-1",
+                    status: "running", createdAt: 1,
+                  }],
+                  messages: [
+                    {
+                      id: "user-1", turnId: "turn-1", role: "user",
+                      status: "completed", content: "Start", createdAt: 1,
+                    },
+                    {
+                      id: "assistant-1", turnId: "turn-1", role: "assistant",
+                      status: "pending", content: "", runId: "run-1", createdAt: 1,
+                    },
+                  ], createdAt: 1, updatedAt: 1,
                 }]}
                 spaces={[]}
                 onAppendMessage={vi.fn()}

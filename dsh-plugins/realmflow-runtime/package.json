@@ -1,0 +1,41 @@
+{
+  "name": "@realmflow/dsh-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "description": "RealmFlow control-plane runtime authority plugins for DeepSeek Harness.",
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./connectors/connector-runtime": "./src/connectors/connector-runtime.ts",
+    "./embedding/local-embedding-process-worker": "./src/embedding/local-embedding-process-worker.ts",
+    "./embedding/local-embedding-service": "./src/embedding/local-embedding-service.ts",
+    "./embedding/local-embedding-worker": "./src/embedding/local-embedding-worker.ts",
+    "./history/history-query": "./src/history/history-query.ts",
+    "./knowledge/knowledge-runtime": "./src/knowledge/knowledge-runtime.ts",
+    "./mcp/mcp-runtime": "./src/mcp/mcp-runtime.ts",
+    "./model/model-runtime": "./src/model/model-runtime.ts",
+    "./run-manifest-loader": "./src/run-manifest-loader.ts",
+    "./runtime-authority": "./src/runtime-authority.ts",
+    "./runtime-result-sanitizer": "./src/runtime-result-sanitizer.ts",
+    "./skills/skill-runtime": "./src/skills/skill-runtime.ts",
+    "./subagents/subagent-runtime-policy": "./src/subagents/subagent-runtime-policy.ts",
+    "./tools/tool-runtime": "./src/tools/tool-runtime.ts",
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml"
+  },
+  "files": [
+    "src",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "realmflow": {
+    "runtimePlane": "dsh",
+    "secretFreeManifestRequired": true,
+    "denyByDefaultAuthority": true
+  }
+}

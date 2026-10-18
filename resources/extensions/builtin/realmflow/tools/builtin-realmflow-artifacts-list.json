@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.realmflow.artifacts.list",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "name": "List artifacts",
   "description": "List formal artifacts.",
   "tags": [

@@ -182,6 +182,35 @@ describe('builtin extension catalog generator', () => {
     ).toBe(true)
   })
 
+  it('publishes immutable package versions for the current built-in catalog generation', () => {
+    const versions = Object.fromEntries(
+      buildBuiltinCatalog().packages.map(({ manifest }) => [
+        manifest.packageId,
+        manifest.version
+      ])
+    )
+
+    expect(versions).toEqual({
+      'realmflow.builtin.archives': '1.1.1',
+      'realmflow.builtin.browser': '1.0.1',
+      'realmflow.builtin.computer': '1.0.1',
+      'realmflow.builtin.core-skills': '1.0.2',
+      'realmflow.builtin.documents': '1.1.1',
+      'realmflow.builtin.domain': '1.0.3',
+      'realmflow.builtin.files': '1.3.2',
+      'realmflow.builtin.fixed-layout': '1.1.1',
+      'realmflow.builtin.git': '1.0.2',
+      'realmflow.builtin.images': '1.0.1',
+      'realmflow.builtin.knowledge': '1.0.3',
+      'realmflow.builtin.legacy-office': '1.2.1',
+      'realmflow.builtin.pdf': '1.0.2',
+      'realmflow.builtin.presentations': '1.0.1',
+      'realmflow.builtin.process': '1.0.4',
+      'realmflow.builtin.spreadsheets': '1.0.1',
+      'realmflow.builtin.web': '1.1.1'
+    })
+  })
+
   it('publishes strict input schemas for every built-in Tool', () => {
     const loose = buildBuiltinCatalog().packages.flatMap(({ tools }) =>
       tools
@@ -256,6 +285,13 @@ describe('builtin extension catalog generator', () => {
   it('publishes described strict schemas and valid examples for every built-in Skill', () => {
     const ajv = new Ajv({ strict: false, allErrors: true })
     const violations = []
+    const skillPackage = buildBuiltinCatalog().packages.find(
+      ({ manifest }) => manifest.packageId === 'realmflow.builtin.core-skills'
+    )
+    expect(skillPackage.manifest.version).toBe('1.0.2')
+    expect(skillPackage.skills.map(({ version }) => version)).toEqual(
+      Array.from({ length: 10 }, () => '1.0.2')
+    )
     for (const skill of buildBuiltinCatalog().packages.flatMap(({ skills }) => skills)) {
       if (
         skill.inputSchema.type !== 'object' ||
@@ -413,7 +449,7 @@ describe('builtin extension catalog generator', () => {
       ({ manifest }) => manifest.packageId === 'realmflow.builtin.spreadsheets'
     )
 
-    expect(spreadsheets.manifest.version).toBe('1.0.0')
+    expect(spreadsheets.manifest.version).toBe('1.0.1')
     expect(spreadsheets.tools).toHaveLength(11)
     expect(
       spreadsheets.tools.find(
@@ -453,7 +489,7 @@ describe('builtin extension catalog generator', () => {
       ({ manifest }) => manifest.packageId === 'realmflow.builtin.documents'
     )
 
-    expect(documents.manifest.version).toBe('1.1.0')
+    expect(documents.manifest.version).toBe('1.1.1')
     expect(documents.tools).toHaveLength(15)
     expect(
       documents.tools.find(({ id }) => id === 'builtin.document.inspect')
@@ -553,7 +589,7 @@ describe('builtin extension catalog generator', () => {
       ({ manifest }) => manifest.packageId === 'realmflow.builtin.presentations'
     )
 
-    expect(presentations.manifest.version).toBe('1.0.0')
+    expect(presentations.manifest.version).toBe('1.0.1')
     expect(presentations.tools).toHaveLength(16)
     expect(
       presentations.tools.find(
@@ -602,7 +638,7 @@ describe('builtin extension catalog generator', () => {
         manifest.packageId === 'realmflow.builtin.legacy-office'
     )
 
-    expect(legacyOffice.manifest.version).toBe('1.2.0')
+    expect(legacyOffice.manifest.version).toBe('1.2.1')
     expect(legacyOffice.tools).toHaveLength(3)
     expect(
       legacyOffice.tools.find(
@@ -674,7 +710,7 @@ describe('builtin extension catalog generator', () => {
       ({ manifest }) => manifest.packageId === 'realmflow.builtin.archives'
     )
 
-    expect(archives.manifest.version).toBe('1.1.0')
+    expect(archives.manifest.version).toBe('1.1.1')
     expect(archives.tools.map(({ id }) => id)).toEqual([
       'builtin.archives.list',
       'builtin.archives.extract',
@@ -722,7 +758,7 @@ describe('builtin extension catalog generator', () => {
       ({ manifest }) => manifest.packageId === 'realmflow.builtin.fixed-layout'
     )
 
-    expect(fixedLayout.manifest.version).toBe('1.1.0')
+    expect(fixedLayout.manifest.version).toBe('1.1.1')
     expect(fixedLayout.tools).toHaveLength(2)
     expect(fixedLayout.tools[0]).toMatchObject({
       id: 'builtin.fixed_layout.inspect',
@@ -763,7 +799,7 @@ describe('builtin extension catalog generator', () => {
       ({ manifest }) => manifest.packageId === 'realmflow.builtin.images'
     )
 
-    expect(images.manifest.version).toBe('1.0.0')
+    expect(images.manifest.version).toBe('1.0.1')
     expect(images.tools).toHaveLength(11)
     expect(
       images.tools.find(({ id }) => id === 'builtin.image.inspect')
@@ -806,7 +842,7 @@ describe('builtin extension catalog generator', () => {
       ({ manifest }) => manifest.packageId === 'realmflow.builtin.pdf'
     )
 
-    expect(pdf.manifest.version).toBe('1.0.1')
+    expect(pdf.manifest.version).toBe('1.0.2')
     expect(pdf.tools).toHaveLength(11)
     expect(
       pdf.tools.find(({ id }) => id === 'builtin.pdf.inspect')
@@ -1052,7 +1088,7 @@ describe('builtin extension catalog generator', () => {
     )
 
     expect(webPackage.manifest).toMatchObject({
-      version: '1.1.0',
+      version: '1.1.1',
       name: 'Web'
     })
     expect(webFetch).toMatchObject({

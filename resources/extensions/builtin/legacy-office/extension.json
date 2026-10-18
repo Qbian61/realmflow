@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "packageId": "realmflow.builtin.legacy-office",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "name": "Legacy Office Import",
   "description": "Non-overwriting local import and safe-copy conversion for Office files.",
   "publisher": {

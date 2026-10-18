@@ -7,7 +7,7 @@ import {
 } from "./product-capability-directory-model";
 
 describe("product capability directory model", () => {
-  it("prefers an aggregated catalog Tool over its legacy capability projection", () => {
+  it("prefers an aggregated catalog Tool over an installed native Tool with the same runtime", () => {
     const items = buildProductCapabilityItems({
       kind: "tool",
       catalog: catalog({
@@ -29,7 +29,7 @@ describe("product capability directory model", () => {
       }),
       capabilities: capabilitySnapshot([
         capability(
-          "legacy.tool.filesystem_read",
+          "com.example.filesystem-read",
           "tool",
           "Filesystem read",
           { kind: "tool", definitionId: "filesystem_read" },
@@ -47,7 +47,7 @@ describe("product capability directory model", () => {
     });
   });
 
-  it("keeps native capabilities and removes legacy Skill projections", () => {
+  it("keeps catalog Skills and custom native Skills without registry sections", () => {
     const items = buildProductCapabilityItems({
       kind: "skill",
       catalog: catalog({
@@ -64,16 +64,6 @@ describe("product capability directory model", () => {
         ],
       }),
       capabilities: capabilitySnapshot([
-        capability(
-          "legacy.skill.requirement_analysis",
-          "skill",
-          "Requirement analysis",
-          {
-            kind: "skill",
-            instructionsPath: "skills/requirement-analysis/SKILL.md",
-            executable: false,
-          },
-        ),
         capability("com.example.release-note", "skill", "Release notes", {
           kind: "skill",
           instructionsPath: "skills/release-note/SKILL.md",

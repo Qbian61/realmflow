@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.browser.click",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Click browser element",
   "description": "Click a visible unobstructed element in the current Run browser using a current snapshot ref. May submit data.",
   "tags": [

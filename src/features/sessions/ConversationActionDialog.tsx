@@ -1,6 +1,5 @@
 import { useState, type FormEvent } from "react";
 import { TriangleAlert } from "lucide-react";
-import type { ChatSession } from "../../domain/chat-session";
 import { useLocalization } from "../../localization/LocalizationProvider";
 import {
   Button,
@@ -12,7 +11,7 @@ import {
 } from "../../components/ui";
 
 type ConversationActionDialogProps = {
-  session: ChatSession;
+  session: { id: string; title: string };
   mode: "rename" | "delete";
   pending: boolean;
   onClose: () => void;

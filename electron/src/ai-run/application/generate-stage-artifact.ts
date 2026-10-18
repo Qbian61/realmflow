@@ -16,26 +16,26 @@ import type {
 } from '../../../../domain/workflow'
 import type {
   AiRunGateway,
+  NodeContextRepository,
   RunEventPublisher,
-  RunRepository,
-  StageContextRepository
+  RunRepository
 } from './ports'
 import type { CommitFormalArtifactUseCase } from './commit-formal-artifact'
 
 type GenerateDependencies = {
   runs: RunRepository
   gateway: AiRunGateway
-  contexts: StageContextRepository
+  contexts: NodeContextRepository
   artifactCommitter: Pick<CommitFormalArtifactUseCase, 'execute'>
   publisher: RunEventPublisher
   models?: {
     resolveExecution: (profileId: string) => Promise<ModelExecutionConfig>
     recordCall: (input: {
       modelProfileId: string
-      source: 'workflow_stage' | 'workflow_node'
+      source: 'workflow_node'
       workspaceId: string
       requirementId: string
-      nodeId?: string
+      nodeId: string
       aiRunId: string
       contextSnapshotId?: string
       requestedReasoning?: WorkflowReasoningPolicy
@@ -68,58 +68,15 @@ export class GenerateStageArtifactUseCase {
       })
   }
 
-  async execute(input: {
-    requirementId: string
-    stageId: RequirementStageId
-    modelProfileId?: string
-  }): Promise<{ runId: string; completion: Promise<void> }> {
-    const startedAt = (this.dependencies.now ?? Date.now)()
-    let created: { runId: string }
-    let workspaceId: string
-    try {
-      const context = await this.dependencies.contexts.load(
-        input.requirementId,
-        input.stageId
-      )
-      workspaceId = context.workspaceId
-      const model = input.modelProfileId
-        ? await this.dependencies.models?.resolveExecution(input.modelProfileId)
-        : undefined
-      created = await this.dependencies.gateway.createRun(context, model)
-    } catch (error) {
-      return this.createFailedRun(input, error)
-    }
-    const run = createAiRun(
-      created.runId,
-      input.requirementId,
-      input.stageId,
-      undefined,
-      {
-        workspaceId,
-        ...(input.modelProfileId
-          ? { modelProfileId: input.modelProfileId }
-          : {}),
-        startedAt
-      }
-    )
-    await this.saveCreatedRun(run)
-    const completion = this.consume(run, input.modelProfileId, startedAt, {
-      workspaceId,
-      expectedArtifact: legacyArtifactSpecification(input.stageId)
-    })
-    this.schedule(completion)
-    return { runId: run.id, completion }
-  }
-
   async executeNode(input: {
     requirementId: string
+    stageId: RequirementStageId
     nodeId: string
     nodeRunId: string
     executor: AiGenerateExecutorConfig
     modelProfileId?: string
   }): Promise<{ runId: string; completion: Promise<void> }> {
     const startedAt = (this.dependencies.now ?? Date.now)()
-    const compatibilityStageId = input.executor.legacyStageId ?? 'analysis'
     let created: { runId: string }
     let contextSnapshotId: string | undefined
     let requestedReasoning: WorkflowReasoningPolicy | undefined
@@ -141,7 +98,7 @@ export class GenerateStageArtifactUseCase {
       return this.createFailedRun(
         {
           requirementId: input.requirementId,
-          stageId: compatibilityStageId,
+          stageId: input.stageId,
           nodeId: input.nodeId,
           ...(input.modelProfileId
             ? { modelProfileId: input.modelProfileId }
@@ -153,7 +110,7 @@ export class GenerateStageArtifactUseCase {
     const run = createAiRun(
       created.runId,
       input.requirementId,
-      compatibilityStageId,
+      input.stageId,
       input.nodeId,
       {
         workspaceId,
@@ -173,7 +130,6 @@ export class GenerateStageArtifactUseCase {
         workspaceId,
         nodeId: input.nodeId,
         nodeRunId: input.nodeRunId,
-        legacyStageId: input.executor.legacyStageId,
         expectedArtifact: input.executor.artifact,
         contextSnapshotId,
         requestedReasoning,
@@ -234,9 +190,8 @@ export class GenerateStageArtifactUseCase {
     startedAt?: number,
     artifactTarget?: {
       workspaceId: string
-      nodeId?: string
-      nodeRunId?: string
-      legacyStageId?: RequirementStageId
+      nodeId: string
+      nodeRunId: string
       expectedArtifact: {
         relativePath: string
         kind: string
@@ -327,6 +282,7 @@ export class GenerateStageArtifactUseCase {
       !modelProfileId ||
       !this.dependencies.models ||
       !workspaceId ||
+      !run.nodeId ||
       !['run.completed', 'run.failed', 'run.cancelled'].includes(event.type)
     ) {
       return
@@ -334,11 +290,11 @@ export class GenerateStageArtifactUseCase {
     const usage = event.data.usage
     try {
       await this.dependencies.models.recordCall({
-        source: run.nodeId ? 'workflow_node' : 'workflow_stage',
+        source: 'workflow_node',
         modelProfileId,
         workspaceId,
         requirementId: run.requirementId,
-        ...(run.nodeId ? { nodeId: run.nodeId } : {}),
+        nodeId: run.nodeId,
         aiRunId: run.id,
         ...(contextSnapshotId ? { contextSnapshotId } : {}),
         ...(requestedReasoning ? { requestedReasoning } : {}),
@@ -373,9 +329,8 @@ export class GenerateStageArtifactUseCase {
     event: AiRunEvent,
     artifactTarget?: {
       workspaceId: string
-      nodeId?: string
-      nodeRunId?: string
-      legacyStageId?: RequirementStageId
+      nodeId: string
+      nodeRunId: string
       expectedArtifact: {
         relativePath: string
         kind: string
@@ -426,15 +381,8 @@ export class GenerateStageArtifactUseCase {
           runId: next.id,
           requirementId: next.requirementId,
           stageId: next.stageId,
-          ...(artifactTarget.nodeId
-            ? { nodeId: artifactTarget.nodeId }
-            : {}),
-          ...(artifactTarget.nodeRunId
-            ? { nodeRunId: artifactTarget.nodeRunId }
-            : {}),
-          ...(artifactTarget.legacyStageId
-            ? { legacyStageId: artifactTarget.legacyStageId }
-            : {}),
+          nodeId: artifactTarget.nodeId,
+          nodeRunId: artifactTarget.nodeRunId,
           expectedArtifact: artifactTarget.expectedArtifact,
           artifact: next.artifact,
           completionEvent: event
@@ -448,6 +396,7 @@ export class GenerateStageArtifactUseCase {
       case 'run.cancelled':
         return transitionAiRun(next, 'cancelled')
     }
+    return next
   }
 
   private async failRun(
@@ -541,14 +490,4 @@ function isValidArtifact(
     typeof (value as { content?: unknown }).content === 'string' &&
     (value as { content: string }).content.length > 0
   )
-}
-
-function legacyArtifactSpecification(stageId: RequirementStageId): {
-  relativePath: string
-  kind: string
-} {
-  return {
-    relativePath: `artifacts/${stageId}.md`,
-    kind: 'markdown'
-  }
 }

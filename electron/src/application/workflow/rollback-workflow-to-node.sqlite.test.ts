@@ -391,6 +391,7 @@ async function seed(repositories: SqliteRepositories): Promise<void> {
       nodeRunId: 'run-design-1',
       title: 'Old design conversation',
       sortOrder: 0,
+      turns: [],
       messages: [],
       createdAt: 10,
       updatedAt: 10

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.skill.release_preparation",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "name": "Release preparation",
   "description": "Check changes, tests, builds, artifacts, and release gates.",
   "instructionsPath": "instructions/release_preparation.md",

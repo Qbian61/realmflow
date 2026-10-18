@@ -1,12 +1,234 @@
 import {
   AssistantTurnProjectionError,
-  createAssistantTurnProjection,
+  createAssistantTurnProjection as createProjection,
   projectAssistantTurn,
   summarizeToolCalls,
   type AssistantRunEvent
 } from './assistant-turn'
 
+function createAssistantTurnProjection(
+  input: Omit<Parameters<typeof createProjection>[0], 'turnId'> & {
+    turnId?: string
+  }
+) {
+  return createProjection({ turnId: 'turn-1', ...input })
+}
+
 describe('AssistantTurnProjection', () => {
+  it('creates a V2 projection owned by one Turn with an empty display tree', () => {
+    const projection = createAssistantTurnProjection({
+      runId: 'run-1',
+      turnId: 'turn-1',
+      assistantMessageId: 'assistant-1',
+      startedAt: 100
+    } as Parameters<typeof createAssistantTurnProjection>[0])
+
+    expect(projection).toMatchObject({
+      schemaVersion: 2,
+      runId: 'run-1',
+      turnId: 'turn-1',
+      assistantMessageId: 'assistant-1',
+      tree: [],
+      collapsedDefaults: []
+    })
+  })
+
+  it('builds a stable progress-command-tool tree while Tool state changes', () => {
+    let projection = createAssistantTurnProjection({
+      runId: 'run-1',
+      turnId: 'turn-1',
+      assistantMessageId: 'assistant-1',
+      startedAt: 100
+    } as Parameters<typeof createAssistantTurnProjection>[0])
+    projection = projectAssistantTurn(
+      projection,
+      assistantEvent(1, 'execution.summary.delta', {
+        summaryId: 'reasoning-1',
+        delta: '准备执行命令',
+        source: 'system'
+      })
+    )
+    projection = projectAssistantTurn(
+      projection,
+      assistantEvent(2, 'tool.call.requested', {
+        callId: 'call-1',
+        toolName: 'process.run',
+        category: 'command',
+        argumentsSummary: 'npm test'
+      })
+    )
+    const requestedTree = projection.tree
+    projection = projectAssistantTurn(
+      projection,
+      assistantEvent(3, 'tool.call.started', {
+        callId: 'call-1',
+        toolExecutionId: 'execution-1'
+      })
+    )
+
+    expect(projection.tree).toEqual([
+      expect.objectContaining({
+        id: 'progress',
+        kind: 'execution_group',
+        order: 1,
+        groupType: 'progress',
+        children: [
+          expect.objectContaining({
+            id: 'reasoning:reasoning-1',
+            kind: 'reasoning',
+            order: 1,
+            content: '准备执行命令'
+          }),
+          expect.objectContaining({
+            id: 'activity:2',
+            kind: 'execution_group',
+            order: 2,
+            groupType: 'command',
+            children: [
+              expect.objectContaining({
+                id: 'tool:call-1',
+                kind: 'tool_call',
+                order: 2,
+                toolCall: expect.objectContaining({
+                  callId: 'call-1',
+                  status: 'running'
+                })
+              })
+            ]
+          })
+        ]
+      })
+    ])
+    expect(projection.tree[0]?.id).toBe(requestedTree[0]?.id)
+    expect(
+      projection.tree[0]?.kind === 'execution_group'
+        ? projection.tree[0].children[1]?.id
+        : undefined
+    ).toBe('activity:2')
+  })
+
+  it('keeps adjacent Tool calls in chronological segments separated by reasoning', () => {
+    let projection = createAssistantTurnProjection({
+      runId: 'run-1',
+      assistantMessageId: 'assistant-1',
+      startedAt: 100
+    })
+    for (const event of [
+      assistantEvent(1, 'execution.summary.delta', {
+        summaryId: 'reasoning-1',
+        delta: '先检查现状',
+        source: 'system'
+      }),
+      assistantEvent(2, 'tool.call.requested', {
+        callId: 'call-1',
+        toolName: 'builtin.files.read',
+        category: 'filesystem',
+        argumentsSummary: '{"path":"src/a.ts"}'
+      }),
+      assistantEvent(3, 'tool.call.requested', {
+        callId: 'call-2',
+        toolName: 'process.run',
+        category: 'command',
+        argumentsSummary: '{"command":"npm test"}'
+      }),
+      assistantEvent(4, 'execution.summary.delta', {
+        summaryId: 'reasoning-2',
+        delta: '再修复问题',
+        source: 'system'
+      }),
+      assistantEvent(5, 'tool.call.requested', {
+        callId: 'call-3',
+        toolName: 'builtin.files.write',
+        category: 'filesystem',
+        argumentsSummary: '{"path":"src/a.ts"}'
+      })
+    ] satisfies AssistantRunEvent[]) {
+      projection = projectAssistantTurn(projection, event)
+    }
+
+    expect(projection.tree).toEqual([
+      expect.objectContaining({
+        id: 'progress',
+        children: [
+          expect.objectContaining({ id: 'reasoning:reasoning-1' }),
+          expect.objectContaining({
+            id: 'activity:2',
+            kind: 'execution_group',
+            children: [
+              expect.objectContaining({ id: 'tool:call-1' }),
+              expect.objectContaining({ id: 'tool:call-2' })
+            ]
+          }),
+          expect.objectContaining({ id: 'reasoning:reasoning-2' }),
+          expect.objectContaining({
+            id: 'activity:5',
+            kind: 'execution_group',
+            children: [
+              expect.objectContaining({ id: 'tool:call-3' })
+            ]
+          })
+        ]
+      })
+    ])
+  })
+
+  it('completes the formal answer and appends a Finish node that only references its Message', () => {
+    let projection = createAssistantTurnProjection({
+      runId: 'run-1',
+      turnId: 'turn-1',
+      assistantMessageId: 'assistant-1',
+      startedAt: 100
+    } as Parameters<typeof createAssistantTurnProjection>[0])
+    projection = projectAssistantTurn(
+      projection,
+      assistantEvent(1, 'answer.completed' as AssistantRunEvent['type'], {
+        content: '最终回答'
+      } as never)
+    )
+
+    expect(projection.answer).toBe('最终回答')
+    expect(projection.tree).toEqual([
+      {
+        id: 'finish:assistant-1',
+        kind: 'finish',
+        order: 1,
+        answerMessageId: 'assistant-1'
+      }
+    ])
+    expect(JSON.stringify(projection.tree)).not.toContain('最终回答')
+  })
+
+  it('degrades an unknown future event to a safe diagnostic notification', () => {
+    const projection = projectAssistantTurn(
+      createAssistantTurnProjection({
+        runId: 'run-1',
+        turnId: 'turn-1',
+        assistantMessageId: 'assistant-1',
+        startedAt: 100
+      } as Parameters<typeof createAssistantTurnProjection>[0]),
+      {
+        id: 'future-event',
+        runId: 'run-1',
+        sequence: 1,
+        type: 'provider.future_event',
+        timestamp: 101,
+        data: { secret: 'must-not-be-projected' }
+      } as unknown as AssistantRunEvent
+    )
+
+    expect(projection.tree).toEqual([
+      {
+        id: 'notification:future-event',
+        kind: 'notification',
+        order: 1,
+        level: 'warning',
+        message: 'Unsupported assistant event',
+        diagnosticId: 'future-event'
+      }
+    ])
+    expect(JSON.stringify(projection)).not.toContain('must-not-be-projected')
+  })
+
   it('projects answer, summaries, references, and a complete Tool lifecycle', () => {
     let projection = createAssistantTurnProjection({
       runId: 'run-1',
@@ -389,6 +611,196 @@ describe('AssistantTurnProjection', () => {
         ],
         completedAt: 102
       }
+    ])
+  })
+
+  it('projects durable child lineage as a stable recursive sub-agent group', () => {
+    let projection = createAssistantTurnProjection({
+      runId: 'run-1',
+      assistantMessageId: 'assistant-1',
+      startedAt: 100
+    })
+    projection = projectAssistantTurn(
+      projection,
+      assistantEvent(1, 'delegation.updated' as AssistantRunEvent['type'], {
+        groupId: 'delegation:delegate-1',
+        callId: 'delegate-1',
+        parentRunId: 'run-1',
+        strategy: 'parallel',
+        requestedAt: 101,
+        children: [
+          {
+            taskId: 'tests',
+            childRunId: 'child-2',
+            childSessionId: 'session-2',
+            ordinal: 2,
+            agentId: 'builtin.general',
+            agentName: 'General',
+            objective: 'Inspect tests',
+            status: 'failed',
+            resultSummary: 'Provider failed',
+            evidenceCount: 0,
+            artifactIds: [],
+            startedAt: 102,
+            completedAt: 104,
+            errorCode: 'provider_rejected',
+            tree: [
+              {
+                id: 'child-2-error',
+                kind: 'notification',
+                order: 1,
+                level: 'error',
+                message: 'Provider failed'
+              }
+            ]
+          },
+          {
+            taskId: 'docs',
+            childRunId: 'child-1',
+            childSessionId: 'session-1',
+            ordinal: 1,
+            agentId: 'builtin.general',
+            agentName: 'General',
+            objective: 'Inspect docs',
+            status: 'completed',
+            resultSummary: 'Docs summary',
+            evidenceCount: 1,
+            artifactIds: ['artifact-1'],
+            startedAt: 102,
+            completedAt: 103,
+            tree: [
+              {
+                id: 'finish:child-1:assistant',
+                kind: 'finish',
+                order: 1,
+                answerMessageId: 'child-1:assistant'
+              }
+            ]
+          }
+        ]
+      } as never)
+    )
+
+    expect(projection.tree).toEqual([
+      expect.objectContaining({
+        id: 'progress',
+        kind: 'execution_group',
+        children: [
+          expect.objectContaining({
+            id: 'sub_agent',
+            kind: 'execution_group',
+            groupType: 'sub_agent',
+            children: [
+              expect.objectContaining({
+                id: 'sub-agent-group:delegation:delegate-1',
+                kind: 'sub_agent_group',
+                group: expect.objectContaining({
+                  status: 'partial',
+                  children: [
+                    expect.objectContaining({
+                      taskId: 'docs',
+                      childRunId: 'child-1',
+                      childSessionId: 'session-1',
+                      ordinal: 1,
+                      tree: [
+                        expect.objectContaining({
+                          kind: 'finish',
+                          answerMessageId: 'child-1:assistant'
+                        })
+                      ]
+                    }),
+                    expect.objectContaining({
+                      taskId: 'tests',
+                      childRunId: 'child-2',
+                      childSessionId: 'session-2',
+                      ordinal: 2,
+                      tree: [
+                        expect.objectContaining({
+                          kind: 'notification',
+                          level: 'error'
+                        })
+                      ]
+                    })
+                  ]
+                })
+              })
+            ]
+          })
+        ]
+      })
+    ])
+  })
+
+  it('projects ordered Todo updates into a recursive Todo execution group', () => {
+    let projection = createAssistantTurnProjection({
+      runId: 'run-1',
+      assistantMessageId: 'assistant-1',
+      startedAt: 100
+    })
+    projection = projectAssistantTurn(
+      projection,
+      assistantEvent(1, 'todo.updated' as AssistantRunEvent['type'], {
+        todoId: 'plan-1',
+        title: 'Implementation plan',
+        items: [
+          {
+            id: 'verify',
+            ordinal: 2,
+            title: 'Verify UI',
+            status: 'pending',
+            children: []
+          },
+          {
+            id: 'implement',
+            ordinal: 1,
+            title: 'Implement projection',
+            status: 'completed',
+            children: [
+              {
+                id: 'tool:write',
+                kind: 'tool_call',
+                order: 1,
+                toolCall: toolCall('write', 'filesystem'),
+                view: { type: 'file', title: 'filesystem.write' }
+              }
+            ]
+          }
+        ]
+      } as never)
+    )
+
+    expect(projection.tree).toEqual([
+      expect.objectContaining({
+        id: 'progress',
+        kind: 'execution_group',
+        children: [
+          expect.objectContaining({
+            id: 'todo',
+            kind: 'execution_group',
+            groupType: 'todo',
+            children: [
+              expect.objectContaining({
+                id: 'todo-group:plan-1',
+                kind: 'todo_group',
+                todo: expect.objectContaining({
+                  status: 'running',
+                  items: [
+                    expect.objectContaining({
+                      id: 'implement',
+                      ordinal: 1,
+                      children: [expect.objectContaining({ kind: 'tool_call' })]
+                    }),
+                    expect.objectContaining({
+                      id: 'verify',
+                      ordinal: 2
+                    })
+                  ]
+                })
+              })
+            ]
+          })
+        ]
+      })
     ])
   })
 

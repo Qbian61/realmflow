@@ -4,14 +4,12 @@ import {
   IPC_QUERY_CHANNELS
 } from '../../../shared/ipc-contract'
 import type { SidecarStatus } from '../../../shared/types'
-import type { PersistenceApi } from '../../../shared/persistence'
 import type { BusinessHandlers } from '../../../shared/business'
 import type { CancelAiRunUseCase } from '../ai-run/application/generate-stage-artifact'
 import type {
   GetAiRunUseCase,
   ListAiRunEventsUseCase
 } from '../application/query-ai-runs'
-import type { ExecuteWorkflowStageUseCase } from '../application/workflow/execute-workflow-stage'
 import type { ExecuteWorkflowNodeUseCase } from '../application/workflow/execute-workflow-node'
 import {
   registerAiRunIpc,
@@ -19,7 +17,6 @@ import {
 } from '../ai-run/ipc/ai-run-ipc'
 import { registerNativeOverlayIpc } from '../overlay/native-overlay-ipc'
 import type { NativeOverlayManager } from '../overlay/native-overlay-manager'
-import { registerPersistenceIpc } from '../persistence/persistence-ipc'
 import { registerTerminalIpc } from '../terminal/terminal-ipc'
 import type { TerminalManager } from '../terminal/terminal-manager'
 import type { WebWorkbenchManager } from '../workbench/web-workbench'
@@ -64,7 +61,6 @@ type RegisterMainIpcOptions = {
   agentRuntime: Omit<Parameters<typeof registerAgentRuntimeIpc>[0], 'ipcMain'>
   aiRuns: {
     executeNode: Pick<ExecuteWorkflowNodeUseCase, 'execute'>
-    executeStage: Pick<ExecuteWorkflowStageUseCase, 'execute'>
     cancel: Pick<CancelAiRunUseCase, 'execute'>
     getRun: Pick<GetAiRunUseCase, 'execute'>
     listEvents: Pick<ListAiRunEventsUseCase, 'execute'>
@@ -109,7 +105,6 @@ type RegisterMainIpcOptions = {
   >
   quitApp: () => void
   respondToCloseRequest: (approved: boolean) => void
-  persistence: Pick<PersistenceApi, 'load'>
   workspace: WorkspaceService
   terminalManager: TerminalManager
   codeSnippetService: CodeSnippetService
@@ -156,7 +151,6 @@ export function registerMainIpc({
   backup,
   quitApp,
   respondToCloseRequest,
-  persistence,
   workspace,
   terminalManager,
   codeSnippetService,
@@ -240,7 +234,6 @@ export function registerMainIpc({
       dialog
     })
   }
-  registerPersistenceIpc({ persistence, ipcMain })
   registerWorkspaceIpc({ workspace, ipcMain, dialog, shell })
   registerTerminalIpc({ manager: terminalManager, ipcMain })
   registerCodeSnippetIpc({ service: codeSnippetService, ipcMain })

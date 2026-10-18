@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.image.convert",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Convert image",
   "description": "Convert an image candidate to PNG, JPEG, or WebP.",
   "tags": [

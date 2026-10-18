@@ -1,4 +1,5 @@
 import type { ChatSession } from '../../domain/chat-session'
+import type { AssistantTurnProjection } from '../../../domain/assistant-turn'
 import type { WorkspaceNavigation } from '../../domain/workspace'
 import {
   createWorkspaceState,
@@ -24,6 +25,7 @@ const sessions: ChatSession[] = [
     id: 'session-a',
     title: 'A session',
     spacePath: '/spaces/a',
+    turns: [],
     messages: [],
     createdAt: 1,
     updatedAt: 1
@@ -32,6 +34,7 @@ const sessions: ChatSession[] = [
     id: 'session-b',
     title: 'B session',
     spacePath: '/spaces/b',
+    turns: [],
     messages: [],
     createdAt: 1,
     updatedAt: 1
@@ -124,20 +127,41 @@ describe('workspaceReducer', () => {
         id: 'session-c',
         title: 'C session',
         spacePath: '/spaces/a',
+        turns: [],
         messages: [],
         createdAt: 2,
         updatedAt: 2
       }
     })
     const updated = workspaceReducer(created, {
-      type: 'session-message-appended',
+      type: 'session-turn-appended',
       sessionId: 'session-a',
-      message: {
-        id: 'message-1',
-        content: 'next',
-        createdAt: 3,
-        role: 'user'
-      }
+      turn: {
+        id: 'turn-1',
+        sessionId: 'session-a',
+        index: 0,
+        userMessageId: 'message-1',
+        assistantMessageId: 'message-2',
+        status: 'pending',
+        createdAt: 3
+      },
+      messages: [
+        {
+          id: 'message-1',
+          turnId: 'turn-1',
+          content: 'next',
+          createdAt: 3,
+          role: 'user'
+        },
+        {
+          id: 'message-2',
+          turnId: 'turn-1',
+          content: '',
+          createdAt: 3,
+          role: 'assistant',
+          status: 'pending'
+        }
+      ]
     })
 
     expect(created.sessions[0].id).toBe('session-c')
@@ -146,6 +170,60 @@ describe('workspaceReducer', () => {
       updatedAt: 3
     })
     expect(updated.sessions[0].messages[0].content).toBe('next')
+    expect(updated.sessions[0].turns[0].id).toBe('turn-1')
+  })
+
+  it('applies a live assistant turn projection to the matching turn and assistant message', () => {
+    const projection = assistantProjection('run-1', 'turn-1', 'message-2')
+    const initial = createWorkspaceState(navigation, [
+      {
+        id: 'session-a',
+        title: 'A session',
+        spacePath: '/spaces/a',
+        turns: [
+          {
+            id: 'turn-1',
+            sessionId: 'session-a',
+            index: 0,
+            userMessageId: 'message-1',
+            assistantMessageId: 'message-2',
+            runId: 'run-1',
+            status: 'running',
+            createdAt: 3
+          }
+        ],
+        messages: [
+          {
+            id: 'message-1',
+            turnId: 'turn-1',
+            role: 'user',
+            content: 'run command',
+            createdAt: 3
+          },
+          {
+            id: 'message-2',
+            turnId: 'turn-1',
+            role: 'assistant',
+            status: 'pending',
+            content: '',
+            runId: 'run-1',
+            createdAt: 3
+          }
+        ],
+        createdAt: 3,
+        updatedAt: 3
+      }
+    ])
+
+    const updated = workspaceReducer(initial, {
+      type: 'session-turn-projection-updated',
+      sessionId: 'session-a',
+      turnId: 'turn-1',
+      projection
+    })
+
+    expect(updated.sessions[0].turns[0].status).toBe('waiting_permission')
+    expect(updated.sessions[0].messages[1].execution).toBe(projection)
   })
 
   it('replaces persisted navigation without discarding live sessions', () => {
@@ -165,3 +243,28 @@ describe('workspaceReducer', () => {
     expect(updated).toEqual({ ...replacement, sessions })
   })
 })
+
+function assistantProjection(
+  runId: string,
+  turnId: string,
+  assistantMessageId: string
+): AssistantTurnProjection {
+  return {
+    schemaVersion: 2,
+    runId,
+    turnId,
+    assistantMessageId,
+    startedAt: 3,
+    status: 'waiting_permission',
+    answer: '',
+    tree: [],
+    collapsedDefaults: [],
+    executionSummaries: [],
+    references: [],
+    toolCalls: [],
+    delegations: [],
+    compactions: [],
+    lastSequence: 4,
+    elapsedAt: 4
+  }
+}

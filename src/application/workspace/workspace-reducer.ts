@@ -2,6 +2,8 @@ import type {
   ChatSession,
   ChatSessionMessage
 } from '../../domain/chat-session'
+import type { AssistantTurnProjection } from '../../../domain/assistant-turn'
+import type { ConversationTurn } from '../../../domain/conversation-turn'
 import type {
   WorkspaceNavigation,
   WorkspaceRequirement,
@@ -38,9 +40,16 @@ export type WorkspaceAction =
   | { type: 'session-created'; session: ChatSession }
   | { type: 'session-synced'; session: ChatSession }
   | {
-      type: 'session-message-appended'
+      type: 'session-turn-appended'
       sessionId: string
-      message: ChatSessionMessage
+      turn: ConversationTurn
+      messages: [ChatSessionMessage, ChatSessionMessage]
+    }
+  | {
+      type: 'session-turn-projection-updated'
+      sessionId: string
+      turnId: string
+      projection: AssistantTurnProjection
     }
   | { type: 'navigation-replaced'; navigation: WorkspaceNavigation }
   | { type: 'sessions-replaced'; sessions: ChatSession[] }
@@ -151,15 +160,49 @@ export function workspaceReducer(
           ...state.sessions.filter((session) => session.id !== action.session.id)
         ]
       }
-    case 'session-message-appended': {
+    case 'session-turn-appended': {
       const session = state.sessions.find(
         (item) => item.id === action.sessionId
       )
       if (!session) return state
       const updatedSession = {
         ...session,
-        messages: [...session.messages, action.message],
-        updatedAt: action.message.createdAt
+        turns: [...session.turns, action.turn],
+        messages: [...session.messages, ...action.messages],
+        updatedAt: action.turn.createdAt
+      }
+      return {
+        ...state,
+        sessions: [
+          updatedSession,
+          ...state.sessions.filter((item) => item.id !== action.sessionId)
+        ]
+      }
+    }
+    case 'session-turn-projection-updated': {
+      const session = state.sessions.find(
+        (item) => item.id === action.sessionId
+      )
+      if (!session) return state
+      const turn = session.turns.find((item) => item.id === action.turnId)
+      if (!turn) return state
+      const updatedTurn = applyProjectionToTurn(turn, action.projection)
+      const updatedSession = {
+        ...session,
+        turns: session.turns.map((item) =>
+          item.id === action.turnId ? updatedTurn : item
+        ),
+        messages: session.messages.map((message) =>
+          message.id === action.projection.assistantMessageId &&
+          message.turnId === action.turnId &&
+          message.role === 'assistant'
+            ? applyProjectionToAssistantMessage(message, action.projection)
+            : message
+        ),
+        updatedAt:
+          action.projection.elapsedAt ??
+          action.projection.completedAt ??
+          action.projection.startedAt
       }
       return {
         ...state,
@@ -194,4 +237,45 @@ function moveById<T>(
   const [moved] = next.splice(sourceIndex, 1)
   next.splice(boundedTarget, 0, moved)
   return next
+}
+
+function applyProjectionToTurn(
+  turn: ConversationTurn,
+  projection: AssistantTurnProjection
+): ConversationTurn {
+  const next: ConversationTurn = {
+    ...turn,
+    status: projection.status
+  }
+  if (projection.completedAt === undefined) {
+    delete next.completedAt
+  } else {
+    next.completedAt = projection.completedAt
+  }
+  return next
+}
+
+function applyProjectionToAssistantMessage(
+  message: ChatSessionMessage,
+  projection: AssistantTurnProjection
+): ChatSessionMessage {
+  return {
+    ...message,
+    status: assistantMessageStatusFromProjection(projection),
+    content: projection.status === 'completed' ? projection.answer : message.content,
+    execution: projection,
+    ...(projection.completedAt === undefined
+      ? {}
+      : { completedAt: projection.completedAt })
+  }
+}
+
+function assistantMessageStatusFromProjection(
+  projection: AssistantTurnProjection
+): ChatSessionMessage['status'] {
+  if (projection.status === 'completed') return 'completed'
+  if (projection.status === 'failed' || projection.status === 'cancelled') {
+    return 'failed'
+  }
+  return 'pending'
 }

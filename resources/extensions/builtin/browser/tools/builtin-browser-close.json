@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.browser.close",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Close browser",
   "description": "Close the current Run browser session; preserve its local profile.",
   "tags": [

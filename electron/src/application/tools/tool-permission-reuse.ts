@@ -3,7 +3,7 @@ import type { BoundScopeAuthorization } from '../../../../domain/capability-perm
 import type { ToolEffect } from '../../../../domain/tool-authorization'
 import type { ToolDefinition } from '../../../../domain/tool-definition'
 import type { JsonObject } from '../../../../domain/tool-protocol-validation'
-import type { ToolExecutionCommand } from './tool-execution-application-service'
+import type { ToolExecutionCommand } from './tool-execution-contract'
 import type { ToolEventStore } from './tool-event-store'
 import { toolExecutionDigest } from './tool-execution-support'
 

@@ -637,6 +637,52 @@ describe('WorkspaceService', () => {
     ).resolves.toEqual(new Uint8Array([0x25, 0x50, 0x44, 0x46]))
   })
 
+  it('uses a display-name alias without exposing the managed blob name', async () => {
+    const managedFile = join(workspaceDirectory, 'attachment-digest')
+    await writeFile(managedFile, Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+    const readPersistedManifest = vi
+      .spyOn(metadata, 'readManifest')
+      .mockRejectedValue(new Error('Requirement was not found'))
+
+    const opened = await service.openSessionFiles(
+      [managedFile],
+      ['wireframe.png']
+    )
+
+    expect(opened.files[0]).toMatchObject({
+      name: 'wireframe.png',
+      path: 'wireframe.png',
+      content: '',
+      kind: 'image'
+    })
+    await expect(
+      service.resolvePreviewPath(
+        opened.binding.requirementId,
+        'wireframe.png'
+      )
+    ).resolves.toBe(await realpath(managedFile))
+    await expect(
+      service.listDirectory(opened.binding.requirementId)
+    ).resolves.toEqual([
+      {
+        name: 'wireframe.png',
+        path: 'wireframe.png',
+        type: 'file'
+      }
+    ])
+    await expect(
+      service.readManifest(opened.binding.requirementId)
+    ).resolves.toEqual({
+      version: 1,
+      requirementId: opened.binding.requirementId,
+      stages: {}
+    })
+    expect(readPersistedManifest).not.toHaveBeenCalled()
+    await expect(
+      service.readFile(opened.binding.requirementId, 'attachment-digest')
+    ).rejects.toThrow('File is not authorized for this session')
+  })
+
   it('opens selected Office documents as read-only binary files', async () => {
     const selectedFile = join(workspaceDirectory, 'resume.docx')
     await writeFile(selectedFile, Buffer.from([0x50, 0x4b, 0x03, 0x04]))
@@ -660,6 +706,33 @@ describe('WorkspaceService', () => {
       })
     ).rejects.toThrow('Binary files are read-only')
   })
+
+  it.each(['odt', 'ods', 'odp', 'wps', 'docm', 'tar', 'epub', 'pages'])(
+    'opens selected %s files as read-only binary files',
+    async (extension) => {
+      const selectedFile = join(workspaceDirectory, `source.${extension}`)
+      await writeFile(selectedFile, Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00]))
+
+      const opened = await service.openSessionFiles([selectedFile])
+
+      expect(opened.files[0]).toMatchObject({
+        name: `source.${extension}`,
+        path: `source.${extension}`,
+        content: '',
+        kind: 'binary',
+        language: 'binary',
+        size: 5
+      })
+      await expect(
+        service.writeFile({
+          requirementId: opened.binding.requirementId,
+          path: `source.${extension}`,
+          content: 'replace',
+          expectedVersion: opened.files[0]!.version
+        })
+      ).rejects.toThrow('Binary files are read-only')
+    }
+  )
 
   it('writes text atomically and rejects stale versions', async () => {
     await writeFile(join(workspaceDirectory, 'notes.md'), 'first')

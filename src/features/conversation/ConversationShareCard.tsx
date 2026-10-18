@@ -3,7 +3,12 @@ import { RealmFlowLogo } from "../../components/RealmFlowLogo";
 import type { ConversationMessageListItem } from "./ConversationMessageList";
 import { StreamingMessageContent } from "./StreamingMessageContent";
 
-export type ShareableConversationMessage = ConversationMessageListItem & {
+export type ShareableConversationMessage = Omit<
+  ConversationMessageListItem,
+  "role"
+> & {
+  turnId: string;
+  role: "user" | "assistant";
   createdAt: number;
   modelName?: string;
 };

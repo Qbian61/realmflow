@@ -10,7 +10,7 @@ import type { LocalContentExtractionService } from '../content-extraction/local-
 export type KnowledgeArtifact = {
   id: string
   requirementId: string
-  nodeId?: string
+  nodeId: string
   relativePath: string
   checksum: string
   mediaType?: string

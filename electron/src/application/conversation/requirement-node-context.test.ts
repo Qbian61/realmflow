@@ -125,7 +125,7 @@ describe('RequirementNodeConversationContextAssembler', () => {
         knowledgeQuery: 'Canary',
         includeRequirementBody: true,
         predecessorArtifacts: 'direct',
-        includeSpaceKnowledge: true
+        includeSpaceKnowledge: false
       })
     )
   })

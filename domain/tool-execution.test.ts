@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import {
   createToolDomainEvent,
   replayToolExecution,
-  upcastToolDomainEvent,
   type ToolDomainEvent
 } from './tool-execution'
 
@@ -324,37 +323,19 @@ describe('ToolExecution reducer', () => {
   })
 })
 
-describe('Tool event upcaster', () => {
-  it('upcasts progress v1 percent into the current bounded progress payload', () => {
-    const legacy = toolEvent(
-      6,
-      'tool.progress_reported',
-      { attempt: 1, percent: 25, message: 'Reading' },
-      1
-    )
-    const current = upcastToolDomainEvent(legacy)
-
-    expect(current.eventSchemaVersion).toBe(2)
-    expect(current.payload).toEqual({
-      attempt: 1,
-      completed: 25,
-      total: 100,
-      message: 'Reading'
-    })
-    expect(current.payloadChecksum).toBe(legacy.payloadChecksum)
-  })
-
-  it('rejects unknown future event versions', () => {
+describe('Tool event schema versions', () => {
+  it('rejects non-current progress event versions during replay', () => {
     expect(() =>
-      upcastToolDomainEvent(
+      replayToolExecution([
+        invocation(1),
         toolEvent(
-          1,
+          2,
           'tool.progress_reported',
-          { attempt: 1 },
-          3
+          { attempt: 1, percent: 25, message: 'Reading' },
+          1
         )
-      )
-    ).toThrow('Tool event schema version is unsupported')
+      ])
+    ).toThrow('Tool execution event schema version is not current')
   })
 })
 

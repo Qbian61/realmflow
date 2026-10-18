@@ -125,15 +125,16 @@ describe("WorkbenchHubPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "管理工作台 Tab" }));
     const dialog = screen.getByRole("dialog", { name: "管理工作台 Tab" });
-    const terminalHandle = within(dialog).getByLabelText("拖拽排序 终端");
-    const terminalRow = terminalHandle.closest("[draggable='true']");
+    const terminalName = within(dialog).getByText("终端");
+    const terminalRow = terminalName.closest("[draggable='true']");
     const tasksRow = within(dialog)
       .getByText("任务待办")
       .closest("[draggable='true']");
 
     expect(terminalRow).not.toBeNull();
     expect(tasksRow).not.toBeNull();
-    fireEvent.dragStart(terminalHandle);
+    expect(within(dialog).queryByLabelText("拖拽排序 终端")).toBeNull();
+    fireEvent.dragStart(terminalName);
     expect(
       within(dialog).getByText("终端").closest("[draggable='true']"),
     ).toHaveAttribute("data-dragging", "true");
@@ -153,17 +154,17 @@ describe("WorkbenchHubPage", () => {
     ).toEqual(["工作台", "终端", "任务待办", "常用网站", "定时任务", "备忘录"]);
   });
 
-  it("keeps configurable tab ordering drag-only", () => {
+  it("uses module names for dragging without a separate drag icon", () => {
     render(<WorkbenchHubPage />);
 
     fireEvent.click(screen.getByRole("button", { name: "管理工作台 Tab" }));
     const dialog = screen.getByRole("dialog", { name: "管理工作台 Tab" });
-    const handle = within(dialog).getByLabelText("拖拽排序 终端");
+    const name = within(dialog).getByText("终端");
 
-    fireEvent.click(handle);
+    fireEvent.click(name);
 
-    expect(handle.tagName).toBe("SPAN");
-    expect(handle).toHaveAttribute("title", "拖拽排序");
+    expect(name.closest("[draggable='true']")).not.toBeNull();
+    expect(within(dialog).queryByLabelText("拖拽排序 终端")).toBeNull();
     expect(screen.queryByRole("menu")).toBeNull();
   });
 

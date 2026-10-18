@@ -10,7 +10,7 @@ describe('Capability Catalog IPC', () => {
     >()
     const definition = {
       schemaVersion: 1,
-      id: 'legacy.tool.builtin.browser.attach',
+      id: 'com.example.browser.attach',
       kind: 'tool',
       runtime: { kind: 'tool', definitionId: 'builtin.browser.attach' },
       version: '1.0.0',
@@ -59,13 +59,13 @@ describe('Capability Catalog IPC', () => {
     expect(result).toMatchObject({
       definitions: [
         {
-          id: 'legacy.tool.builtin.browser.attach',
+          id: 'com.example.browser.attach',
           name: 'Attach browser profile',
           definitionDigest: 'b'.repeat(64)
         }
       ],
       displayByDefinitionKey: {
-        'legacy.tool.builtin.browser.attach@1.0.0': {
+        'com.example.browser.attach@1.0.0': {
           name: '恢复浏览器配置',
           resolvedLocale: 'zh-CN'
         }

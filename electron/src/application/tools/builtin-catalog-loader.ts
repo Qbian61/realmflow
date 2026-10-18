@@ -4,7 +4,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path'
 import {
   calculateExtensionPackageDigest,
   normalizeExtensionPackageManifest,
-  type LegacyExtensionPackageManifest
+  type ExtensionPackageManifestV1
 } from '../../../../domain/extension-package'
 import {
   normalizeSkillDefinition,
@@ -24,7 +24,7 @@ import {
 } from '../../../../domain/tool-protocol-validation'
 
 export type BuiltinCatalogPackage = {
-  manifest: LegacyExtensionPackageManifest
+  manifest: ExtensionPackageManifestV1
   packageDigest: string
   tools: ToolDefinition[]
   skills: SkillDefinition[]

@@ -4,16 +4,15 @@ import zipfile
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 from docx import Document
 
-from app import create_app
 from app.services.document_engine import (
     DocumentExportResult,
     DocumentEngine,
     DocumentEngineError,
     libreoffice_pdf_command,
 )
+from private_worker import realmflow_private_worker, run_worker
 
 
 CONTENT = {
@@ -30,18 +29,9 @@ CONTENT = {
 }
 
 
-def client() -> TestClient:
-    return TestClient(
-        create_app(auth_token="session-secret"),
-        headers={"Authorization": "Bearer session-secret"},
-    )
-
-
-def test_document_delivery_routes_create_export_and_verify(
+def test_private_worker_creates_exports_and_verifies_documents(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from app.api import routes
-
     pdf = minimal_pdf()
 
     async def export_pdf(_document: bytes) -> DocumentExportResult:
@@ -52,25 +42,26 @@ def test_document_delivery_routes_create_export_and_verify(
             warnings=(),
         )
 
-    monkeypatch.setattr(routes.document_engine, "export_pdf", export_pdf)
-
-    created = client().post(
-        "/api/v1/documents/create",
-        json={"document": CONTENT},
+    monkeypatch.setattr(
+        realmflow_private_worker.document_engine,
+        "export_pdf",
+        export_pdf,
     )
-    assert created.status_code == 200, created.text
-    created_payload = created.json()
+
+    created_payload = run_worker(
+        "documents.create",
+        {"document": CONTENT},
+    )
     assert created_payload["format"] == "docx"
     assert created_payload["byteSize"] > 0
     assert created_payload["checksum"].startswith("sha256:")
     assert created_payload["pageCount"] is None
 
-    exported = client().post(
-        "/api/v1/documents/export-pdf",
-        json={"documentBase64": created_payload["documentBase64"]},
+    exported_payload = run_worker(
+        "documents.export_pdf",
+        {"documentBase64": created_payload["documentBase64"]},
     )
-    assert exported.status_code == 200, exported.text
-    assert exported.json() == {
+    assert exported_payload == {
         "documentBase64": __import__("base64").b64encode(pdf).decode("ascii"),
         "format": "pdf",
         "byteSize": len(pdf),
@@ -84,36 +75,31 @@ def test_document_delivery_routes_create_export_and_verify(
         "warnings": [],
     }
 
-    verified = client().post(
-        "/api/v1/artifacts/verify",
-        json={
+    verified_payload = run_worker(
+        "documents.verify",
+        {
             "format": "pdf",
-            "documentBase64": exported.json()["documentBase64"],
+            "documentBase64": exported_payload["documentBase64"],
         },
     )
-    assert verified.status_code == 200, verified.text
-    assert verified.json() == {
+    assert verified_payload == {
         "valid": True,
         "format": "pdf",
         "byteSize": len(pdf),
-        "checksum": exported.json()["checksum"],
+        "checksum": exported_payload["checksum"],
         "pageCount": 1,
     }
 
 
-def test_document_delivery_routes_map_stable_engine_errors() -> None:
-    response = client().post(
-        "/api/v1/documents/export-pdf",
-        json={"documentBase64": "bm90LWRvY3g="},
-    )
+def test_private_worker_maps_stable_engine_errors() -> None:
+    with pytest.raises(DocumentEngineError) as raised:
+        run_worker(
+            "documents.export_pdf",
+            {"documentBase64": "bm90LWRvY3g="},
+        )
 
-    assert response.status_code == 422
-    assert response.json() == {
-        "detail": {
-            "code": "document_verification_failed",
-            "message": "DOCX is not an OOXML package",
-        }
-    }
+    assert raised.value.code == "document_verification_failed"
+    assert str(raised.value) == "DOCX is not an OOXML package"
 
 
 def test_create_docx_is_byte_deterministic_and_preserves_structure() -> None:

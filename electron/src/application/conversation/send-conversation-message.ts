@@ -3,6 +3,7 @@ import { normalizeApprovalProfile, type ApprovalProfileId } from '../../../../do
 import type { AiRunEvent } from '../../../../domain/ai-run'
 import {
   createAssistantTurnProjection,
+  type AssistantRunEvent,
   type AssistantTurnProjection
 } from '../../../../domain/assistant-turn'
 import { resolveAgentRunScenario } from '../../../../domain/agent-runtime'
@@ -32,6 +33,7 @@ import type { ConversationGeneratedArtifactSource } from '../../../../domain/fol
 import type { CompactedConversationFact } from '../../../../domain/conversation-context-projection'
 import type { RecalledMemoryReference } from '../../../../domain/conversation-context-projection'
 import type { ConversationAttachmentSubmission } from '../../../../shared/conversation-attachments'
+import type { ConversationCapabilitySelection } from '../../../../shared/business'
 import type { EffectiveModelSelection } from '../../../../domain/model-selection'
 import type { ReasoningPreference } from '../../../../domain/reasoning-router'
 import { resolveResponseLanguage } from '../../../../domain/response-language'
@@ -80,17 +82,14 @@ type Dependencies = {
   sessions: ChatSessionRepository
   getDefaultApprovalProfile?: () => Promise<ApprovalProfileId>
   timeline?: AssistantRunTimelineRepository
+  onProjectionUpdated?: (event: {
+    sessionId: string
+    turnId: string
+    projection: AssistantTurnProjection
+  }) => void | Promise<void>
   spaceContext?: {
     assertAvailable: (workspaceId: string) => Promise<void>
-    assemble: (
-      workspaceId: string,
-      query: string | readonly RetrievalQuery[]
-    ) => Promise<string | undefined>
-    assembleScope?: (
-      scope: KnowledgeSearchScope,
-      query: string | readonly RetrievalQuery[]
-    ) => Promise<string | undefined>
-    assembleSnapshot?: (
+    assembleSnapshot: (
       scope: KnowledgeSearchScope,
       query: string | readonly RetrievalQuery[]
     ) => Promise<NonNullable<ConversationProcessingSnapshot['knowledgeContext']>>
@@ -223,6 +222,7 @@ export class SendConversationMessageUseCase {
     fileReferences?: string[]
     attachmentPaths?: string[]
     attachments?: ConversationAttachmentSubmission
+    capabilities?: ConversationCapabilitySelection
     capabilityReferences?: string[]
     turnStarter?: ChatSessionRepository['beginTurn']
     afterTurnStarted?: (
@@ -544,6 +544,15 @@ export class SendConversationMessageUseCase {
       pipelineVersion: processing.pipelineVersion,
       processing,
       ...(attachmentContext ? { attachmentContext } : {}),
+      ...(input.capabilities?.skill
+        ? { skill: input.capabilities.skill }
+        : {}),
+      ...(input.capabilities?.connectorBindings
+        ? { connectorBindings: input.capabilities.connectorBindings }
+        : {}),
+      ...(input.capabilities?.mcpServerIds
+        ? { mcpServerIds: input.capabilities.mcpServerIds }
+        : {}),
       ...(!input.requirementNodeContext
         ? {
             requestedReasoning:
@@ -605,6 +614,7 @@ export class SendConversationMessageUseCase {
     let turnProjection: AssistantTurnProjection =
       createAssistantTurnProjection({
         runId: created.runId,
+        turnId: conversationMessageTurnId(bound.entity, assistantMessageId),
         assistantMessageId,
         startedAt
       })
@@ -624,6 +634,13 @@ export class SendConversationMessageUseCase {
           throw new Error('Conversation run event sequence gap')
         }
         lastSequence = event.sequence
+        if (
+          event.type === 'run.failed' ||
+          event.type === 'run.cancelled'
+        ) {
+          terminalEvent = event
+          break
+        }
         const projected = projectConversationRunEvent(
           turnProjection,
           event,
@@ -631,12 +648,12 @@ export class SendConversationMessageUseCase {
         )
         const timelineEvent = toAssistantRunEvent(event, citationPolicy)
         if (projected && timelineEvent) {
-          await this.dependencies.timeline?.appendAndProject(
+          turnProjection = await this.appendProjection(
+            bound.entity.id,
             timelineEvent,
             projected
           )
-          turnProjection = projected
-          assistantContent = projected.answer
+          assistantContent = turnProjection.answer
           this.emitUpdate(
             input.onUpdate,
             projectAssistantContent(
@@ -647,11 +664,7 @@ export class SendConversationMessageUseCase {
             )
           )
         }
-        if (
-          event.type === 'run.completed' ||
-          event.type === 'run.failed' ||
-          event.type === 'run.cancelled'
-        ) {
+        if (event.type === 'run.completed') {
           terminalEvent = event
           break
         }
@@ -661,13 +674,27 @@ export class SendConversationMessageUseCase {
         }
       }
     } catch (error) {
+      turnProjection = await this.appendLocalStreamFailureProjection({
+        session: bound.entity,
+        assistantMessageId,
+        projection: turnProjection,
+        runId: created.runId,
+        startedAt,
+        error,
+        citationPolicy,
+        onUpdate: input.onUpdate
+      })
+      assistantContent = turnProjection.answer
+      const failureError =
+        errorFromFailedProjection(turnProjection) ?? error
       const failed = await this.finishFailedTurn(
         bound.entity,
         assistantMessageId,
         assistantContent,
-        error,
+        failureError,
         created.runId,
-        input.onUpdate
+        input.onUpdate,
+        turnProjection
       )
       await this.recordLocalFailureMetric(
         modelProfileId,
@@ -689,13 +716,17 @@ export class SendConversationMessageUseCase {
       )
     }
     if (!terminalEvent) {
+      const failureError =
+        errorFromFailedProjection(turnProjection) ??
+        new Error('Conversation run ended without a terminal event')
       const failed = await this.finishFailedTurn(
         bound.entity,
         assistantMessageId,
         assistantContent,
-        new Error('Conversation run ended without a terminal event'),
+        failureError,
         created.runId,
-        input.onUpdate
+        input.onUpdate,
+        turnProjection.status === 'failed' ? turnProjection : undefined
       )
       await this.recordLocalFailureMetric(
         modelProfileId,
@@ -715,6 +746,7 @@ export class SendConversationMessageUseCase {
         primaryStartedAt: startedAt,
         primaryTerminalEvent: terminalEvent,
         primaryContent: assistantContent,
+        primaryProjection: turnProjection,
         session: bound.entity,
         assistantMessageId,
         runContext,
@@ -722,10 +754,33 @@ export class SendConversationMessageUseCase {
         metricContext: input.metricContext
       })
       if (fallback) return fallback
+      const terminalProjection = projectConversationRunEvent(
+        turnProjection,
+        terminalEvent,
+        citationPolicy
+      )
+      const failedProjection = terminalProjection
+        ? failedTurnProjectionForTerminalEvent(terminalEvent, terminalProjection)
+        : undefined
+      const timelineEvent = toAssistantRunEvent(
+        terminalEvent,
+        citationPolicy
+      )
+      if (failedProjection && timelineEvent) {
+        await this.appendProjection(
+          bound.entity.id,
+          timelineEvent,
+          failedProjection
+        )
+      }
+      const failedContent = failedTurnContentForTerminalEvent(
+        terminalEvent,
+        assistantContent
+      )
       const failed = await this.finishFailedTurn(
         bound.entity,
         assistantMessageId,
-        assistantContent,
+        failedContent,
         new Error(
           terminalEvent.data.message ??
             (terminalEvent.type === 'run.cancelled'
@@ -733,7 +788,8 @@ export class SendConversationMessageUseCase {
               : 'Conversation run failed')
         ),
         created.runId,
-        input.onUpdate
+        input.onUpdate,
+        failedProjection
       )
       await this.recordMetric(
         modelProfileId,
@@ -778,6 +834,14 @@ export class SendConversationMessageUseCase {
       )
       return failed
     }
+    turnProjection = await this.appendLocalCompletionAnswerProjection({
+      session: bound.entity,
+      assistantMessageId,
+      projection: turnProjection,
+      runId: created.runId,
+      content: completedContent,
+      onUpdate: input.onUpdate
+    })
     const completed = await this.dependencies.sessions.finishTurn({
       sessionId: current.id,
       assistantMessageId,
@@ -813,6 +877,42 @@ export class SendConversationMessageUseCase {
       input.metricContext
     )
     return completed.entity
+  }
+
+  private async appendLocalCompletionAnswerProjection(input: {
+    session: Revisioned<ChatSessionRecord>
+    assistantMessageId: string
+    projection: AssistantTurnProjection
+    runId: string
+    content: string
+    onUpdate?: (session: Revisioned<ChatSessionRecord>) => void
+  }): Promise<AssistantTurnProjection> {
+    if (input.projection.answer === input.content) return input.projection
+    const sequence = input.projection.lastSequence + 1
+    const timestamp = this.now()
+    const projection: AssistantTurnProjection = {
+      ...input.projection,
+      answer: input.content,
+      lastSequence: sequence
+    }
+    await this.appendProjection(input.session.id, {
+      id: `local-completion-answer-${input.runId}-${sequence}`,
+      runId: input.runId,
+      sequence,
+      type: 'answer.delta',
+      timestamp,
+      data: { delta: input.content }
+    }, projection)
+    this.emitUpdate(
+      input.onUpdate,
+      projectAssistantContent(
+        input.session,
+        input.assistantMessageId,
+        input.content,
+        projection
+      )
+    )
+    return projection
   }
 
   private async finishLocalCommandTurn(input: {
@@ -892,6 +992,10 @@ export class SendConversationMessageUseCase {
     const startedAt = this.now()
     let projection = createAssistantTurnProjection({
       runId: created.runId,
+      turnId: conversationMessageTurnId(
+        bound.entity,
+        input.assistantMessageId
+      ),
       assistantMessageId: input.assistantMessageId,
       startedAt
     })
@@ -916,7 +1020,8 @@ export class SendConversationMessageUseCase {
       const next = projectConversationRunEvent(projection, event)
       const timelineEvent = toAssistantRunEvent(event)
       if (next && timelineEvent) {
-        await this.dependencies.timeline?.appendAndProject(
+        await this.appendProjection(
+          input.session.id,
           timelineEvent,
           next
         )
@@ -953,6 +1058,7 @@ export class SendConversationMessageUseCase {
     primaryStartedAt: number
     primaryTerminalEvent: AiRunEvent
     primaryContent: string
+    primaryProjection: AssistantTurnProjection
     session: Revisioned<ChatSessionRecord>
     assistantMessageId: string
     runContext: ConversationContext
@@ -993,20 +1099,19 @@ export class SendConversationMessageUseCase {
     } catch {
       return undefined
     }
-    const rebound = await this.dependencies.sessions.rebindTurnRun({
+    const retrying = await this.dependencies.sessions.markTurnRetrying({
       sessionId: input.session.id,
       assistantMessageId: input.assistantMessageId,
-      previousRunId: input.primaryRunId,
-      runId: created.runId,
+      runId: input.primaryRunId,
       modelName: fallbackModel.displayName ?? fallbackModel.modelId,
       expectedRevision: input.session.revision,
       updatedAt: this.now()
     })
-    if (rebound.status === 'conflict') {
+    if (retrying.status === 'conflict') {
       await this.dependencies.gateway.cancelRun(created.runId).catch(() => undefined)
       throw new Error('Conversation revision conflict')
     }
-    this.emitUpdate(input.onUpdate, rebound.entity)
+    this.emitUpdate(input.onUpdate, retrying.entity)
     await this.recordMetric(
       input.primaryModelProfileId,
       input.session,
@@ -1016,13 +1121,32 @@ export class SendConversationMessageUseCase {
       input.metricContext
     )
 
-    let assistantContent = ''
-    let turnProjection: AssistantTurnProjection =
-      createAssistantTurnProjection({
-        runId: created.runId,
-        assistantMessageId: input.assistantMessageId,
-        startedAt: fallbackStartedAt
-      })
+    let assistantContent = input.primaryProjection.answer
+    const retryEvent: AiRunEvent = {
+      id: `${input.primaryRunId}:retry:${created.runId}`,
+      runId: input.primaryRunId,
+      sequence: input.primaryProjection.lastSequence + 1,
+      type: 'run.retrying',
+      timestamp: new Date(fallbackStartedAt).toISOString(),
+      data: {
+        retryCount: 1,
+        errorCode: input.primaryTerminalEvent.data.errorCode,
+        retryAfterMs: 0
+      }
+    }
+    let turnProjection =
+      projectConversationRunEvent(
+        input.primaryProjection,
+        retryEvent
+      ) ?? input.primaryProjection
+    const retryTimelineEvent = toAssistantRunEvent(retryEvent)
+    if (retryTimelineEvent) {
+      await this.appendProjection(
+        input.session.id,
+        retryTimelineEvent,
+        turnProjection
+      )
+    }
     const fallbackKnowledgeContext =
       input.runContext.processing?.knowledgeContext
     const citationPolicy = fallbackKnowledgeContext
@@ -1048,23 +1172,32 @@ export class SendConversationMessageUseCase {
           throw new Error('Conversation run event sequence gap')
         }
         lastSequence = event.sequence
+        const logicalEvent: AiRunEvent = {
+          ...event,
+          id: `${input.primaryRunId}:fallback:${event.id}`,
+          runId: input.primaryRunId,
+          sequence: turnProjection.lastSequence + 1
+        }
         const projected = projectConversationRunEvent(
           turnProjection,
-          event,
+          logicalEvent,
           citationPolicy
         )
-        const timelineEvent = toAssistantRunEvent(event, citationPolicy)
+        const timelineEvent = toAssistantRunEvent(
+          logicalEvent,
+          citationPolicy
+        )
         if (projected && timelineEvent) {
-          await this.dependencies.timeline?.appendAndProject(
+          turnProjection = await this.appendProjection(
+            input.session.id,
             timelineEvent,
             projected
           )
-          turnProjection = projected
-          assistantContent = projected.answer
+          assistantContent = turnProjection.answer
           this.emitUpdate(
             input.onUpdate,
             projectAssistantContent(
-              rebound.entity,
+              retrying.entity,
               input.assistantMessageId,
               assistantContent,
               turnProjection
@@ -1085,17 +1218,31 @@ export class SendConversationMessageUseCase {
         }
       }
     } catch (error) {
+      turnProjection = await this.appendLocalStreamFailureProjection({
+        session: retrying.entity,
+        assistantMessageId: input.assistantMessageId,
+        projection: turnProjection,
+        runId: input.primaryRunId,
+        startedAt: fallbackStartedAt,
+        error,
+        citationPolicy,
+        onUpdate: input.onUpdate
+      })
+      assistantContent = turnProjection.answer
+      const failureError =
+        errorFromFailedProjection(turnProjection) ?? error
       const failed = await this.finishFailedTurn(
-        rebound.entity,
+        retrying.entity,
         input.assistantMessageId,
         assistantContent,
-        error,
-        created.runId,
-        input.onUpdate
+        failureError,
+        input.primaryRunId,
+        input.onUpdate,
+        turnProjection
       )
       await this.recordLocalFailureMetric(
         selection.profile.id,
-        rebound.entity,
+        retrying.entity,
         created.runId,
         fallbackStartedAt,
         input.metricContext
@@ -1104,17 +1251,17 @@ export class SendConversationMessageUseCase {
     }
     if (suspensionEvent) {
       return this.finishSuspendedTurn(
-        rebound.entity,
+        retrying.entity,
         input.assistantMessageId,
         assistantContent,
         turnProjection,
-        created.runId,
+        input.primaryRunId,
         input.onUpdate
       )
     }
     if (!terminalEvent || terminalEvent.type !== 'run.completed') {
       const failed = await this.finishFailedTurn(
-        rebound.entity,
+        retrying.entity,
         input.assistantMessageId,
         assistantContent,
         new Error(
@@ -1123,13 +1270,14 @@ export class SendConversationMessageUseCase {
               ? 'Conversation run cancelled'
               : 'Conversation run failed')
         ),
-        created.runId,
-        input.onUpdate
+        input.primaryRunId,
+        input.onUpdate,
+        terminalEvent ? turnProjection : undefined
       )
       if (terminalEvent) {
         await this.recordMetric(
           selection.profile.id,
-          rebound.entity,
+          retrying.entity,
           created.runId,
           fallbackStartedAt,
           terminalEvent,
@@ -1160,16 +1308,16 @@ export class SendConversationMessageUseCase {
       completedRunAnswer(responseLocale)
     if (!completedContent.trim()) {
       const failed = await this.finishFailedTurn(
-        rebound.entity,
+        retrying.entity,
         input.assistantMessageId,
         assistantContent,
         new Error('Conversation run completed without assistant content'),
-        created.runId,
+        input.primaryRunId,
         input.onUpdate
       )
       await this.recordMetric(
         selection.profile.id,
-        rebound.entity,
+        retrying.entity,
         created.runId,
         fallbackStartedAt,
         terminalEvent,
@@ -1178,13 +1326,13 @@ export class SendConversationMessageUseCase {
       return failed
     }
     const completed = await this.dependencies.sessions.finishTurn({
-      sessionId: rebound.entity.id,
+      sessionId: retrying.entity.id,
       assistantMessageId: input.assistantMessageId,
-      runId: created.runId,
+      runId: input.primaryRunId,
       status: 'completed',
       content: completedContent,
       ...(source ? { source } : {}),
-      expectedRevision: rebound.entity.revision,
+      expectedRevision: retrying.entity.revision,
       updatedAt: this.now()
     })
     if (completed.status === 'conflict') {
@@ -1194,7 +1342,7 @@ export class SendConversationMessageUseCase {
     this.scheduleCompletedTurn({
       conversationId: input.runContext.conversationId,
       assistantMessageId: input.assistantMessageId,
-      sourceRunId: created.runId,
+      sourceRunId: input.primaryRunId,
       modelProfileId: selection.profile.id,
       responseLocale,
       userObjective,
@@ -1205,7 +1353,7 @@ export class SendConversationMessageUseCase {
     })
     await this.recordMetric(
       selection.profile.id,
-      rebound.entity,
+      retrying.entity,
       created.runId,
       fallbackStartedAt,
       terminalEvent,
@@ -1346,12 +1494,6 @@ export class SendConversationMessageUseCase {
     if (!this.dependencies.spaceContext) {
       throw new Error('Space conversation context is unavailable')
     }
-    if (
-      scope.kind === 'all_workspaces' &&
-      !this.dependencies.spaceContext.assembleScope
-    ) {
-      throw new Error('All-workspace conversation context is unavailable')
-    }
     if (scope.kind === 'workspace') {
       if (
         session.kind !== 'space' ||
@@ -1380,23 +1522,7 @@ export class SendConversationMessageUseCase {
       return undefined
     }
     if (!this.dependencies.spaceContext) return undefined
-    if (scope.kind === 'all_workspaces') {
-      if (this.dependencies.spaceContext.assembleSnapshot) {
-        return this.dependencies.spaceContext.assembleSnapshot(scope, query)
-      }
-      if (!this.dependencies.spaceContext.assembleScope) {
-        throw new Error('All-workspace conversation context is unavailable')
-      }
-      return legacyKnowledgeContext(
-        await this.dependencies.spaceContext.assembleScope(scope, query)
-      )
-    }
-    if (this.dependencies.spaceContext.assembleSnapshot) {
-      return this.dependencies.spaceContext.assembleSnapshot(scope, query)
-    }
-    return legacyKnowledgeContext(
-      await this.dependencies.spaceContext.assemble(scope.workspaceId, query)
-    )
+    return this.dependencies.spaceContext.assembleSnapshot(scope, query)
   }
 
   private async assertFolderAvailable(
@@ -1497,13 +1623,81 @@ export class SendConversationMessageUseCase {
     )
   }
 
+  private async appendLocalStreamFailureProjection(input: {
+    session: Revisioned<ChatSessionRecord>
+    assistantMessageId: string
+    projection: AssistantTurnProjection
+    runId: string
+    startedAt: number
+    error: unknown
+    citationPolicy?: {
+      allowedKnowledgeReferences: ReadonlySet<string>
+    }
+    onUpdate?: (session: Revisioned<ChatSessionRecord>) => void
+  }): Promise<AssistantTurnProjection> {
+    const timestamp = this.now()
+    const current = await this.currentProjectionForLocalFailure(input)
+    if (current.status === 'failed') return current
+    const sequence = current.lastSequence + 1
+    const failure: AiRunEvent = {
+      id: `local-stream-failure-${input.runId}-${sequence}`,
+      runId: input.runId,
+      sequence,
+      type: 'run.failed',
+      timestamp: new Date(timestamp).toISOString(),
+      data: {
+        message: toSafeConversationError(input.error),
+        errorCode: 'stream_error',
+        durationMs: Math.max(timestamp - input.startedAt, 0)
+      }
+    }
+    const projection = projectConversationRunEvent(
+      current,
+      failure,
+      input.citationPolicy
+    )
+    const timelineEvent = toAssistantRunEvent(failure, input.citationPolicy)
+    if (!projection || !timelineEvent) return current
+    await this.appendProjection(input.session.id, timelineEvent, projection)
+    this.emitUpdate(
+      input.onUpdate,
+      projectAssistantContent(
+        input.session,
+        input.assistantMessageId,
+        projection.answer,
+        projection
+      )
+    )
+    return projection
+  }
+
+  private async currentProjectionForLocalFailure(input: {
+    assistantMessageId: string
+    projection: AssistantTurnProjection
+    runId: string
+  }): Promise<AssistantTurnProjection> {
+    const current = await this.dependencies.timeline
+      ?.getSnapshot?.(input.runId)
+      .catch(() => undefined)
+    if (
+      !current ||
+      current.runId !== input.runId ||
+      current.assistantMessageId !== input.assistantMessageId ||
+      current.lastSequence < input.projection.lastSequence
+    ) {
+      return input.projection
+    }
+    return current
+  }
+
   private async finishFailedTurn(
     session: Revisioned<ChatSessionRecord>,
     assistantMessageId: string,
     content: string,
     error: unknown,
     runId?: string,
-    onUpdate?: (session: Revisioned<ChatSessionRecord>) => void
+    onUpdate?: (session: Revisioned<ChatSessionRecord>) => void,
+    execution?: AssistantTurnProjection
   ): Promise<Revisioned<ChatSessionRecord>> {
     const failed = await this.dependencies.sessions.finishTurn({
       sessionId: session.id,
@@ -1518,8 +1712,16 @@ export class SendConversationMessageUseCase {
     if (failed.status === 'conflict') {
       throw new Error('Conversation revision conflict')
     }
-    this.emitUpdate(onUpdate, failed.entity)
-    return failed.entity
+    const projected = execution
+      ? projectAssistantContent(
+          failed.entity,
+          assistantMessageId,
+          content,
+          execution
+        )
+      : failed.entity
+    this.emitUpdate(onUpdate, projected)
+    return projected
   }
 
   private async finishSuspendedTurn(
@@ -1562,6 +1764,62 @@ export class SendConversationMessageUseCase {
       // A closed Renderer must not interrupt the persisted conversation turn.
     }
   }
+
+  private async appendProjection(
+    sessionId: string,
+    event: AssistantRunEvent,
+    projection: AssistantTurnProjection
+  ): Promise<AssistantTurnProjection> {
+    if (!this.dependencies.timeline) return projection
+    let appended = false
+    try {
+      appended = await this.dependencies.timeline.appendAndProject(
+        event,
+        projection
+      )
+    } catch (error) {
+      const current = await this.projectionForTimelineConflict(
+        event,
+        projection,
+        error
+      )
+      if (current) return current
+      throw error
+    }
+    if (!appended) return projection
+    try {
+      await this.dependencies.onProjectionUpdated?.({
+        sessionId,
+        turnId: projection.turnId,
+        projection
+      })
+    } catch {
+      // Renderer delivery is best-effort after the projection is durable.
+    }
+    return projection
+  }
+
+  private async projectionForTimelineConflict(
+    event: AssistantRunEvent,
+    projection: AssistantTurnProjection,
+    error: unknown
+  ): Promise<AssistantTurnProjection | undefined> {
+    if (!isAssistantRunEventConflict(error) || !this.dependencies.timeline) {
+      return undefined
+    }
+    const current = await this.dependencies.timeline
+      .getSnapshot(event.runId)
+      .catch(() => undefined)
+    if (
+      !current ||
+      current.runId !== event.runId ||
+      current.assistantMessageId !== projection.assistantMessageId ||
+      current.lastSequence < event.sequence
+    ) {
+      return undefined
+    }
+    return current
+  }
 }
 
 function isConversationRunSuspension(event: AiRunEvent): boolean {
@@ -1570,6 +1828,35 @@ function isConversationRunSuspension(event: AiRunEvent): boolean {
     event.type === 'run.paused' ||
     event.type === 'run.recovery_blocked'
   )
+}
+
+function failedTurnContentForTerminalEvent(
+  event: AiRunEvent,
+  content: string
+): string {
+  if (
+    event.type === 'run.failed' &&
+    event.data.errorCode === 'manifest_root_violation'
+  ) {
+    return ''
+  }
+  return content
+}
+
+function failedTurnProjectionForTerminalEvent(
+  event: AiRunEvent,
+  projection: AssistantTurnProjection
+): AssistantTurnProjection {
+  if (
+    event.type === 'run.failed' &&
+    event.data.errorCode === 'manifest_root_violation'
+  ) {
+    return {
+      ...projection,
+      answer: ''
+    }
+  }
+  return projection
 }
 
 function projectAssistantContent(
@@ -1586,6 +1873,17 @@ function projectAssistantContent(
         : message
     )
   }
+}
+
+function conversationMessageTurnId(
+  session: Revisioned<ChatSessionRecord>,
+  messageId: string
+): string {
+  const turnId = session.messages.find(({ id }) => id === messageId)?.turnId
+  if (!turnId) {
+    throw new Error('Conversation assistant message is not bound to a Turn')
+  }
+  return turnId
 }
 
 function conversationTurnHistory(
@@ -1753,18 +2051,6 @@ function completedRunAnswer(locale: 'zh-CN' | 'en' | 'ja'): string {
   return '任务已完成，但模型没有返回最终总结。请查看执行详情确认处理过程。'
 }
 
-function legacyKnowledgeContext(
-  content: string | undefined
-): NonNullable<ConversationProcessingSnapshot['knowledgeContext']> | undefined {
-  return content
-    ? {
-        content,
-        allowedReferenceIds: [],
-        insufficientKnowledge: false
-      }
-    : undefined
-}
-
 function isSameConversationIdentity(
   existing: ChatSessionRecord,
   candidate: ChatSessionRecord
@@ -1796,6 +2082,21 @@ function toSafeConversationError(error: unknown): string {
     return fallback
   }
   return message
+}
+
+function errorFromFailedProjection(
+  projection: AssistantTurnProjection
+): Error | undefined {
+  return projection.status === 'failed' && projection.error
+    ? new Error(projection.error)
+    : undefined
+}
+
+function isAssistantRunEventConflict(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message === 'Assistant Run event conflicts with persisted fact'
+  )
 }
 
 function isAutomaticProviderFallbackFailure(event: AiRunEvent): boolean {

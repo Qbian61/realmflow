@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "packageId": "realmflow.builtin.pdf",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "name": "PDF",
   "description": "Revision-safe local PDF reading, OCR, and page operations.",
   "publisher": {

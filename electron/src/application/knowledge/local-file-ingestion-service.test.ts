@@ -109,6 +109,38 @@ describe('LocalFileIngestionService', () => {
     )
   })
 
+  it('uses rootPath when the workspace path is a logical route', async () => {
+    const service = createService(undefined, undefined, undefined, {
+      path: '/spaces/space-1',
+      rootPath: workspacePath
+    })
+
+    await expect(
+      service.ingest({
+        workspaceId: 'space-1',
+        selectionId: 'selection-1',
+        filePaths: ['architecture.md'],
+        storageMode: 'managed_copy',
+        idempotencyKey: 'ingest-root-path'
+      })
+    ).resolves.toMatchObject([
+      { id: 'source-1', status: 'registered', name: 'architecture.md' }
+    ])
+    await expect(
+      readFile(
+        join(
+          workspacePath,
+          '.realmflow',
+          'knowledge',
+          'files',
+          'source-1',
+          'architecture.md'
+        ),
+        'utf8'
+      )
+    ).resolves.toBe('# Architecture')
+  })
+
   it('persists an external reference without copying the original file', async () => {
     const service = createService()
 
@@ -503,12 +535,16 @@ describe('LocalFileIngestionService', () => {
     resolveSelectedFile = vi.fn(async () => selectedPath),
     openSessionFiles = vi.fn(),
     readBytes: (path: string) => Promise<Uint8Array> = async (path) =>
-      readFile(path)
+      readFile(path),
+    workspaceLocation: { path: string; rootPath?: string } = {
+      path: workspacePath,
+      rootPath: workspacePath
+    }
   ): LocalFileIngestionService {
     const workspaces = {
       get: vi.fn(async () => ({
         id: 'space-1',
-        path: workspacePath,
+        ...workspaceLocation,
         label: 'Space',
         description: '',
         sortOrder: 0,
@@ -519,7 +555,7 @@ describe('LocalFileIngestionService', () => {
       list: vi.fn(async () => [
         {
           id: 'space-1',
-          path: workspacePath,
+          ...workspaceLocation,
           label: 'Space',
           description: '',
           sortOrder: 0,

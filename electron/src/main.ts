@@ -1,7 +1,5 @@
-import { constants } from 'node:fs'
+import { constants, existsSync } from 'node:fs'
 import { createHash, randomUUID } from 'node:crypto'
-import { createApprovalProfileSnapshot } from '../../domain/approval-profile'
-import { execFile } from 'node:child_process'
 import { access, readFile, realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, delimiter, dirname, join } from 'node:path'
@@ -9,29 +7,36 @@ import { fileURLToPath } from 'node:url'
 import {
   app,
   BrowserWindow,
-  desktopCapturer,
   dialog,
   ipcMain,
   protocol,
   shell,
-  systemPreferences,
 } from 'electron'
 import type { ExtensionPackagePlatform } from '../../domain/extension-package'
-import type { RunCheckpoint } from '../../domain/agent-run-recovery'
 import type { AgentRuntimeRun } from '../../domain/agent-runtime'
+import type { DshRunManifest } from '../../domain/dsh-run-manifest'
 import type { KnowledgeSource } from '../../domain/knowledge-source'
 import type { VectorIndexProfile } from '../../domain/vector-index-profile'
 import { resolveAppIconPath } from './app-icon'
 import { registerMainIpc } from './ipc/register-main-ipc'
 import { NativeOverlayManager } from './overlay/native-overlay-manager'
-import { SqlitePersistenceService } from './persistence/sqlite-persistence-service'
 import { IPC_EVENT_CHANNELS } from '../../shared/ipc-contract'
-import { SidecarManager } from './sidecar/manager'
+import { installProcessOutputErrorGuards } from './process/process-output-error-guard'
 import { registerTerminationSignals } from './process/termination-signals'
 import {
   createNodeQdrantProcessPort,
   QdrantProcessManager,
 } from './qdrant/qdrant-process-manager'
+import type { DshAiRunGateway } from './ai-run/infrastructure/dsh-ai-run-gateway'
+import { DshHistorySync } from './application/dsh/dsh-history-sync'
+import {
+  createDshRuntimeBootstrap,
+} from './bootstrap/dsh-runtime-bootstrap'
+import {
+  createDshControlPlaneBootstrap,
+  DSH_RUNTIME_INSTANCE_ID,
+  type DshControlPlaneBootstrap,
+} from './bootstrap/dsh-control-plane-bootstrap'
 import { QdrantHttpClient } from './qdrant/qdrant-client'
 import { QdrantCollectionManager } from './qdrant/qdrant-collection-manager'
 import {
@@ -39,7 +44,6 @@ import {
   QdrantKnowledgeSearchAdapter,
 } from './qdrant/qdrant-search-adapter'
 import { QdrantKnowledgeIndexAdapter } from './qdrant/qdrant-index-adapter'
-import { prepareQdrantIndexStorageUpgrade } from './qdrant/qdrant-storage-migration'
 import { TerminalManager } from './terminal/terminal-manager'
 import { CodeSnippetService } from './code-snippet/code-snippet-service'
 import { WebWorkbenchManager } from './workbench/web-workbench'
@@ -52,7 +56,6 @@ import {
 } from './ai-run/application/generate-stage-artifact'
 import { CommitFormalArtifactUseCase } from './ai-run/application/commit-formal-artifact'
 import { RendererRunEventPublisher } from './ai-run/infrastructure/renderer-run-event-publisher'
-import { WorkspaceStageContextRepository } from './ai-run/infrastructure/workspace-run-repositories'
 import { AssembledNodeContextRepository } from './ai-run/infrastructure/assembled-node-context-repository'
 import { SqliteArtifactRepository } from './ai-run/infrastructure/sqlite-artifact-repository'
 import {
@@ -79,10 +82,7 @@ import { SqliteBackupSnapshot } from './infrastructure/sqlite/sqlite-backup-snap
 import { ProviderDiscoveryService } from './models/provider-discovery'
 import { SqliteToolEventStore } from './infrastructure/sqlite/tool-event-store'
 import { SqliteToolProjectionStore } from './infrastructure/sqlite/tool-projection-store'
-import { SqliteToolOutboxRepository } from './infrastructure/sqlite/tool-outbox-repository'
-import { SqliteToolSnapshotStore } from './infrastructure/sqlite/tool-snapshot-store'
 import { SqliteMcpServerRepository } from './infrastructure/sqlite/mcp-server-repository'
-import { SqliteComputerAuthorization } from './infrastructure/sqlite/computer-authorization'
 import { SqliteRepositoryIngestionStore } from './infrastructure/sqlite/repository-ingestion-store'
 import { SqliteVectorIndexRepository } from './infrastructure/sqlite/vector-index-repository'
 import { SqliteRequirementMemoryRepository } from './infrastructure/sqlite/requirement-memory-repository'
@@ -96,18 +96,9 @@ import { SqliteAgentRuntimeBudgetRepository } from './infrastructure/sqlite/agen
 import { SqliteAgentDelegationRepository } from './infrastructure/sqlite/agent-delegation-repository'
 import { RuntimeDelegationService } from './application/agent-runtime/runtime-delegation-service'
 import { ReconcileRuntimeDelegations } from './application/agent-runtime/runtime-delegation-recovery'
-import { RuntimeRunResumer } from './application/agent-runtime/runtime-run-resumer'
-import { RuntimeSensitiveControls } from './application/agent-runtime/runtime-sensitive-controls'
-import {
-  GatewayRuntimeService,
-  type GatewayRuntimeHealth
-} from './application/agent-runtime/gateway-runtime-service'
-import { AutomationRuntimeService } from './application/agent-runtime/automation-runtime-service'
 import { MediaProviderRuntime } from './application/media/media-provider-runtime'
 import { RuntimeStateService } from './application/agent-runtime/runtime-state-service'
 import { AgentRuntimeOrchestrator } from './application/agent-runtime/agent-runtime-orchestrator'
-import { createRuntimeToolBindings } from './application/agent-runtime/runtime-tool-bindings'
-import { SqliteAgentRunCheckpointRepository } from './infrastructure/sqlite/agent-run-checkpoint-repository'
 import { SqliteRuntimeGovernanceRepository } from './infrastructure/sqlite/runtime-governance-repository'
 import { SqliteAssistantRunEventStore } from './infrastructure/sqlite/assistant-run-event-store'
 import { SqliteCapabilityCatalogRepository } from './infrastructure/sqlite/capability-catalog-repository'
@@ -118,6 +109,13 @@ import { SqliteFollowUpSuggestionRepository } from './infrastructure/sqlite/foll
 import { QueryModelStatisticsUseCase } from './application/analytics/query-model-statistics'
 import { QueryProductAnalyticsUseCase } from './application/analytics/query-product-analytics'
 import { RuntimeGovernanceService } from './application/analytics/runtime-governance-service'
+import { LocalEmbeddingService } from '../../dsh-plugins/realmflow-runtime/src/embedding/local-embedding-service'
+import {
+  createDshLocalEmbeddingWorkerFactory
+} from '../../dsh-plugins/realmflow-runtime/src/embedding/local-embedding-process-worker'
+import {
+  createLocalDshEmbeddingProfile
+} from '../../dsh-plugins/realmflow-runtime/src/embedding/local-embedding-worker'
 import { BuiltinRuntimeEvaluationRunner } from './application/analytics/runtime-evaluation-runner'
 import { OutboundCallAuditService } from './application/network/outbound-call-audit'
 import { AppSupportService } from './application/support/app-support-service'
@@ -146,6 +144,7 @@ import {
   ImageOcrContentExtractor,
 } from './application/content-extraction/extractors/fixed-layout-image-extractor'
 import {
+  LegacyOfficeContentExtractor,
   OfficeConversionContentExtractor,
   OfficeSanitizedContentExtractor,
   type ModernOfficeContentPort,
@@ -170,6 +169,7 @@ import { LegacyOfficeImportService } from './application/files/legacy-office-imp
 import { LegacyOfficeRuntimeCapabilityProvider } from './application/files/legacy-office-runtime-capability'
 import { OfficeSafeCopyService } from './application/files/office-safe-copy-service'
 import { OfficeReadOnlySessionService } from './application/files/office-read-only-session-service'
+import { PrivatePythonWorkerClient } from './application/files/private-python-worker-client'
 import { ArchiveAdapter } from './application/files/archive-adapter'
 import { ArchiveService } from './application/files/archive-service'
 import { NodeArchiveStorage } from './application/files/node-archive-storage'
@@ -189,10 +189,7 @@ import { SqliteWorkbenchSiteRepository } from './infrastructure/sqlite/workbench
 import { ManageWorkbenchMemos } from './application/workbench-hub/manage-workbench-memos'
 import { SqliteWorkbenchMemoRepository } from './infrastructure/sqlite/workbench-memo-repository'
 import { SystemResourceSampler } from './workbench-hub/system-resource-sampler'
-import {
-  ConnectorService,
-  type SkillConnectorBinding,
-} from './application/connectors/connector-service'
+import { ConnectorService } from './application/connectors/connector-service'
 import { ScheduleService } from './application/schedules/schedule-service'
 import { ModelSkillExecutionRuntime } from './application/schedules/model-skill-execution-runtime'
 import { CronSchedulePlanner } from './application/schedules/cron-schedule-planner'
@@ -210,21 +207,13 @@ import { CapabilityDraftWorkspace } from './application/capabilities/capability-
 import { CapabilitySpecCompiler } from './application/capabilities/capability-spec-compiler'
 import { DeterministicCapabilityContractTestRunner } from './application/capabilities/deterministic-capability-contract-test-runner'
 import { CapabilityLifecycleService } from './application/capabilities/capability-lifecycle-service'
-import { LegacyCapabilityProjectionService } from './application/capabilities/legacy-capability-projection-service'
-import { CapabilityScopeResolver } from './application/capabilities/capability-scope-resolver'
-import {
-  assertCapabilityDependencyGraph,
-  type CapabilityScope,
-} from '../../domain/capability'
+import { assertCapabilityDependencyGraph } from '../../domain/capability'
 import { BuiltinCatalogLoader } from './application/tools/builtin-catalog-loader'
 import { BuiltinCatalogSyncService } from './application/tools/builtin-catalog-sync-service'
 import { ToolCatalogService } from './application/tools/tool-catalog-service'
 import {
   PluginContributionRegistry,
-  PluginHookDispatcher,
 } from './application/plugins/plugin-contribution-registry'
-import { normalizeToolDefinitionReference } from '../../domain/tool-definition'
-import type { JsonObject } from '../../domain/tool-protocol-validation'
 import { ToolPolicyConfigurationService } from './application/tools/tool-policy-configuration-service'
 import { RuntimeFilteredToolProjectionStore } from './application/tools/runtime-filtered-tool-projection-store'
 import {
@@ -238,66 +227,19 @@ import { SdkMcpClientFactory } from './application/tools/sdk-mcp-client-factory'
 import { McpDiscoveryService } from './application/tools/mcp-discovery-service'
 import { McpCatalogPublisher } from './application/tools/mcp-catalog-publisher'
 import { McpServerService } from './application/tools/mcp-server-service'
-import { TemporaryToolArtifactStore } from './application/tools/temporary-tool-artifact-store'
-import { UnavailableNativeComputerHost } from './application/tools/native-computer-host'
-import { MacOsNativeComputerHost } from './application/tools/macos-native-computer-host'
-import { ElectronMacOsComputerDriver } from './application/tools/electron-macos-computer-driver'
-import { NodeLocalProcessService } from './application/tools/node-local-process-service'
-import { createBuiltinToolAdapter } from './application/tools/builtin-tool-runtime'
 import { WebProviderConfigurationService } from './application/web/web-provider-configuration-service'
 import { SqliteWebProviderRepository } from './infrastructure/sqlite/web-provider-repository'
-import { BrowserRuntimeService } from './application/browser/browser-runtime-service'
-import { ElectronBrowserDriver } from './application/browser/electron-browser-driver'
-import { SqliteBrowserSessionRepository } from './infrastructure/sqlite/browser-session-repository'
-import { RuntimeResourceLeaseService } from './application/tools/runtime-resource-lease-service'
-import { SqliteRuntimeResourceLeaseRepository } from './infrastructure/sqlite/runtime-resource-lease-repository'
 import { ConversationMemoryService } from './application/conversation/conversation-memory-service'
 import { SqliteConversationContextRepository } from './infrastructure/sqlite/conversation-context-repository'
 import { SqliteSkillRegistryRepository } from './infrastructure/sqlite/skill-registry-repository'
 import { SkillRegistryService } from './application/skills/skill-registry-service'
 import { SkillSourceScanner } from './application/skills/skill-source-scanner'
-import { SandboxToolAdapter } from './application/tools/sandbox-tool-adapter'
-import { McpToolAdapter } from './application/tools/mcp-tool-adapter'
-import { ComputerToolAdapter } from './application/tools/computer-tool-adapter'
 import { FilesystemGitRepositoryResolver } from './application/tools/git-repository-resolver'
-import { ConnectorToolAdapter } from './application/tools/connector-tool-adapter'
-import { ToolAdapterRegistry } from './application/tools/tool-adapter-registry'
-import { ToolOutboxDispatcher } from './application/tools/tool-outbox-dispatcher'
-import { AgentRuntimeToolResultGateway } from './application/tools/agent-runtime-tool-result-gateway'
-import {
-  ToolExecutionApplicationService,
-  type ToolExecutionCommand,
-} from './application/tools/tool-execution-application-service'
-import { RunToolPolicyResolver } from './application/tools/run-tool-policy-resolver'
-import { ToolPermissionDecisionService } from './application/tools/tool-permission-decision-service'
 import { ApprovalObservabilityService } from './application/tools/approval-observability-service'
 import { SqliteApprovalDefaultRepository } from './infrastructure/sqlite/approval-default-repository'
-import { EncryptedPendingToolInvocationCheckpointStore } from './application/tools/pending-tool-invocation-checkpoint-store'
-import {
-  resolveExecutionScopeRoots,
-  resolveToolBoundScopeAuthorization,
-  resolveToolScopeRoots,
-} from './application/tools/tool-scope-root-resolver'
-import { SkillRuntimeApplicationService } from './application/tools/skill-runtime-application-service'
-import { SidecarSkillExecutableAdapter } from './application/tools/sidecar-skill-executable-adapter'
-import { AgentToolLoopCoordinator } from './ai-run/application/agent-tool-loop-coordinator'
-import { CatalogAgentProfileResolver } from './ai-run/application/agent-profile-resolver'
-import {
-  ConnectorGateway,
-} from './application/connectors/connector-gateway'
-import { ConnectorSnapshotResolver } from './application/connectors/connector-snapshot-resolver'
-import { projectConnectorTools } from './application/connectors/connector-tool-projector'
-import { HttpConnectorAdapter } from './application/connectors/http-connector-adapter'
-import { McpConnectorAdapter } from './application/connectors/mcp-connector-adapter'
-import { DatabaseConnectorAdapter } from './application/connectors/database-connector-adapter'
-import { SqliteConnectorHost } from './application/connectors/sqlite-connector-host'
-import { CliConnectorAdapter } from './application/connectors/cli-connector-adapter'
-import { NodeConnectorProcessHost } from './application/connectors/node-connector-process-host'
 import { RecoverInterruptedRunsUseCase } from './application/recover-interrupted-runs'
 import { RecoverAgentRuntimeRunsUseCase } from './application/recover-agent-runtime-runs'
-import { PendingCallReconciler } from './application/pending-call-reconciler'
 import { AgentRunRecoveryActions } from './application/agent-run-recovery-actions'
-import { AgentRunRecoveryConfigurationValidator } from './application/agent-run-recovery-configuration-validator'
 import {
   CreateSpaceUseCase,
   DeleteSpaceUseCase,
@@ -375,7 +317,6 @@ import {
 import { ManageNodeExecutionUseCase } from './application/workflow/manage-node-execution'
 import { ManageNodeQuestionsUseCase } from './application/workflow/manage-node-questions'
 import { ManageNodeTodosUseCase } from './application/workflow/manage-node-todos'
-import { ExecuteWorkflowStageUseCase } from './application/workflow/execute-workflow-stage'
 import { ExecuteWorkflowNodeUseCase } from './application/workflow/execute-workflow-node'
 import { NodeCompletionGateEvaluator } from './application/workflow/node-completion-gate-evaluator'
 import { AdvanceWorkflowUseCase } from './application/workflow/advance-workflow'
@@ -404,6 +345,8 @@ import { CoordinateWorkflowRollbackUseCase } from './application/workflow/coordi
 import { SyncRequirementArtifactsUseCase } from './application/knowledge/sync-requirement-artifacts'
 import { RequirementMemoryService } from './application/knowledge/requirement-memory-service'
 import { SendConversationMessageUseCase } from './application/conversation/send-conversation-message'
+import { CancelConversationRunUseCase } from './application/conversation/cancel-conversation-run'
+import { ConversationTurnViewAssembler } from './application/conversation/conversation-turn-view-assembler'
 import { SendFollowUpSuggestionUseCase } from './application/conversation/send-follow-up-suggestion'
 import {
   FollowUpSuggestionCoordinator,
@@ -413,6 +356,7 @@ import {
   projectConversationRunEvent,
   toAssistantRunEvent,
 } from './application/conversation/assistant-turn-projector'
+import { DshInteractionTimelinePresenter } from './application/dsh/dsh-interaction-timeline-presenter'
 import { ConversationGeneratedArtifactService } from './application/conversation/conversation-generated-artifacts'
 import { SqliteGeneratedArtifactStateRepository } from './infrastructure/sqlite/generated-artifact-state-repository'
 import type { AiRunEvent } from '../../domain/ai-run'
@@ -428,7 +372,6 @@ import { ContextAssembler } from './application/context/context-assembler'
 import { PrepareNodeContextSnapshotUseCase } from './application/context/prepare-node-context-snapshot'
 import { SqliteContextSources } from './infrastructure/context/sqlite-context-sources'
 import { NetworkGateway } from './network/network-gateway'
-import { createGatewayRunAdapter } from './network/gateway-run-adapter'
 import {
   coordinateRepository,
   getSqliteConnectionCoordinator,
@@ -440,8 +383,10 @@ import { ManagedBackupCatalog } from './application/backup/managed-backup-catalo
 import { BackupBundleWriter } from './infrastructure/backup/backup-bundle'
 import { BackupBundleValidator } from './infrastructure/backup/backup-bundle-validator'
 
-const sidecar = new SidecarManager()
+installProcessOutputErrorGuards()
+
 const moduleDirectory = dirname(fileURLToPath(import.meta.url))
+let dshControlPlane: DshControlPlaneBootstrap | undefined
 let qdrant: QdrantProcessManager | undefined
 let knowledgeIndexWorker: KnowledgeIndexWorker | undefined
 let knowledgeStartupRebuildRun: Promise<void> | undefined
@@ -453,9 +398,6 @@ const networkGateway = new NetworkGateway({
     finish: (id, input) => requireOutboundCallAudit().finish(id, input),
   },
 })
-const gatewayRuns = createGatewayRunAdapter(networkGateway, () =>
-  sidecar.getClient(),
-)
 let mainWindow: BrowserWindow | null = null
 let rendererCloseApproved = false
 let closeRequestPending = false
@@ -466,9 +408,6 @@ let terminalManager: TerminalManager | null = null
 let nativeOverlayManager: NativeOverlayManager | null = null
 let database: RealmFlowDatabase | null = null
 let scheduleScheduler: CronScheduleScheduler | null = null
-let toolAdapters: ToolAdapterRegistry | null = null
-let localToolProcesses: NodeLocalProcessService | null = null
-let browserRuntime: BrowserRuntimeService | null = null
 let workspaceCleanupTimer: ReturnType<typeof setTimeout> | undefined
 let workspaceCleanupRun: Promise<void> | undefined
 
@@ -486,6 +425,13 @@ function requestRendererCloseApproval(): void {
   }
   closeRequestPending = true
   window.webContents.send(IPC_EVENT_CHANNELS.appCloseRequested)
+}
+
+function broadcastToolPermissionChanged(): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (window.isDestroyed() || window.webContents.isDestroyed()) continue
+    window.webContents.send(IPC_EVENT_CHANNELS.toolPermissionChanged)
+  }
 }
 
 function conversationMemoryId(noteId: string, version: number): string {
@@ -542,6 +488,8 @@ function createWindow(): void {
     icon,
     backgroundColor: '#f1f1f1',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    trafficLightPosition:
+      process.platform === 'darwin' ? { x: 26, y: 16 } : undefined,
     webPreferences: {
       preload: join(moduleDirectory, '../preload/preload.cjs'),
       contextIsolation: true,
@@ -604,6 +552,18 @@ app
     }
     const userDataPath = app.getPath('userData')
     const databasePath = join(userDataPath, 'realmflow.db')
+    const dshRuntimeBootstrap = createDshRuntimeBootstrap({
+      isPackaged: app.isPackaged,
+      projectRoot: app.getAppPath(),
+      resourcesPath: process.resourcesPath,
+      userDataPath,
+      platform: process.platform,
+      arch: process.arch,
+      environment: process.env,
+      startRuntime:
+        app.isPackaged || process.env.REALMFLOW_START_DSH_RUNTIME === '1',
+    })
+    await dshRuntimeBootstrap.start()
     const restoreResult = await applyPendingRestore({
       userDataPath,
       databasePath,
@@ -612,7 +572,6 @@ app
     if (restoreResult.status === 'blocked') {
       throw new Error(restoreResult.diagnostic)
     }
-    await prepareQdrantIndexStorageUpgrade({ userDataPath })
     const qdrantExecutable =
       process.platform === 'win32' ? 'qdrant.exe' : 'qdrant'
     const qdrantBinaryPath = app.isPackaged
@@ -649,7 +608,6 @@ app
       sessions: repositories.chatSessions
     })
     const agentProfiles = new SqliteAgentProfileRepository(database)
-    const agentProfileResolver = new CatalogAgentProfileResolver(agentProfiles)
     const toolEvents = new SqliteToolEventStore(database)
     const persistedToolProjections = new SqliteToolProjectionStore(database)
     let webProviderRepository!: SqliteWebProviderRepository
@@ -756,7 +714,7 @@ app
       projections: persistedToolProjections,
       projectionRunner: toolProjectionRunner,
     }).synchronize()
-    const legacySkillInstructions = new SkillInstructionReader({
+    const builtinSkillInstructions = new SkillInstructionReader({
       builtins: builtinCatalogPackages,
       local: extensionPackages,
     })
@@ -775,7 +733,7 @@ app
             packageItem.skills.map(async (definition) => ({
               definition,
               instructions:
-                await legacySkillInstructions.readInstructions(definition),
+                await builtinSkillInstructions.readInstructions(definition),
             })),
           ),
         })),
@@ -796,6 +754,11 @@ app
         `[Skill Registry] ${error.sourceId}:${error.relativePath}:${error.code}`,
       )
     }
+    const runtimeSkillInstructions = new SkillInstructionReader({
+      builtins: builtinCatalogPackages,
+      local: extensionPackages,
+      registry: skillRegistry,
+    })
     const pluginContributions = new PluginContributionRegistry()
     const mediaRuntime = new MediaProviderRuntime({
       registry: pluginContributions,
@@ -808,11 +771,6 @@ app
       projectionRunner: toolProjectionRunner,
       skillRegistry,
       mediaRuntime,
-    })
-    const skillInstructions = new SkillInstructionReader({
-      builtins: builtinCatalogPackages,
-      local: extensionPackages,
-      registry: skillRegistry,
     })
     const extensionCatalogImporter = new ExtensionCatalogImportService({
       packages: extensionPackages,
@@ -835,17 +793,111 @@ app
       profileId: activeProfile.id,
       at: Date.now(),
     })
-    await sidecar.start()
+    const privatePythonWorkerRoot =
+      app.isPackaged && !process.env.ELECTRON_RENDERER_URL
+        ? join(process.resourcesPath, 'dsh', 'python-workers', 'realmflow-runtime')
+        : join(app.getAppPath(), 'python-service')
+    const privatePythonWorkerScript =
+      app.isPackaged && !process.env.ELECTRON_RENDERER_URL
+        ? join(privatePythonWorkerRoot, 'realmflow_private_worker.py')
+        : join(
+            app.getAppPath(),
+            'dsh-plugins',
+            'realmflow-runtime',
+            'python',
+            'realmflow_private_worker.py',
+          )
+    const dshEmbeddingLocalPython = join(
+      privatePythonWorkerRoot,
+      '.venv',
+      process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python',
+    )
+    const privatePythonExecutable =
+      process.env.REALMFLOW_PYTHON ||
+      (existsSync(dshEmbeddingLocalPython)
+        ? dshEmbeddingLocalPython
+        : 'python3')
+    const privatePythonWorkers = new PrivatePythonWorkerClient({
+      pythonExecutable: privatePythonExecutable,
+      workerRoot: privatePythonWorkerRoot,
+      workerScript: privatePythonWorkerScript,
+    })
+    const privateWorkerStatus = {
+      getStatus: () => 'ready' as const,
+    }
+    const dshEmbeddingProfile = createLocalDshEmbeddingProfile(
+      createHash('sha256')
+        .update(
+          JSON.stringify({
+            provider: 'local',
+            model: activeProfile.embeddingModel,
+            revision: activeProfile.embeddingRevision,
+            dimensions: activeProfile.dimensions,
+            normalization: activeProfile.normalize,
+            distance: activeProfile.distance,
+          }),
+        )
+        .digest('hex'),
+    )
+    const dshLocalEmbeddingService = new LocalEmbeddingService({
+      profile: dshEmbeddingProfile,
+      workerFactory: createDshLocalEmbeddingWorkerFactory({
+        pythonExecutable: privatePythonExecutable,
+        serviceRoot: privatePythonWorkerRoot,
+        assetRoot: join(
+          privatePythonWorkerRoot,
+          'model-assets',
+          'gte-multilingual-base',
+        ),
+      }),
+    })
+    const dshKnowledgeEmbedding = {
+      chunkKnowledgeDocuments: (
+        documents: Array<{ documentKey: string; content: string }>,
+        signal: AbortSignal,
+      ) =>
+        dshLocalEmbeddingService.chunkKnowledgeDocuments({
+          documents,
+          signal,
+        }),
+      embedKnowledgeDocuments: async (
+        documents: Array<{ id: string; text: string }>,
+        signal: AbortSignal,
+      ) => {
+        const embedded = await dshLocalEmbeddingService.embedDocuments({
+          profile: dshEmbeddingProfile,
+          documents,
+          signal,
+        })
+        return {
+          embeddingModel: dshEmbeddingProfile.model,
+          embeddingRevision: dshEmbeddingProfile.revision,
+          dimensions: dshEmbeddingProfile.dimensions,
+          embeddings: embedded.map(({ id, vector }) => ({
+            id,
+            embedding: vector,
+          })),
+        }
+      },
+      embedKnowledgeQuery: async (query: string, signal: AbortSignal) => {
+        const [embedding] = await dshLocalEmbeddingService.embedQueries({
+          profile: dshEmbeddingProfile,
+          texts: [query],
+          signal,
+        })
+        return {
+          embeddingModel: dshEmbeddingProfile.model,
+          embeddingRevision: dshEmbeddingProfile.revision,
+          dimensions: dshEmbeddingProfile.dimensions,
+          embedding,
+        }
+      },
+    }
     const catalogIndexAdapter = new QdrantKnowledgeIndexAdapter(qdrantClient)
     const catalogSearchAdapter = new QdrantCatalogSearchAdapter(qdrantClient)
     const catalogIndex = new CatalogIndexService({
       profile: () => activeProfile,
-      embedding: {
-        embedKnowledgeDocuments: (documents, signal) =>
-          sidecar.getClient().embedKnowledgeDocuments(documents, signal),
-        embedKnowledgeQuery: (query, signal) =>
-          sidecar.getClient().embedKnowledgeQuery(query, signal),
-      },
+      embedding: dshKnowledgeEmbedding,
       qdrant: {
         upsertPoints: (collection, points, signal) =>
           catalogIndexAdapter.upsertPoints(collection, points, signal),
@@ -1024,7 +1076,7 @@ app
     const pdfContentExtractor = new PdfContentExtractor(pdfSessions)
     const spreadsheetContentExtractor = new SpreadsheetContentExtractor({
       extractText: async ({ bytes, format, signal }) => {
-        const response = await sidecar.getClient().computeSpreadsheet(
+        const response = await privatePythonWorkers.computeSpreadsheet(
           {
             format,
             operation: 'extract_text',
@@ -1044,7 +1096,7 @@ app
     })
     const presentationContentExtractor = new PresentationContentExtractor({
       extractText: async ({ bytes, signal }) => {
-        const response = await sidecar.getClient().computePresentation(
+        const response = await privatePythonWorkers.computePresentation(
           {
             format: 'pptx',
             operation: 'extract_text',
@@ -1088,6 +1140,13 @@ app
         presentationContentExtractor,
         new FixedLayoutContentExtractor(fixedLayout),
         new ImageOcrContentExtractor(imageSessions),
+        new LegacyOfficeContentExtractor(
+          {
+            convertBytes: (input) =>
+              legacyOfficeImporter.convertBytes(input),
+          },
+          modernOfficeContent,
+        ),
         new OfficeConversionContentExtractor(
           {
             convertBytes: (input) =>
@@ -1116,26 +1175,22 @@ app
         }),
         new CapabilityProbeContentExtractor({
           capabilities: () =>
-            sidecar
-              .getClient()
-              .getOfficeConversionCapabilities(
-                new AbortController().signal,
-              ),
+            privatePythonWorkers.getOfficeConversionCapabilities(
+              new AbortController().signal,
+            ),
           convert: async ({
             bytes,
             sourceFormat,
             outputFormat,
             signal,
           }) => {
-            const result = await sidecar
-              .getClient()
-              .convertOptionalOffice(
-                {
-                  sourceFormat,
-                  documentBase64: Buffer.from(bytes).toString('base64'),
-                },
-                signal,
-              )
+            const result = await privatePythonWorkers.convertOptionalOffice(
+              {
+                sourceFormat,
+                documentBase64: Buffer.from(bytes).toString('base64'),
+              },
+              signal,
+            )
             if (result.outputFormat !== outputFormat) {
               throw new Error('Optional Office output format mismatch')
             }
@@ -1177,7 +1232,7 @@ app
     })
     const docxPdfBackend = createSidecarDocxPdfBackend({
       exportDocumentPdf: (input, signal) =>
-        sidecar.getClient().exportDocumentPdf(input, signal),
+        privatePythonWorkers.exportDocumentPdf(input, signal),
     })
     const pdfGeneration = new PdfGenerationService({
       storage: documentDeliveryStorage,
@@ -1220,11 +1275,11 @@ app
     const documentDelivery = new DocumentDeliveryService({
       engine: {
         createDocument: (input, signal) =>
-          sidecar.getClient().createDocument(input, signal),
+          privatePythonWorkers.createDocument(input, signal),
         exportDocumentPdf: (input, signal) =>
-          sidecar.getClient().exportDocumentPdf(input, signal),
+          privatePythonWorkers.exportDocumentPdf(input, signal),
         verifyDocumentArtifact: (input, signal) =>
-          sidecar.getClient().verifyDocumentArtifact(input, signal),
+          privatePythonWorkers.verifyDocumentArtifact(input, signal),
       },
       storage: documentDeliveryStorage,
       journal: documentDeliveryJournal,
@@ -1234,9 +1289,9 @@ app
     await documentDelivery.recover()
     const spreadsheetSessions = new LocalSpreadsheetSessionService({
       compute: (input, signal) =>
-        sidecar.getClient().computeSpreadsheet(input, signal),
+        privatePythonWorkers.computeSpreadsheet(input, signal),
       recalculate: (input, signal) =>
-        sidecar.getClient().recalculateSpreadsheet(input, signal),
+        privatePythonWorkers.recalculateSpreadsheet(input, signal),
       storage: new NodeSpreadsheetSessionStorage({
         metadataPath: join(
           userDataPath,
@@ -1248,7 +1303,7 @@ app
     })
     const wordSessions = new LocalWordSessionService({
       compute: (input, signal) =>
-        sidecar.getClient().computeWordDocument(input, signal),
+        privatePythonWorkers.computeWordDocument(input, signal),
       storage: new NodeSpreadsheetSessionStorage({
         metadataPath: join(
           userDataPath,
@@ -1260,7 +1315,7 @@ app
     })
     const presentationSessions = new LocalPresentationSessionService({
       compute: (input, signal) =>
-        sidecar.getClient().computePresentation(input, signal),
+        privatePythonWorkers.computePresentation(input, signal),
       storage: new NodeSpreadsheetSessionStorage({
         metadataPath: join(
           userDataPath,
@@ -1272,7 +1327,7 @@ app
     })
     legacyOfficeImporter = new LegacyOfficeImportService({
       convert: (input, signal) =>
-        sidecar.getClient().convertLegacyOffice(input, signal),
+        privatePythonWorkers.convertLegacyOffice(input, signal),
       storage: new NodeSpreadsheetSessionStorage({
         metadataPath: join(
           userDataPath,
@@ -1293,7 +1348,7 @@ app
     })
     officeSafeCopy = new OfficeSafeCopyService({
       sanitize: (input, signal) =>
-        sidecar.getClient().createSafeOfficeCopy(input, signal),
+        privatePythonWorkers.createSafeOfficeCopy(input, signal),
       storage: new NodeSpreadsheetSessionStorage({
         metadataPath: join(
           userDataPath,
@@ -1330,11 +1385,6 @@ app
       new ConversationAttachmentChunkReader(
         conversationAttachmentRepository,
       )
-    const conversationAttachments = new ManageConversationAttachments({
-      picker: dialog,
-      registry: conversationAttachmentRegistry,
-      repository: conversationAttachmentRepository,
-    })
     const workbenchSites = new ManageWorkbenchSites(
       coordinateRepository(
         new SqliteWorkbenchSiteRepository(database),
@@ -1398,15 +1448,6 @@ app
       clients: mcpClients,
       discovery: mcpDiscovery,
     })
-    const temporaryToolArtifacts = new TemporaryToolArtifactStore(
-      join(userDataPath, 'tool-artifacts', 'temporary'),
-    )
-    await temporaryToolArtifacts.removeExpired()
-    const computerAuthorization = new SqliteComputerAuthorization(database)
-    const nativeComputerHost =
-      process.platform === 'darwin'
-        ? createElectronMacOsComputerHost()
-        : new UnavailableNativeComputerHost()
     const connectorRepository = coordinateRepository(
       new SqliteConnectorRepository(database),
       sqliteCoordinator,
@@ -1416,23 +1457,6 @@ app
       vault: credentialVault,
       network: networkGateway,
     })
-    const legacyCapabilityProjection = new LegacyCapabilityProjectionService({
-      catalog: capabilityCatalog,
-    })
-    const synchronizeLegacyCapabilities = async (): Promise<void> => {
-      const [toolCatalogState, mcpServerRecords, connectorRecords] =
-        await Promise.all([
-          toolProjections.getCatalog(),
-          mcpServerRepository.list(),
-          connectorRepository.list(),
-        ])
-      await legacyCapabilityProjection.synchronize({
-        toolCatalog: toolCatalogState,
-        mcpServers: mcpServerRecords,
-        connectors: connectorRecords,
-      })
-    }
-    await synchronizeLegacyCapabilities()
     const modelService = new ModelService({
       modelPool: repositories.modelPool,
       modelDefaults: repositories.modelDefaults,
@@ -1466,26 +1490,26 @@ app
         sqliteCoordinator,
       ),
     )
-    let liveToolRuntime: ToolExecutionApplicationService | undefined
+    const conversationAttachments = new ManageConversationAttachments({
+      picker: dialog,
+      registry: conversationAttachmentRegistry,
+      repository: conversationAttachmentRepository,
+      workspace,
+    })
     let liveModelSkillRuntime: ModelSkillExecutionRuntime | undefined
-    const requireToolRuntime = (): ToolExecutionApplicationService => {
-      if (!liveToolRuntime) {
-        throw new Error('Tool runtime is not initialized')
-      }
-      return liveToolRuntime
-    }
     const deferredToolRuntime = {
-      prepare: (
-        command: Parameters<ToolExecutionApplicationService['prepare']>[0],
-      ) => requireToolRuntime().prepare(command),
-      execute: (
-        command: Parameters<ToolExecutionApplicationService['execute']>[0],
-        signal?: AbortSignal,
-      ) => requireToolRuntime().execute(command, signal),
-      cancelByParent: (parentExecutionId: string) =>
-        requireToolRuntime().cancelByParent(parentExecutionId),
-      list: (query: Parameters<ToolExecutionApplicationService['list']>[0]) =>
-        requireToolRuntime().list(query),
+      prepare: async () => {
+        throw new Error('DSH owns scheduled Tool execution')
+      },
+      execute: async () => ({
+        outcome: 'executed' as const,
+        execution: {
+          id: `dsh-owned-tool-${randomUUID()}`,
+          status: 'failed' as const,
+          error: { code: 'dsh_tool_runtime_unavailable' },
+          finishedAt: Date.now(),
+        },
+      }),
     }
     const requireModelSkillRuntime = (): ModelSkillExecutionRuntime => {
       if (!liveModelSkillRuntime) {
@@ -1510,12 +1534,8 @@ app
       models: repositories.modelPool,
       tools: deferredToolRuntime,
       skills: deferredModelSkillRuntime,
-      getToolExecution: async (id) => {
-        const state = await toolProjections.getExecution(id)
-        return state ? { id, status: state.status, error: state.error, finishedAt: state.updatedAt } : undefined
-      },
       getModelExecution: async (id) => {
-        const run = await agentRuntimeRuns.getByProviderRunId(id) ?? await agentRuntimeRuns.getById(id)
+        const run = await agentRuntimeRuns.getById(id)
         return run ? { id, status: run.status, finishedAt: run.updatedAt } : undefined
       },
       onScheduleChanged: () => scheduleScheduler?.refresh(),
@@ -1656,12 +1676,7 @@ app
       new KnowledgeIndexWorker({
         repository: vectorIndexes,
         reader: knowledgeIndexReader,
-        sidecar: {
-          chunkKnowledgeDocuments: (documents, signal) =>
-            sidecar.getClient().chunkKnowledgeDocuments(documents, signal),
-          embedKnowledgeDocuments: (documents, signal) =>
-            sidecar.getClient().embedKnowledgeDocuments(documents, signal),
-        },
+        embedding: dshKnowledgeEmbedding,
         qdrant: qdrantIndex,
         profile,
       })
@@ -1880,13 +1895,13 @@ app
       qdrant: qdrantCollections,
       embedding: {
         getEmbeddingModelHealth: () =>
-          sidecar.getClient().getEmbeddingModelHealth(),
+          dshLocalEmbeddingService.getEmbeddingModelHealth(),
       },
     })
     const systemStatusStore = new SqliteSystemStatusRepository(database)
     const workbenchSystem = new QuerySystemStatus({
       resources: new SystemResourceSampler({ diskPath: userDataPath }),
-      sidecar,
+      sidecar: privateWorkerStatus,
       knowledge: knowledgeRuntimeHealth,
       sqlite: systemStatusStore,
       backgroundJobs: systemStatusStore,
@@ -1975,7 +1990,7 @@ app
       store: knowledgeSearchStore,
       sidecar: {
         embedKnowledgeQuery: (query, signal) =>
-          sidecar.getClient().embedKnowledgeQuery(query, signal),
+          dshKnowledgeEmbedding.embedKnowledgeQuery(query, signal),
       },
       qdrant: new QdrantKnowledgeSearchAdapter(
         qdrantClient,
@@ -2244,9 +2259,10 @@ app
     const agentRuntimeState = new RuntimeStateService(new SqliteAgentRuntimeStateRepository(database))
     const agentRuntimeBudgets = new SqliteAgentRuntimeBudgetRepository(database)
     const agentDelegationStore = new SqliteAgentDelegationRepository(database)
+    let dshRunGateway!: DshAiRunGateway
     const agentDelegations: RuntimeDelegationService = new RuntimeDelegationService({
       store: agentDelegationStore,
-      runTask: (record, signal) => runGateway.runDelegated(record, signal),
+      runTask: (record, signal) => dshRunGateway.runDelegated(record, signal),
       finalizeArtifacts: (record, status) => conversationGeneratedArtifacts.finalizeRun({
         runId: record.runId, conversationId: record.sessionId, assistantMessageId: `${record.runId}:assistant`, status
       }),
@@ -2260,159 +2276,201 @@ app
       state: agentRuntimeState,
       delegations: agentDelegations,
     })
-    const runtimeSensitiveControls = new RuntimeSensitiveControls({
-      catalog: capabilityCatalog,
-      credentials: {
-        resolveHandle: async (name, service) => {
-          if (service === 'model') {
-            const providerId = name.startsWith('model:') ? name.slice('model:'.length) : name
-            return await repositories.modelCredentials.getByProvider(providerId)
-              ? `model:${providerId}` : undefined
-          }
-          if (service === 'web') {
-            const configuration = webProviderRepository.get()
-            return name === 'brave' || name === configuration.braveCredentialHandle
-              ? configuration.braveCredentialHandle : undefined
-          }
-          return undefined
-        },
-      },
-    })
-    const agentRunCheckpoints =
-      new SqliteAgentRunCheckpointRepository(database)
     const assistantTimeline = new SqliteAssistantRunEventStore(
       database,
       runtimeGovernanceRepository,
     )
-    const executionScopeDependencies = {
-      assertFolderAvailable: (folderPath: string) =>
-        workspace.assertSessionDirectoryAvailable(folderPath),
-      requirements: repositories.requirements,
-      workspaces: repositories.workspaces,
-    }
-    const skillRuntime = new SkillRuntimeApplicationService({
-      instructions: skillInstructions,
-      executable: new SidecarSkillExecutableAdapter({
-        packages: {
-          resolveRoot: async (digest) => {
-            const builtin = builtinCatalogPackages.find(
-              ({ packageDigest }) => packageDigest === digest,
-            )
-            return (
-              builtin?.rootPath ??
-              join(userDataPath, 'extensions', 'packages', digest)
-            )
-          },
-        },
-        scopes: {
-          resolve: (context) =>
-            resolveExecutionScopeRoots(context, executionScopeDependencies),
-        },
-        connectors: {
-          resolve: async ({
-            services,
-            bindings = [],
-            context,
-            executionId,
-          }) => {
-            const resolved = await connectors.resolveSkillBindings({
-              services,
-              bindings: normalizeSkillConnectorBindings(bindings),
+    const conversationTurnViews = new ConversationTurnViewAssembler(
+      repositories.chatSessions,
+    )
+    const dshInteractionDatabase = database
+    dshControlPlane = createDshControlPlaneBootstrap({
+      database,
+      runtime: dshRuntimeBootstrap.runtime,
+      userDataPath,
+      toolCatalog: {
+        list: () => toolCatalog.list(),
+      },
+      knowledgeRuntime: {
+        profile: () => activeProfile,
+        scopes: knowledgeSearchStore,
+      },
+      runtimeInput: {
+        resolve: async ({ context }) => {
+          const selectedSkill =
+            'skill' in context ? context.skill : undefined
+          const selectedMcpServerIds =
+            'mcpServerIds' in context && Array.isArray(context.mcpServerIds)
+              ? [...new Set(context.mcpServerIds)]
+              : []
+          const selectedConnectorIds =
+            'connectorBindings' in context &&
+            Array.isArray(context.connectorBindings)
+              ? [
+                  ...new Set(
+                    context.connectorBindings.map(
+                      ({ connectorId }) => connectorId,
+                    ),
+                  ),
+                ]
+              : []
+          let customInstructions: string | undefined
+          if (selectedSkill) {
+            const catalog = await toolCatalog.list({
+              runtimeWorkspaceId:
+                'workspaceId' in context && context.workspaceId
+                  ? context.workspaceId
+                  : null,
             })
-            const allowedConnectorIds = resolved.map(
-              ({ connectorId }) => connectorId,
+            const item = catalog.skills.find(
+              (candidate) =>
+                candidate.status === 'enabled' &&
+                candidate.id === selectedSkill.id &&
+                candidate.version === selectedSkill.version &&
+                candidate.definitionDigest === selectedSkill.digest,
             )
-            return Promise.all(
-              resolved.map((binding) =>
-                connectors.authorizeSkillService({
-                  executionId,
-                  service: binding.service,
-                  connectorId: binding.connectorId,
-                  allowedConnectorIds,
-                  expectedRevision: binding.connectorRevision,
-                  owner: skillConnectorOwner(context),
-                  ...skillConnectorAttribution(context),
-                }),
-              ),
-            )
-          },
-          release: (grants) => {
-            for (const grant of grants) {
-              connectors.revokeSkillConnector(grant)
+            if (!item) {
+              throw new Error(
+                `Selected Skill is not enabled: ${selectedSkill.id}`,
+              )
             }
-          },
+            customInstructions =
+              await runtimeSkillInstructions.readInstructions(item.definition)
+          }
+          const [mcpServerRecords, connectorRecords] = await Promise.all([
+            Promise.all(
+              selectedMcpServerIds.map((serverId) => mcpServers.get(serverId)),
+            ),
+            Promise.all(
+              selectedConnectorIds.map((connectorId) =>
+                connectors.get(connectorId),
+              ),
+            ),
+          ])
+          const disabledMcpServer = mcpServerRecords.find(
+            ({ configuration }) => !configuration.enabled,
+          )
+          if (disabledMcpServer) {
+            throw new Error(
+              `Selected MCP server is disabled: ${disabledMcpServer.configuration.id}`,
+            )
+          }
+          const disabledConnector = connectorRecords.find(
+            ({ connector }) => !connector.enabled,
+          )
+          if (disabledConnector) {
+            throw new Error(
+              `Selected Connector is disabled: ${disabledConnector.connector.id}`,
+            )
+          }
+          const credentialReferences = [
+            ...mcpServerRecords.flatMap(({ configuration }) => {
+              const bindings =
+                configuration.transport.kind === 'stdio'
+                  ? configuration.transport.environmentCredentialIds
+                  : configuration.transport.headerCredentialIds
+              return Object.values(bindings).map((ref) => ({
+                kind: 'credential-reference' as const,
+                ref,
+                purpose: 'mcp' as const,
+              }))
+            }),
+            ...connectorRecords.flatMap(({ connector }) =>
+              connector.authentication.type === 'none'
+                ? []
+                : [
+                    {
+                      kind: 'credential-reference' as const,
+                      ref: `credential-${connector.id}`,
+                      purpose: 'connector' as const,
+                    },
+                  ],
+            ),
+          ]
+          const selectedRuntime = {
+            ...(customInstructions ? { customInstructions } : {}),
+            ...(selectedMcpServerIds.length > 0
+              ? {
+                  mcpServerIds: selectedMcpServerIds,
+                  mcpServerRecords,
+                }
+              : {}),
+            ...(selectedConnectorIds.length > 0
+              ? {
+                  connectorIds: selectedConnectorIds,
+                  connectorRecords,
+                }
+              : {}),
+            ...(credentialReferences.length > 0
+              ? { credentialReferences }
+              : {}),
+          }
+          if ('folderPath' in context && context.folderPath) {
+            return selectedRuntime
+          }
+          if ('requirementId' in context && context.requirementId) {
+            const requirement = await repositories.requirements.get(
+              context.requirementId,
+            )
+            if (requirement?.workspaceRootPath) {
+              return {
+                cwd: requirement.workspaceRootPath,
+                ...selectedRuntime,
+              }
+            }
+          }
+          if ('workspaceId' in context && context.workspaceId) {
+            const workspaceRecord = await repositories.workspaces.get(
+              context.workspaceId,
+            )
+            const cwd = workspaceRecord?.rootPath ?? workspaceRecord?.path
+            return cwd ? { cwd, ...selectedRuntime } : selectedRuntime
+          }
+          const workRoot = await repositories.workRoots.getCurrent()
+          return workRoot
+            ? {
+                cwd: workRoot.path,
+                contextRootIds: [workRoot.id],
+                ...selectedRuntime,
+              }
+            : selectedRuntime
         },
-        sidecar: sidecar.getClient(),
+      },
+      modelCredentials: {
+        resolveProviderCredentialMaterial: (providerId) =>
+          modelService.resolveProviderCredentialMaterial(providerId),
+      },
+      interactionPresenter: new DshInteractionTimelinePresenter({
+        timeline: assistantTimeline,
+        resolveConversationId: ({ projection }) => {
+          const row = dshInteractionDatabase.prepare(
+            `SELECT session_id
+             FROM chat_messages
+             WHERE id = ? AND run_id = ? AND turn_id = ? AND role = 'assistant'`
+          ).get(
+            projection.assistantMessageId,
+            projection.runId,
+            projection.turnId
+          ) as { session_id: string } | undefined
+          return row?.session_id
+        },
+        publishProjection: ({ sessionId, turnId, projection }) => {
+          if (!mainWindow || mainWindow.isDestroyed()) return
+          mainWindow.webContents.send(
+            IPC_EVENT_CHANNELS.conversationTurnProjection,
+            { sessionId, turnId, projection }
+          )
+          broadcastToolPermissionChanged()
+        },
       }),
     })
-    const runGateway: AgentToolLoopCoordinator = new AgentToolLoopCoordinator({
-      gateway: {
-        createRun: gatewayRuns.createRun,
-        resumeRun: gatewayRuns.resumeRun,
-        streamEvents: (runId, signal) =>
-          sidecar.getClient().streamEvents(runId, signal),
-        cancelRun: gatewayRuns.cancelRun,
-        releaseRun: (runId) => networkGateway.releaseRun(runId),
-        submitToolResult: (runId, result) =>
-          sidecar.getClient().submitToolResult(runId, result),
-        acknowledgeTurn: (runId, input) =>
-          sidecar.getClient().acknowledgeTurn(runId, input),
-      },
-      catalog: toolCatalog,
-      capabilities: capabilityCatalog,
-      connectorCredentials: {
-        resolveHandle: async (reference) => {
-          if (reference.startsWith('connector:')) {
-            const connectorId = reference.slice('connector:'.length)
-            return (await connectorRepository.getCredential(connectorId))
-              ? reference
-              : undefined
-          }
-          try {
-            await mcpServers.resolveCredential(reference)
-            return `mcp:${reference}`
-          } catch {
-            return undefined
-          }
-        },
-      },
-      capabilityScopes: new CapabilityScopeResolver({
-        workspaces: repositories.workspaces,
-        workRoots: repositories.workRoots,
-        canonicalizeDirectory: (path) =>
-          securePaths.canonicalizeDirectory(path),
-      }),
-      tools: deferredToolRuntime,
-      resolveToolScopeRoots: (context) =>
-        resolveExecutionScopeRoots(context, executionScopeDependencies),
-      gitRepositoryResolver: new FilesystemGitRepositoryResolver(),
-      skills: skillInstructions,
-      skillRuntime,
-      profiles: agentProfileResolver,
-      resolveSandbox: async () => {
-        const capabilities = await sidecar.getClient().getSandboxCapabilities()
-          .catch(() => ({ processIsolation: 'unavailable' as const }))
-        return {
-          available: capabilities.processIsolation !== 'unavailable',
-          networkAllowed: true,
-        }
-      },
-      runtimeRuns: agentRuntimeRuns,
-      checkpoints: agentRunCheckpoints,
-      projectionCursor: { get: async (id) => (await assistantTimeline.getSnapshot(id))?.lastSequence ?? 0 },
-      budgets: agentRuntimeBudgets,
-      delegations: agentDelegations,
-      turnBoundary: {
-        pending: (runId) => agentRuntimeState.read(runId).instructions.filter((item) => item.status === 'queued'),
-        commit: async (checkpoint, ids) => agentRunCheckpoints.saveWithInstructions(checkpoint, ids),
-      },
-      onTerminal: async (runId) => {
-        await browserRuntime?.closeRunSessions(runId)
-      },
-    })
+    const dshSessionBindings = dshControlPlane.sessions
+    const dshRuntimeEventIngestor = dshControlPlane.runtimeEvents
+    const dshManifestPublications = dshControlPlane.manifests
+    dshRunGateway = dshControlPlane.gateway
     liveModelSkillRuntime = new ModelSkillExecutionRuntime({
       models: modelService,
-      gateway: runGateway,
+      gateway: dshRunGateway,
     })
     const followUpSuggestions = new SqliteFollowUpSuggestionRepository(database)
     const conversationGeneratedArtifacts =
@@ -2421,18 +2479,24 @@ app
       repository: followUpSuggestions,
       generator: new RealModelFollowUpSuggestionGenerator({
         models: modelService,
-        gateway: {
-          createRun: gatewayRuns.createRun,
-          streamEvents: (runId, signal) =>
-            sidecar.getClient().streamEvents(runId, signal),
-          cancelRun: gatewayRuns.cancelRun,
-          releaseRun: (runId) => networkGateway.releaseRun(runId),
-        },
+        gateway: dshRunGateway,
       }),
       enabled: () => true,
     })
     const conversationContexts =
       new SqliteConversationContextRepository(database)
+    const cancelConversationRun = new CancelConversationRunUseCase({
+      sessions: repositories.chatSessions,
+      timeline: assistantTimeline,
+      publishProjection: ({ sessionId, turnId, projection }) => {
+        if (!mainWindow || mainWindow.isDestroyed()) return
+        mainWindow.webContents.send(
+          IPC_EVENT_CHANNELS.conversationTurnProjection,
+          { sessionId, turnId, projection }
+        )
+        broadcastToolPermissionChanged()
+      },
+    })
     const sendConversationMessage = new SendConversationMessageUseCase({
       sessions: repositories.chatSessions,
       memory: new ConversationMemoryService({
@@ -2440,22 +2504,27 @@ app
       }),
       getDefaultApprovalProfile: async () => (await approvalDefaults.get()).approvalProfileId,
       timeline: assistantTimeline,
+      onProjectionUpdated: ({ sessionId, turnId, projection }) => {
+        if (!mainWindow || mainWindow.isDestroyed()) return
+        mainWindow.webContents.send(
+          IPC_EVENT_CHANNELS.conversationTurnProjection,
+          { sessionId, turnId, projection }
+        )
+      },
       spaceContext: {
         assertAvailable: async (workspaceId) => {
           if (!(await repositories.workspaces.get(workspaceId))) {
             throw new Error(`Workspace not found: ${workspaceId}`)
           }
         },
-        assemble: (workspaceId, query) =>
-          spaceConversationContext.assemble(workspaceId, query),
-        assembleScope: (scope, query) =>
-          spaceConversationContext.assembleScope(scope, query),
+        assembleSnapshot: (scope, query) =>
+          spaceConversationContext.assembleSnapshot(scope, query),
       },
       folderContext: {
         assertAvailable: (folderPath) =>
           workspace.assertSessionDirectoryAvailable(folderPath),
       },
-      gateway: runGateway,
+      gateway: dshRunGateway,
       models: modelService,
       attachments: {
         listByOwner: (ownerId) =>
@@ -2871,6 +2940,9 @@ app
       getConversation: {
         execute: ({ sessionId }) => repositories.chatSessions.get(sessionId),
       },
+      listConversationTurns: {
+        execute: (query) => conversationTurnViews.execute(query),
+      },
       getConversationContextDiagnostics: {
         execute: async ({ sessionId }) =>
           conversationContexts.getLatestDiagnostics(sessionId),
@@ -2910,6 +2982,9 @@ app
       appendConversationMessage: {
         execute: async (command, onUpdate) => {
           const session = await repositories.chatSessions.get(command.sessionId)
+          // #region debug-point B,D:main-command
+          void fetch('http://127.0.0.1:7777/event', { method: 'POST', body: JSON.stringify({ sessionId: 'conversation-send-cancelled', runId: 'post-fix', hypothesisId: 'B,D', location: 'electron/src/main.ts:appendConversationMessage', msg: '[DEBUG] Main received conversation message command', data: { conversationId: command.sessionId, expectedRevision: command.expectedRevision, persistedRevision: session?.revision ?? null, latestTurnStatus: session?.turns.at(-1)?.status ?? null, pendingAssistantCount: session?.messages.filter((message) => message.role === 'assistant' && message.status === 'pending').length ?? null, modelProfileId: command.modelProfileId ?? null }, ts: Date.now() }) }).catch(() => undefined)
+          // #endregion
           if (session?.kind === 'requirement_node') {
             return requirementNodeConversation.append(command, onUpdate)
           }
@@ -3347,25 +3422,13 @@ app
       },
       listConnectors: { execute: () => connectors.list() },
       saveConnector: {
-        execute: async (command) => {
-          const result = await connectors.save(command)
-          await synchronizeLegacyCapabilities()
-          return result
-        },
+        execute: (command) => connectors.save(command),
       },
       deleteConnector: {
-        execute: async (command) => {
-          const result = await connectors.delete(command)
-          await synchronizeLegacyCapabilities()
-          return result
-        },
+        execute: (command) => connectors.delete(command),
       },
       validateConnector: {
-        execute: async (command) => {
-          const result = await connectors.validate(command)
-          await synchronizeLegacyCapabilities()
-          return result
-        },
+        execute: (command) => connectors.validate(command),
       },
       listSchedules: {
         execute: () => schedules.list(),
@@ -3469,14 +3532,6 @@ app
         execute: (command) => appSupport.openSupportLink(command),
       },
     }
-    const persistence = coordinateRepository(
-      new SqlitePersistenceService(database, (event) => {
-        for (const window of BrowserWindow.getAllWindows()) {
-          window.webContents.send(IPC_EVENT_CHANNELS.persistenceChanged, event)
-        }
-      }),
-      sqliteCoordinator,
-    )
     const runs = repositories.aiRuns
     const runEvents = new RendererRunEventPublisher((event) => {
       for (const window of BrowserWindow.getAllWindows()) {
@@ -3487,10 +3542,6 @@ app
         )
       }
     })
-    const legacyContexts = new WorkspaceStageContextRepository(
-      persistence,
-      workspace,
-    )
     const contextAssembler = new ContextAssembler({
       artifacts: contextSources,
       knowledge: contextSources,
@@ -3529,7 +3580,6 @@ app
       },
     })
     const contexts = new AssembledNodeContextRepository({
-      legacy: legacyContexts,
       requirements: repositories.requirements,
       workflows: repositories.requirementWorkflows,
       nodeRuns: repositories.nodeRuns,
@@ -3561,23 +3611,15 @@ app
     })
     const generateStageArtifact = new GenerateStageArtifactUseCase({
       runs,
-      gateway: runGateway,
+      gateway: dshRunGateway,
       contexts,
       artifactCommitter: commitFormalArtifact,
       publisher: runEvents,
       models: modelService,
     })
-    const executeWorkflowStage = new ExecuteWorkflowStageUseCase({
-      generate: generateStageArtifact,
-      runs,
-      requirements: repositories.requirements,
-      workflows: repositories.requirementWorkflows,
-      nodeRuns: repositories.nodeRuns,
-      manager: manageNodeExecution,
-    })
     cancelAiRun = new CancelAiRunUseCase({
       runs,
-      gateway: runGateway,
+      gateway: dshRunGateway,
       publisher: runEvents,
     })
     let advanceWorkflow!: AdvanceWorkflowUseCase
@@ -3668,493 +3710,16 @@ app
       cancel: cancelAiRun,
       executeNode: executeWorkflowNode,
     })
-    const localProcesses = new NodeLocalProcessService()
-    localToolProcesses = localProcesses
     webWorkbench = new WebWorkbenchManager(() => mainWindow)
-    browserRuntime = new BrowserRuntimeService(
-      new SqliteBrowserSessionRepository(database),
-      new ElectronBrowserDriver(webWorkbench),
-      new RuntimeResourceLeaseService(
-        new SqliteRuntimeResourceLeaseRepository(database)
-      )
-    )
-    browserRuntime.recover()
-    const builtinToolAdapter = createBuiltinToolAdapter({
-      protectedRoots: [userDataPath],
-      browser: browserRuntime,
-      web: webProviders,
-      resolveSessionPath: (family, sessionId) => {
-        if (family === 'word') return wordSessions.getCanonicalPath(sessionId)
-        if (family === 'spreadsheet') {
-          return spreadsheetSessions.getCanonicalPath(sessionId)
-        }
-        if (family === 'presentation') {
-          return presentationSessions.getCanonicalPath(sessionId)
-        }
-        if (family === 'pdf') return pdfSessions.getCanonicalPath(sessionId)
-        return imageSessions.getCanonicalPath(sessionId)
-      },
-      files: {
-        trashItem: (path) => shell.trashItem(path),
-        contentExtractor: localContentExtraction,
-      },
-      documents: {
-        extractor: localContentExtraction,
-        delivery: documentDelivery,
-        pdfGeneration,
-      },
-      wordDocuments: {
-        sessions: wordSessions,
-      },
-      images: {
-        sessions: imageSessions,
-      },
-      pdf: {
-        sessions: pdfSessions,
-        pdfGeneration,
-      },
-      spreadsheets: {
-        sessions: spreadsheetSessions,
-      },
-      presentations: {
-        sessions: presentationSessions,
-      },
-      legacyOffice: {
-        importer: legacyOfficeImporter,
-      },
-      officeSafeCopy: {
-        safeCopy: officeSafeCopy,
-      },
-      officeReadOnly: {
-        sessions: officeReadOnlySessions,
-      },
-      archives: {
-        archives,
-      },
-      fixedLayout: {
-        fixedLayout,
-      },
-      git: {
-        run: ({ executable, arguments: args, cwd, signal, maxOutputBytes }) =>
-          localProcesses.runCommand({
-            executable,
-            arguments: args,
-            cwd,
-            signal,
-            maxOutputBytes,
-            timeoutMs: 120_000,
-          }),
-      },
-      processes: localProcesses,
-      application: {
-        'realmflow.spaces.list': async () => ({
-          spaces: await repositories.workspaces.list(),
-        }),
-        'realmflow.requirements.list': async ({ arguments: args }) => {
-          const requirements = await repositories.requirements.listByWorkspace(
-            requireToolString(args, 'workspaceId'),
-          )
-          const status = optionalToolString(args, 'status')
-          return {
-            requirements: status
-              ? requirements.filter((item) => item.status === status)
-              : requirements,
-          }
-        },
-        'realmflow.requirements.get': async ({ arguments: args }) => ({
-          requirement:
-            (await repositories.requirements.get(
-              requireToolString(args, 'requirementId'),
-            )) ?? null,
-        }),
-        'realmflow.workflow.get_execution': async ({ arguments: args }) => ({
-          execution: await getRequirementExecutionView.execute({
-            requirementId: requireToolString(args, 'requirementId'),
-            ...(optionalToolString(args, 'nodeId')
-              ? { nodeId: optionalToolString(args, 'nodeId') }
-              : {}),
-          }),
-        }),
-        'realmflow.node.answer_question': ({ arguments: args }) =>
-          executeToolOperation(business.answerNodeQuestion, args),
-        'realmflow.node.decide_approval': (input) => {
-          if (input.requestedBy.type !== 'user') {
-            throw new Error('Node approval requires a local user request')
-          }
-          return executeToolOperation(
-            business.resolveWorkflowNodeGate,
-            input.arguments,
-          )
-        },
-        'realmflow.node.todo.manage': ({ arguments: args }) =>
-          executeToolOperation(
-            args.operation === 'delete'
-              ? business.deleteNodeTodo
-              : business.saveNodeTodo,
-            withoutToolOperation(args),
-          ),
-        'realmflow.artifacts.list': async ({ arguments: args }) => ({
-          artifacts: await repositories.artifacts.listByRequirement(
-            requireToolString(args, 'requirementId'),
-          ),
-        }),
-        'realmflow.artifacts.read': async ({ arguments: args }) => {
-          const requirementId = requireToolString(args, 'requirementId')
-          const artifactId = requireToolString(args, 'artifactId')
-          const artifact = (
-            await repositories.artifacts.listByRequirement(requirementId)
-          ).find(({ id }) => id === artifactId)
-          if (!artifact) throw new Error('Artifact was not found')
-          return {
-            artifact,
-            file: await workspace.readFile(
-              requirementId,
-              artifact.relativePath,
-            ),
-          }
-        },
-        'knowledge.search': async ({ arguments: args }) => ({
-          results: await knowledgeSearch.search(
-            args as Parameters<typeof knowledgeSearch.search>[0],
-          ),
-        }),
-        'knowledge.source.read': async ({ arguments: args }) => {
-          const sourceId = requireToolString(args, 'sourceId')
-          const source = (
-            await knowledgeSourceQueries.list({
-              workspaceId: requireToolString(args, 'workspaceId'),
-            })
-          ).find(({ id }) => id === sourceId)
-          if (!source) throw new Error('Knowledge source was not found')
-          return { source }
-        },
-        'knowledge.note.create': ({ arguments: args }) =>
-          executeToolOperation(business.createKnowledgeNote, args),
-        'knowledge.note.edit': ({ arguments: args }) =>
-          executeToolOperation(business.editKnowledgeNote, args),
-        'knowledge.index.refresh': ({ arguments: args }) =>
-          executeToolOperation(business.refreshKnowledgeSource, args),
-        'attachment.read_chunk': ({ arguments: args }) =>
-          conversationAttachmentChunks.read({
-            chunkId: requireToolString(args, 'chunkId'),
-            conversationId: requireToolString(args, 'conversationId'),
-          }),
-      },
-    })
-    builtinToolAdapter.assertDefinitions(
-      builtinCatalogPackages.flatMap(({ tools }) => tools),
-    )
-    const sandboxToolAdapter = new SandboxToolAdapter({
-      packages: {
-        resolveRoot: async (digest) => {
-          const builtin = builtinCatalogPackages.find(
-            ({ packageDigest }) => packageDigest === digest,
-          )
-          return (
-            builtin?.rootPath ??
-            join(userDataPath, 'extensions', 'packages', digest)
-          )
-        },
-      },
-      sidecar: sidecar.getClient(),
-    })
-    const mcpToolAdapter = new McpToolAdapter({
-      servers: {
-        get: async (serverId) =>
-          (await mcpServerRepository.get(serverId))?.configuration,
-      },
-      clients: mcpClients,
-      artifacts: temporaryToolArtifacts,
-    })
-    const computerToolAdapter = new ComputerToolAdapter({
-      host: nativeComputerHost,
-      grants: computerAuthorization,
-      criticalGate: computerAuthorization,
-      artifacts: temporaryToolArtifacts,
-    })
-    const resolveConnectorCredential = async (handle: string): Promise<string> => {
-      if (handle.startsWith('connector:')) {
-        const credential = await connectorRepository.getCredential(
-          handle.slice('connector:'.length),
-        )
-        if (!credential) throw new Error('Connector credential is unavailable')
-        return credentialVault.decrypt(credential)
-      }
-      if (handle.startsWith('mcp:')) {
-        return mcpServers.resolveCredential(handle.slice('mcp:'.length))
-      }
-      throw new Error('Connector credential handle is invalid')
-    }
-    const sqliteConnectorHost = new SqliteConnectorHost({
-      resolveCredential: resolveConnectorCredential,
-    })
-    const connectorGateway = new ConnectorGateway({
-      adapters: {
-        mcp: new McpConnectorAdapter({
-          servers: {
-            get: async (serverId) =>
-              (await mcpServerRepository.get(serverId))?.configuration,
-          },
-          clients: mcpClients,
-        }),
-        http: new HttpConnectorAdapter({
-          network: networkGateway,
-          resolveCredential: resolveConnectorCredential,
-        }),
-        database: new DatabaseConnectorAdapter({
-          hosts: sqliteConnectorHost,
-        }),
-        cli: new CliConnectorAdapter({
-          processes: new NodeConnectorProcessHost(),
-          resolveCredential: resolveConnectorCredential,
-          resolveWorkingDirectory: (snapshot, policy) => {
-            const protocol = snapshot.action.protocol
-            if (protocol.kind !== 'cli') {
-              throw new Error('CLI Connector action is invalid')
-            }
-            if (policy === 'package') return dirname(protocol.executable)
-            const [workspaceRoot] = snapshot.permissionCeiling.pathPrefixes
-            if (!workspaceRoot) {
-              throw new Error('CLI Connector workspace is unavailable')
-            }
-            return workspaceRoot
-          },
-        }),
-      },
-    })
-    const connectorSnapshots = new ConnectorSnapshotResolver({
-      catalog: capabilityCatalog,
-      credentials: {
-        resolveHandle: async (reference) => {
-          if (reference.startsWith('connector:')) {
-            const connectorId = reference.slice('connector:'.length)
-            return (await connectorRepository.getCredential(connectorId))
-              ? reference
-              : undefined
-          }
-          try {
-            await mcpServers.resolveCredential(reference)
-            return `mcp:${reference}`
-          } catch {
-            return undefined
-          }
-        },
-      },
-    })
-    const connectorToolAdapter = new ConnectorToolAdapter({
-      snapshots: connectorSnapshots,
-      gateway: connectorGateway,
-    })
-    toolAdapters = new ToolAdapterRegistry([
-      builtinToolAdapter,
-      sandboxToolAdapter,
-      mcpToolAdapter,
-      computerToolAdapter,
-      connectorToolAdapter,
-    ])
-    const toolOutboxDispatcher = new ToolOutboxDispatcher({
-      repository: new SqliteToolOutboxRepository(database),
-      publish: (message) => requireToolRuntime().dispatch(message),
-      owner: `tool-runtime-${process.pid}`,
-    })
-    const aiRunToolResults = new AgentRuntimeToolResultGateway({
-      runs: agentRuntimeRuns,
-      sidecar: {
-        suspendToolCall: (runId, suspension) =>
-          sidecar.getClient().suspendToolCall(runId, suspension),
-        submitToolResult: (runId, result) =>
-          sidecar.getClient().submitToolResult(runId, result),
-      },
-    })
-    const runToolPolicies = new RunToolPolicyResolver({
-      active: (runId) => runGateway.getToolPolicy(runId),
-      activeApprovalProfile: (runId) => runGateway.getApprovalProfile(runId),
-      stored: async (runId) =>
-        agentRuntimeRuns.getById(runId) ?? await agentRuntimeRuns.getByProviderRunId(runId),
-    })
-    const gatewayRuntime = new GatewayRuntimeService({
-      health: async () => {
-        const probe = async (
-          kind: 'builtin' | 'sandbox' | 'mcp' | 'computer' | 'connector'
-        ): Promise<'ready' | 'degraded' | 'unavailable'> => {
-          try {
-            return (await toolAdapters!.health(kind)).status
-          } catch {
-            return 'unavailable'
-          }
-        }
-        let sidecarStatus: GatewayRuntimeHealth['sidecar'] = 'unavailable'
-        try {
-          await sidecar.getClient().getHealth()
-          sidecarStatus = 'ready'
-        } catch {
-          sidecarStatus = 'unavailable'
-        }
-        const [builtin, sandbox, mcp, computer, connector] =
-          await Promise.all([
-            probe('builtin'),
-            probe('sandbox'),
-            probe('mcp'),
-            probe('computer'),
-            probe('connector'),
-          ])
-        return {
-          sidecar: sidecarStatus,
-          adapters: { builtin, sandbox, mcp, computer, connector },
-        }
-      },
-      configuration: async () => {
-        const [roots, web] = await Promise.all([
-          repositories.workRoots.list(),
-          Promise.resolve(webProviders.get()),
-        ])
-        return {
-          application: {
-            version: app.getVersion(),
-            schemaVersion: REALMFLOW_SCHEMA_VERSION,
-          },
-          workspace: {
-            configured: roots.length > 0,
-            count: roots.length,
-          },
-          web: {
-            searchProvider: web.searchProvider,
-            browserContinuation: web.browserContinuation,
-            endpointConfigured: Boolean(web.searxngBaseUrl),
-            credentialConfigured: web.hasBraveCredential,
-          },
-        }
-      },
-      checkForUpdates: (input) => appSupport.checkForUpdates(input),
-    })
-    const automationRuntime = new AutomationRuntimeService({
-      schedules,
-      scheduler: {
-        status: () => scheduleScheduler?.status() ?? { running: false },
-      },
-      background: {
-        status: async () => {
-          const [jobs, runs] = await Promise.all([
-            systemStatusStore.count(),
-            agentRuntimeRuns.listUnfinished(),
-          ])
-          return {
-            running:
-              jobs.running +
-              runs.filter(({ status }) =>
-                ['preparing', 'running', 'retrying'].includes(status),
-              ).length,
-            pending:
-              jobs.pending +
-              runs.filter(({ status }) =>
-                [
-                  'waiting_permission',
-                  'waiting_input',
-                  'paused',
-                  'recovery_blocked',
-                ].includes(status),
-              ).length,
-          }
-        },
-      },
-    })
-    let pluginHooks: PluginHookDispatcher | undefined
-    liveToolRuntime = new ToolExecutionApplicationService({
-      events: toolEvents,
-      projections: toolProjections,
-      projectionRunner: toolProjectionRunner,
-      adapters: toolAdapters,
-      pendingCheckpoints: new EncryptedPendingToolInvocationCheckpointStore({
-        snapshots: new SqliteToolSnapshotStore(database),
-        vault: credentialVault,
-      }),
-      dispatcher: toolOutboxDispatcher,
-      onPermissionChanged: async () => {
-        await schedules.reconcilePermissions()
-        mainWindow?.webContents.send(
-          IPC_EVENT_CHANNELS.toolPermissionChanged,
-        )
-      },
-      aiRuns: aiRunToolResults,
-      generatedArtifacts: conversationGeneratedArtifacts,
-      pluginHooks: {
-        dispatch: (event, context) =>
-          pluginHooks?.dispatch(event, context) ?? Promise.resolve([]),
-      },
-      assistantRuntime: createRuntimeToolBindings({
-        orchestrator: agentOrchestrator,
-        resolveRun: async (id) => agentRuntimeRuns.getById(id) ?? await agentRuntimeRuns.getByProviderRunId(id),
-        sensitive: {
-          resolveCredential: (input) => runtimeSensitiveControls.secret(input),
-          runCapabilityCommand: (input, context) =>
-            runtimeSensitiveControls.capability(input, context),
-          runGatewayCommand: (input, context) =>
-            gatewayRuntime.execute(input, context),
-          runAutomationCommand: (input, context) =>
-            automationRuntime.execute(input, context),
-          runMediaCommand: async (input, _context, signal) => {
-            const command = parseMediaRuntimeCommand(input)
-            return mediaRuntime.execute({
-              catalog: await toolProjections.getCatalog(),
-              ...command,
-              signal: signal ?? new AbortController().signal,
-            }) as unknown as JsonObject
-          },
-        },
-      }),
-      mediaRuntime,
-      resolveRunPolicy: (command) => runToolPolicies.resolve(command),
-      resolveApprovalProfile: async (command) => command.triggerSource === 'schedule' && command.context.scheduleRunId && command.context.scheduleRunId !== 'schedule-preflight'
-        ? await schedules.approvalProfileForRun(command.context.scheduleRunId) ?? createApprovalProfileSnapshot('cautious')
-        : runToolPolicies.resolveApprovalProfile(command),
-      resolveScopeRoots: (command) =>
-        resolveToolScopeRoots(command, executionScopeDependencies),
-      resolveBoundScopes: (command) =>
-        resolveToolBoundScopeAuthorization(
-          command,
-          executionScopeDependencies,
-          Date.now(),
-        ),
-      resolveDefinition: async (reference, command) => {
-        const installed = await capabilityCatalog.resolve(
-          capabilityScopeChainForToolCommand(command),
-        )
-        return installed
-          .flatMap((value) => projectConnectorTools(value))
-          .find(
-            (definition) =>
-              definition.id === reference.id &&
-              definition.version === reference.version &&
-              definition.definitionDigest === reference.digest,
-          )
-      },
-    })
-    pluginHooks = new PluginHookDispatcher({
-      catalog: () => toolCatalog.list(),
-      registry: pluginContributions,
-      toolBoundary: liveToolRuntime,
-    })
-    await Promise.all([
-      toolAdapters.health('builtin'),
-      toolAdapters.health('sandbox'),
-      toolAdapters.health('mcp'),
-      toolAdapters.health('computer'),
-      toolAdapters.health('connector'),
-    ])
-    await liveToolRuntime.restorePendingPermissions()
     await schedules.reconcilePermissions()
-    while ((await toolOutboxDispatcher.dispatchBatch()).claimed > 0) {
-      // Drain persisted Tool dispatches before accepting new work.
-    }
     await new ReconcileRuntimeDelegations({
-      store: agentDelegationStore, runs: agentRuntimeRuns, checkpoints: agentRunCheckpoints,
+      store: agentDelegationStore, runs: agentRuntimeRuns,
     }).execute()
     await assistantTimeline.reconcileTerminalConversations(conversationGeneratedArtifacts)
     agentDelegations.restore()
     for (const run of await agentRuntimeRuns.listUnfinished()) {
       if (run.status === 'waiting_input' || run.status === 'paused') agentDelegations.recoveryBlocked(run.id)
     }
-    await liveToolRuntime.recoverInterrupted()
     await networkGateway.start()
     await scheduleScheduler.start()
     try {
@@ -4186,107 +3751,112 @@ app
       repositories.aiRuns,
       modelService,
     ).execute()
-    const recoveryConfiguration =
-      new AgentRunRecoveryConfigurationValidator({
-        runtime: runGateway,
-        models: modelService,
-      })
-    const pendingCallReconciler = new PendingCallReconciler(toolProjections)
-    const runtimeRunResumer = new RuntimeRunResumer({
-      store: agentDelegationStore,
-      delegations: agentDelegations,
-      attach: async (run, checkpoint) => {
-        const model = run.snapshot.modelProfileId
-          ? await modelService.resolveExecution(run.snapshot.modelProfileId) : undefined
-        await runGateway.attachRecoveredRun(run, checkpoint, model)
+    const dshHistorySync = new DshHistorySync({
+      sessions: dshSessionBindings,
+      history: {
+        readRange: (input) => ({
+          session: {
+            runtimeInstanceId: input.runtimeInstanceId,
+            sessionId: input.sessionId,
+            runId: input.runId,
+            manifestDigest: input.manifestDigest,
+            owner: input.owner,
+          },
+          afterSequence: input.afterSequence,
+          nextAfterSequence: input.afterSequence,
+          hasMore: false,
+          events: [],
+        }),
       },
-      events: (runId, signal) => runGateway.streamEvents(runId, signal),
-      cancel: (runId) => runGateway.cancelRun(runId),
-      project: async (event) => {
-        const projection = await assistantTimeline.getSnapshot(event.runId)
-        if (!projection) return
-        const next = projectConversationRunEvent(projection, event)
-        const timelineEvent = toAssistantRunEvent(event)
-        if (!next || !timelineEvent) return
+      ingestor: dshRuntimeEventIngestor,
+      productCommandResults: {
+        reconcileCompletedResult: async () => 'duplicate' as const,
+      },
+    })
+    const dshRunManifests = {
+      getByRunId: async (runId: string) =>
+        (await dshManifestPublications.getByRunId(runId))?.manifest,
+    }
+    const resumeDshSession = async (
+      _run: AgentRuntimeRun,
+      manifest: DshRunManifest
+    ) => {
+      if (!dshControlPlane) {
+        throw new Error('DSH control plane is not initialized')
+      }
+      await dshControlPlane.resumeSession({
+        manifest,
+        cwd: userDataPath,
+      })
+    }
+    const projectRecoveryEvent = async (
+      run: AgentRuntimeRun,
+      recoveryEvent: { type: AiRunEvent['type']; data: Record<string, unknown> }
+    ) => {
+      if (recoveryEvent.type === 'run.recovery_blocked') agentDelegations.recoveryBlocked(run.id)
+      const projection = await assistantTimeline.getSnapshot(run.id)
+      if (!projection) return
+      const sequence = projection.lastSequence + 1
+      const event: AiRunEvent = {
+        id: `${run.id}:recovery:${sequence}`,
+        runId: run.id,
+        sequence,
+        type: recoveryEvent.type,
+        timestamp: new Date().toISOString(),
+        data: recoveryEvent.data,
+      }
+      const next = projectConversationRunEvent(projection, event)
+      const timelineEvent = toAssistantRunEvent(event)
+      if (next && timelineEvent) {
+        let appended: boolean
         if (agentDelegationStore.get(event.runId)) {
-          await assistantTimeline.appendAndProject(timelineEvent, next)
+          appended = await assistantTimeline.appendAndProject(
+            timelineEvent,
+            next
+          )
         } else {
-          const sessionId = agentRuntimeRuns.getById(event.runId)?.snapshot.conversationId
-          const status = event.type === 'run.completed' ? 'completed'
-            : event.type === 'run.failed' ? 'failed' : event.type === 'run.cancelled' ? 'cancelled' : undefined
-          const source = status ? await conversationGeneratedArtifacts.finalizeRun({
-            runId: event.runId, conversationId: sessionId, assistantMessageId: next.assistantMessageId, status
-          }) : undefined
-          await assistantTimeline.appendRecoveredAndProject(timelineEvent, next, source)
+          appended = await assistantTimeline.appendRecoveredAndProject(
+            timelineEvent,
+            next
+          )
         }
-        const sessionId = agentRuntimeRuns.getById(event.runId)?.snapshot.conversationId
+        const sessionId = run.snapshot.conversationId
+        if (appended && sessionId && mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send(
+            IPC_EVENT_CHANNELS.conversationTurnProjection,
+            { sessionId, turnId: next.turnId, projection: next }
+          )
+        }
         const conversation = sessionId ? await repositories.chatSessions.get(sessionId) : undefined
         if (conversation && mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send(IPC_EVENT_CHANNELS.conversationEvent, { conversation })
         }
-      },
-      onError: (runId) => console.error('Recovered Agent Run stream failed', {
-        runId, errorCode: 'recovery_stream_failed',
-      }),
-    })
-    const resumeRecoveredRun = (run: AgentRuntimeRun, checkpoint: RunCheckpoint) =>
-      runtimeRunResumer.resume(run, checkpoint)
+      }
+    }
     const recoveryActions = new AgentRunRecoveryActions({
+      runtimeInstanceId: DSH_RUNTIME_INSTANCE_ID,
       runs: agentRuntimeRuns,
-      checkpoints: agentRunCheckpoints,
-      validateConfiguration: (run, checkpoint) =>
-        recoveryConfiguration.validate(run, checkpoint),
-      reconcilePendingCalls: async (_run, checkpoint) =>
-        pendingCallReconciler.reconcile(checkpoint.pendingCalls),
-      resume: resumeRecoveredRun,
-      branch: async (run, checkpoint) => {
-        const model = run.snapshot.modelProfileId
-          ? await modelService
-              .resolveExecution(run.snapshot.modelProfileId)
-              .catch(() => undefined)
-          : undefined
-        return runGateway.branchRecoveredRun(run, checkpoint, model)
+      manifests: dshRunManifests,
+      sessions: dshSessionBindings,
+      historySync: dshHistorySync,
+      resumeSession: resumeDshSession,
+      cancelSession: async (_run, _manifest, binding) => {
+        if (!dshControlPlane) {
+          throw new Error('DSH control plane is not initialized')
+        }
+        await dshControlPlane.cancelSession(binding)
       },
-      cancelProvider: (providerRunId) =>
-        gatewayRuns.cancelRun(providerRunId),
       cancelDelegations: (runId) => agentDelegations.cancel(runId),
+      projectRecoveryEvent,
     })
     const recoverRuntimeRuns = new RecoverAgentRuntimeRunsUseCase({
+      runtimeInstanceId: DSH_RUNTIME_INSTANCE_ID,
       runs: agentRuntimeRuns,
-      checkpoints: agentRunCheckpoints,
-      validateConfiguration: (run, checkpoint) =>
-        recoveryConfiguration.validate(run, checkpoint),
-      reconcilePendingCalls: async (_run, checkpoint) =>
-        pendingCallReconciler.reconcile(checkpoint.pendingCalls),
-      resume: resumeRecoveredRun,
-      projectRecoveryEvent: async (run, recoveryEvent) => {
-        if (recoveryEvent.type === 'run.recovery_blocked') agentDelegations.recoveryBlocked(run.id)
-        const projection = await assistantTimeline.getSnapshot(run.id)
-        if (!projection) return
-        const sequence = projection.lastSequence + 1
-        const event: AiRunEvent = {
-          id: `${run.id}:recovery:${sequence}`,
-          runId: run.id,
-          sequence,
-          type: recoveryEvent.type,
-          timestamp: new Date().toISOString(),
-          data: recoveryEvent.data,
-        }
-        const next = projectConversationRunEvent(projection, event)
-        const timelineEvent = toAssistantRunEvent(event)
-        if (next && timelineEvent) {
-          if (agentDelegationStore.get(event.runId)) {
-            await assistantTimeline.appendAndProject(timelineEvent, next)
-          } else {
-            await assistantTimeline.appendRecoveredAndProject(timelineEvent, next)
-          }
-          const sessionId = run.snapshot.conversationId
-          const conversation = sessionId ? await repositories.chatSessions.get(sessionId) : undefined
-          if (conversation && mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send(IPC_EVENT_CHANNELS.conversationEvent, { conversation })
-          }
-        }
-      },
+      manifests: dshRunManifests,
+      sessions: dshSessionBindings,
+      historySync: dshHistorySync,
+      resumeSession: resumeDshSession,
+      projectRecoveryEvent,
     })
     await new RecoverInterruptedNodeRunsUseCase({
       executions: repositories.workflowExecutions,
@@ -4314,18 +3884,28 @@ app
       rendererFile: join(moduleDirectory, '../renderer/index.html'),
     })
     registerMainIpc({
-      sidecar,
+      sidecar: privateWorkerStatus,
       webProviders,
       agentRuntime: {
         orchestrator: agentOrchestrator,
-        resolveRunId: async (id) => (agentRuntimeRuns.getById(id) ??
-          await agentRuntimeRuns.getByProviderRunId(id))?.id,
+        resolveRunId: async (id) => (await agentRuntimeRuns.getById(id))?.id,
         resolveRun: async (id) => agentRuntimeRuns.getById(id),
-        cancel: (id) => runGateway.cancelRun(id),
+        cancel: async (id, sessionId) => {
+          await dshRunGateway.cancelRun(id)
+          const conversation = await cancelConversationRun.execute({
+            sessionId,
+            runId: id,
+          })
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send(
+              IPC_EVENT_CHANNELS.conversationEvent,
+              { conversation },
+            )
+          }
+        },
       },
       aiRuns: {
         executeNode: executeWorkflowNode,
-        executeStage: executeWorkflowStage,
         cancel: cancelAiRun,
         getRun: new GetAiRunUseCase(runs),
         listEvents: new ListAiRunEventsUseCase(runs),
@@ -4341,15 +3921,13 @@ app
           profiles: agentProfiles,
           catalog: toolCatalog,
           workspaceExists: async (id) => Boolean(await repositories.workspaces.get(id)),
-          sandbox: async () => {
-            const capabilities = await sidecar.getClient().getSandboxCapabilities()
-              .catch(() => ({ processIsolation: 'unavailable' as const }))
-            return { available: capabilities.processIsolation !== 'unavailable', networkAllowed: true }
-          },
+          sandbox: async () => ({
+            available: false,
+            networkAllowed: false,
+          }),
         }),
         importer: extensionCatalogImporter,
         mcpServers,
-        onCatalogChanged: synchronizeLegacyCapabilities,
       },
       skillRegistry: {
         service: skillRegistry,
@@ -4378,8 +3956,36 @@ app
       toolPermissions: {
         defaults: approvalDefaults,
         observability: new ApprovalObservabilityService({ events: toolEvents }),
-        permissions: toolProjections,
-        decisions: new ToolPermissionDecisionService(liveToolRuntime),
+        permissions: {
+          listPendingPermissions: async () => {
+            const pending =
+              await (dshControlPlane?.interactionPermissions.listPendingPermissions() ??
+                Promise.resolve([]))
+            const filtered = []
+            for (const permission of pending) {
+              const projection = await assistantTimeline.getSnapshot(permission.runId)
+              if (
+                projection &&
+                ['completed', 'failed', 'cancelled'].includes(projection.status)
+              ) {
+                continue
+              }
+              filtered.push(permission)
+            }
+            return filtered
+          },
+        },
+        decisions: {
+          listGrants: async () => [],
+          revokeGrant: async () => undefined,
+          resolve: (command) => {
+            if (!dshControlPlane) {
+              throw new Error('DSH control plane is unavailable')
+            }
+            return dshControlPlane.interactionPermissions.resolve(command)
+          },
+        },
+        onChanged: () => broadcastToolPermissionChanged(),
       },
       capabilityCatalog: {
         catalog: capabilityCatalog,
@@ -4403,7 +4009,6 @@ app
       backup: backupIpc,
       quitApp: () => app.quit(),
       respondToCloseRequest: respondToRendererCloseRequest,
-      persistence,
       workspace,
       terminalManager,
       codeSnippetService: new CodeSnippetService({ dialog }),
@@ -4436,115 +4041,6 @@ app
     )
     app.quit()
   })
-
-function createElectronMacOsComputerHost(): MacOsNativeComputerHost {
-  return new MacOsNativeComputerHost({
-    permissions: {
-      screenRecording: () =>
-        systemPreferences.getMediaAccessStatus('screen') === 'granted',
-      accessibility: () =>
-        systemPreferences.isTrustedAccessibilityClient(false),
-    },
-    driver: new ElectronMacOsComputerDriver({
-      runAppleScript,
-      getScreenSources: () =>
-        desktopCapturer.getSources({
-          types: ['screen'],
-          thumbnailSize: { width: 1920, height: 1080 },
-          fetchWindowIcons: false,
-        }),
-    }),
-  })
-}
-
-function runAppleScript(script: string, signal: AbortSignal): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      '/usr/bin/osascript',
-      ['-e', script],
-      {
-        encoding: 'utf8',
-        maxBuffer: 1024 * 1024,
-        timeout: 30_000,
-        signal,
-      },
-      (error, stdout) => {
-        if (error) {
-          reject(new Error('Computer Use native action failed'))
-          return
-        }
-        resolve(stdout)
-      },
-    )
-  })
-}
-
-function requireToolString(args: Record<string, unknown>, key: string): string {
-  const value = args[key]
-  if (typeof value !== 'string' || !value.trim() || value.includes('\0')) {
-    throw new Error(`Tool argument is invalid: ${key}`)
-  }
-  return value
-}
-
-function parseMediaRuntimeCommand(input: JsonObject): {
-  definition: ReturnType<typeof normalizeToolDefinitionReference>
-  input: JsonObject
-  scopeRoots: string[]
-} {
-  const definition = normalizeToolDefinitionReference(input.definition)
-  const mediaInput = input.input
-  const scopeRoots = input.scopeRoots
-  if (
-    !mediaInput ||
-    typeof mediaInput !== 'object' ||
-    Array.isArray(mediaInput) ||
-    !Array.isArray(scopeRoots) ||
-    scopeRoots.length === 0 ||
-    scopeRoots.some(
-      (root) =>
-        typeof root !== 'string' ||
-        !root.trim() ||
-        root.includes('\0')
-    )
-  ) {
-    throw new Error('media_command_invalid')
-  }
-  return {
-    definition,
-    input: structuredClone(mediaInput) as JsonObject,
-    scopeRoots: [...scopeRoots] as string[],
-  }
-}
-
-function optionalToolString(
-  args: Record<string, unknown>,
-  key: string,
-): string | undefined {
-  return args[key] === undefined ? undefined : requireToolString(args, key)
-}
-
-function withoutToolOperation(
-  args: Record<string, unknown>,
-): Record<string, unknown> {
-  const { operation: _operation, ...rest } = args
-  return rest
-}
-
-function executeToolOperation(
-  operation: unknown,
-  args: Record<string, unknown>,
-): Promise<unknown> {
-  if (
-    typeof operation !== 'object' ||
-    operation === null ||
-    !('execute' in operation) ||
-    typeof operation.execute !== 'function'
-  ) {
-    throw new Error('Application Tool operation is unavailable')
-  }
-  return operation.execute(args)
-}
 
 function toWorkflowTemplateLibraryItem(
   template: Awaited<ReturnType<ManageWorkflowTemplatesUseCase['create']>>,
@@ -4594,29 +4090,6 @@ function toWorkflowTemplateVersionSummary(
       ? {}
       : { publishedAt: version.publishedAt }),
   }
-}
-
-function capabilityScopeChainForToolCommand(
-  command: ToolExecutionCommand,
-): CapabilityScope[] {
-  if (command.context.capabilityScopes) {
-    return command.context.capabilityScopes.map((scope) => ({ ...scope }))
-  }
-  const scopes: CapabilityScope[] = [{ kind: 'global' }]
-  if (command.context.workspaceId) {
-    scopes.push({
-      kind: 'workspace',
-      workspaceId: command.context.workspaceId,
-    })
-    if (command.context.requirementId) {
-      scopes.push({
-        kind: 'requirement',
-        workspaceId: command.context.workspaceId,
-        requirementId: command.context.requirementId,
-      })
-    }
-  }
-  return scopes
 }
 
 function toWorkflowTemplateDraft(
@@ -4729,59 +4202,6 @@ function toKnowledgeNoteDto(aggregate: {
   }
 }
 
-function normalizeSkillConnectorBindings(
-  values: unknown[],
-): SkillConnectorBinding[] {
-  return values.map((value) => {
-    if (
-      typeof value !== 'object' ||
-      value === null ||
-      Array.isArray(value) ||
-      typeof Reflect.get(value, 'service') !== 'string' ||
-      !Reflect.get(value, 'service').trim() ||
-      typeof Reflect.get(value, 'connectorId') !== 'string' ||
-      !Reflect.get(value, 'connectorId').trim()
-    ) {
-      throw new Error('Skill Connector bindings are invalid')
-    }
-    return {
-      service: Reflect.get(value, 'service'),
-      connectorId: Reflect.get(value, 'connectorId'),
-    }
-  })
-}
-
-function skillConnectorOwner(
-  context: ToolExecutionCommand['context'],
-): Parameters<ConnectorService['authorizeSkillService']>[0]['owner'] {
-  if (context.nodeRunId) return { type: 'node_run', id: context.nodeRunId }
-  if (context.requirementId) {
-    return { type: 'requirement', id: context.requirementId }
-  }
-  if (context.conversationId) {
-    return { type: 'conversation', id: context.conversationId }
-  }
-  if (context.workspaceId) {
-    return { type: 'workspace', id: context.workspaceId }
-  }
-  return { type: 'application', id: 'realmflow' }
-}
-
-function skillConnectorAttribution(
-  context: ToolExecutionCommand['context'],
-) {
-  return {
-    ...(context.workspaceId ? { workspaceId: context.workspaceId } : {}),
-    ...(context.requirementId
-      ? { requirementId: context.requirementId }
-      : {}),
-    ...(context.nodeRunId ? { nodeRunId: context.nodeRunId } : {}),
-    ...(context.conversationId
-      ? { conversationId: context.conversationId }
-      : {}),
-  }
-}
-
 const CUPS_FILTER_EXECUTABLE = 'cupsfilter'
 
 async function printHtmlToPdfWithElectron(
@@ -4891,28 +4311,11 @@ async function shutdownMainRuntime(): Promise<void> {
   }
   knowledgeStartupRebuildRun = undefined
   try {
-    await toolAdapters?.close()
+    await dshControlPlane?.drainAndStop()
   } catch (error) {
     firstError ??= error
   }
-  toolAdapters = null
-  try {
-    await browserRuntime?.shutdown()
-  } catch (error) {
-    firstError ??= error
-  }
-  browserRuntime = null
-  try {
-    await localToolProcesses?.close()
-  } catch (error) {
-    firstError ??= error
-  }
-  localToolProcesses = null
-  try {
-    await sidecar.stop()
-  } catch (error) {
-    firstError ??= error
-  }
+  dshControlPlane = undefined
   try {
     if (qdrant) await qdrant.stop()
   } catch (error) {

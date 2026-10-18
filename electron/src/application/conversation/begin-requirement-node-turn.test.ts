@@ -15,6 +15,7 @@ const session: ChatSessionRecord = {
   nodeRunId: 'node-run-1',
   title: 'Build',
   sortOrder: 1,
+  turns: [],
   messages: [],
   createdAt: 1,
   updatedAt: 1
@@ -50,9 +51,21 @@ describe('BeginRequirementNodeTurnUseCase', () => {
       entity: {
         ...session,
         revision: 1,
+        turns: [
+          {
+            id: 'turn-1',
+            sessionId: session.id,
+            index: 0,
+            userMessageId: 'message-1',
+            assistantMessageId: 'message-2',
+            status: 'running',
+            createdAt: 100
+          }
+        ],
         messages: [
           {
             id: 'message-1',
+            turnId: 'turn-1',
             role: 'user',
             status: 'completed',
             content: 'Canary',
@@ -62,6 +75,7 @@ describe('BeginRequirementNodeTurnUseCase', () => {
           },
           {
             id: 'message-2',
+            turnId: 'turn-1',
             role: 'assistant',
             status: 'pending',
             content: '',

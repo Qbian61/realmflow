@@ -17,7 +17,6 @@ import type {
   ListAiRunEventsUseCase
 } from '../../application/query-ai-runs'
 import type { CancelAiRunUseCase } from '../application/generate-stage-artifact'
-import type { ExecuteWorkflowStageUseCase } from '../../application/workflow/execute-workflow-stage'
 import type { ExecuteWorkflowNodeUseCase } from '../../application/workflow/execute-workflow-node'
 
 type RunEventTarget = {
@@ -33,7 +32,6 @@ export interface RunEventSubscriber {
 
 type Dependencies = {
   executeNode: Pick<ExecuteWorkflowNodeUseCase, 'execute'>
-  executeStage: Pick<ExecuteWorkflowStageUseCase, 'execute'>
   cancel: Pick<CancelAiRunUseCase, 'execute'>
   getRun: Pick<GetAiRunUseCase, 'execute'>
   listEvents: Pick<ListAiRunEventsUseCase, 'execute'>
@@ -49,7 +47,6 @@ type Dependencies = {
 
 export function registerAiRunIpc({
   executeNode,
-  executeStage,
   cancel,
   getRun,
   listEvents,
@@ -74,24 +71,14 @@ export function registerAiRunIpc({
         payload,
         IPC_COMMAND_CHANNELS.aiRunStart
       )
-      const handle =
-        input.nodeId !== undefined && input.nodeRunId !== undefined
-          ? await executeNode.execute({
-              requirementId: input.requirementId,
-              nodeId: input.nodeId,
-              nodeRunId: input.nodeRunId,
-              ...(input.modelProfileId
-                ? { modelProfileId: input.modelProfileId }
-                : {})
-            })
-          : await executeStage.execute({
-              requirementId: input.requirementId,
-              stageId: input.stageId!,
-              ...(input.nodeRunId ? { nodeRunId: input.nodeRunId } : {}),
-              ...(input.modelProfileId
-                ? { modelProfileId: input.modelProfileId }
-                : {})
-            })
+      const handle = await executeNode.execute({
+        requirementId: input.requirementId,
+        nodeId: input.nodeId,
+        nodeRunId: input.nodeRunId,
+        ...(input.modelProfileId
+          ? { modelProfileId: input.modelProfileId }
+          : {})
+      })
       publisher.subscribe(handle.runId, event.sender)
       return { runId: handle.runId }
     }

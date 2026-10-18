@@ -121,6 +121,27 @@ describe('PermissionPromptHost', () => {
     expect(screen.getByRole('textbox')).toHaveValue('保留草稿')
     expect(onSubmit).not.toHaveBeenCalled()
   })
+
+  it('keeps a cancellable Composer visible while permission is pending', async () => {
+    const api = permissionApi([permission('permission-1', 100, 'First tool')])
+    const onCancel = vi.fn()
+    render(<LocalizationProvider>
+      <Composer value="" onChange={vi.fn()} onSubmit={vi.fn()}
+        onCancel={onCancel} disabled
+        placeholder="输入" fileInputId="cancel-overlay-test-file"
+        labels={{ textarea: '主对话输入框', model: '模型', workspace: '空间',
+          permission: '权限', submit: '发送', menu: '菜单', openMenu: '打开', closeMenu: '关闭' }}
+        insertions={{ mode: '', skill: '', connector: '' }}
+        permissionRunIds={['run-1']} />
+      <PermissionPromptHost api={api} />
+    </LocalizationProvider>)
+
+    await screen.findByText('First tool')
+    const stop = screen.getByRole('button', { name: '停止生成' })
+    expect(stop).toBeVisible()
+    fireEvent.click(stop)
+    expect(onCancel).toHaveBeenCalledOnce()
+  })
 })
 
 function permissionApi(

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.skill.requirement_analysis",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "name": "Requirement analysis",
   "description": "Clarify goals, boundaries, risks, and acceptance criteria.",
   "instructionsPath": "instructions/requirement_analysis.md",

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.presentation.reorder_shape",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Reorder presentation shape",
   "description": "Move a shape to an explicit layer.",
   "tags": [

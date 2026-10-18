@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.image.composite",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Composite image",
   "description": "Composite bounded local image layers.",
   "tags": [

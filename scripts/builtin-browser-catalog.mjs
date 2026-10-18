@@ -38,7 +38,7 @@ function capabilities(action) {
 }
 
 export const browserPackageSpec = {
-  directory: 'browser', packageId: 'realmflow.builtin.browser', version: '1.0.0',
+  directory: 'browser', packageId: 'realmflow.builtin.browser', version: '1.0.1',
   name: 'Browser', description: 'Main-owned Chromium sessions and scoped browser artifacts.',
   tools: Object.entries(actions).map(([action, [name, description]]) => [
     `builtin.browser.${action}`, name, description, capabilities(action),

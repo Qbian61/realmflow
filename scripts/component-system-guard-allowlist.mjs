@@ -1,7 +1,7 @@
 const RULE_METADATA = {
   "control-size": {
     reason:
-      "Freeze audited legacy domain controls that predate the shared 28/32/36px scale.",
+      "Freeze audited domain controls that predate the shared 28/32/36px scale.",
     removalCondition:
       "Remove each baseline after the owning surface migrates its remaining controls to Button, IconButton or Field.",
   },
@@ -132,8 +132,8 @@ export const componentSystemGuardAllowlist = [
   baseline(
     "named-layer",
     "src/styles.css",
-    54,
-    "0583cbbcc8334944958fc0779e1be515519ca6782f5c3cd474f3defbc69868b4",
+    53,
+    "a8fedb3873e74c0209e8c62851bbebec8cf886216ed82d13ab0444c7791e6e5a",
   ),
   baseline(
     "primitive-visual-copy",

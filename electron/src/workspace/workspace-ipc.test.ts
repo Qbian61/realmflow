@@ -58,6 +58,7 @@ describe('registerWorkspaceIpc', () => {
     expect([...handlers.keys()]).toEqual([
       'workspace:choose-files',
       'workspace:open-session-files',
+      'workspace:bind-session-directory',
       'workspace:choose-folder',
       'workspace:choose-directory',
       'workspace:get-binding',
@@ -80,6 +81,16 @@ describe('registerWorkspaceIpc', () => {
     const chooseFolder = handlers.get('workspace:choose-folder')
     await expect(chooseFolder?.({})).resolves.toMatchObject({
       rootName: 'project'
+    })
+
+    const bindSessionDirectory = handlers.get(
+      'workspace:bind-session-directory'
+    )
+    await expect(
+      bindSessionDirectory?.({}, workspaceDirectory)
+    ).resolves.toMatchObject({
+      rootName: 'project',
+      rootPath: await realpath(workspaceDirectory)
     })
 
     const chooseDirectory = handlers.get('workspace:choose-directory')

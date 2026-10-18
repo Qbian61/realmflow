@@ -1058,8 +1058,7 @@ function normalizeNodeDraft(
           ...projectNodeConfiguration(
             configuration,
             node.type,
-            node.stableKey,
-            node.executor
+            node.stableKey
           )
         }
       : {
@@ -1076,8 +1075,7 @@ function normalizeNodeDraft(
 function projectNodeConfiguration(
   configuration: WorkflowNodeConfiguration,
   nodeType: WorkflowTemplateNode['type'],
-  stableKey: string,
-  existingExecutor?: WorkflowTemplateNode['executor']
+  stableKey: string
 ): Pick<WorkflowTemplateNode, 'executor' | 'completionGate'> {
   const completionGate =
     configuration.completionGate.requireApproval ||
@@ -1107,9 +1105,6 @@ function projectNodeConfiguration(
                   attachments: [...configuration.input.attachments]
                 }
               }
-            : {}),
-          ...(existingExecutor?.legacyStageId
-            ? { legacyStageId: existingExecutor.legacyStageId }
             : {})
         }
       : undefined
@@ -1136,8 +1131,7 @@ function applyNodeConfiguration(
     ...projectNodeConfiguration(
       configuration,
       node.type,
-      node.stableKey,
-      node.executor
+      node.stableKey
     )
   }
 }

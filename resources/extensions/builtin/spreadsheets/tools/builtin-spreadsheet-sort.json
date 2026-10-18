@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.spreadsheet.sort",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Sort spreadsheet rows",
   "description": "Sort a bounded range by explicit columns.",
   "tags": [

@@ -80,7 +80,6 @@ describe('RollbackWorkflowToNodeUseCase', () => {
     expect(harness.invalidations).toEqual([
       {
         nodeRunIds: ['run-design-1', 'run-build-1'],
-        nodeIds: ['design', 'build'],
         updatedAt: 100,
         inTransaction: true
       }
@@ -310,7 +309,6 @@ describe('RollbackWorkflowToNodeUseCase', () => {
     expect(harness.invalidations).toEqual([
       {
         nodeRunIds: ['run-design-0', 'run-design-1', 'run-build-1'],
-        nodeIds: ['design', 'build'],
         updatedAt: 100,
         inTransaction: true
       }
@@ -343,7 +341,6 @@ function createHarness(options: HarnessOptions = {}) {
   const workflowReasons: string[] = []
   const invalidations: Array<{
     nodeRunIds: readonly string[]
-    nodeIds: readonly string[]
     updatedAt: number
     inTransaction: boolean
   }> = []
@@ -462,10 +459,9 @@ function createHarness(options: HarnessOptions = {}) {
         }
       },
       artifacts: {
-        invalidateByNodeRunIds: async (nodeRunIds, updatedAt, nodeIds = []) => {
+        invalidateByNodeRunIds: async (nodeRunIds, updatedAt) => {
           invalidations.push({
             nodeRunIds,
-            nodeIds,
             updatedAt,
             inTransaction
           })

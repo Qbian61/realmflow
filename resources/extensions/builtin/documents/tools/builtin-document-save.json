@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.document.save",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "name": "Save document",
   "description": "Atomically commit a safe DOCX candidate revision.",
   "tags": [

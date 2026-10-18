@@ -104,6 +104,7 @@ const session: ChatSessionRecord = {
   nodeRunId: nodeRun.id,
   title: 'Build',
   sortOrder: 6,
+  turns: [],
   messages: [],
   createdAt: 6,
   updatedAt: 6

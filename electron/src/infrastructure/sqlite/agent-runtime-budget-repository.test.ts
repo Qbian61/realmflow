@@ -3,8 +3,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createAgentRunSnapshot } from '../../../../domain/agent-runtime'
-import { createRunCheckpoint } from '../../../../domain/agent-run-recovery'
-import { SqliteAgentRunCheckpointRepository } from './agent-run-checkpoint-repository'
 import { openRealmFlowDatabase, type RealmFlowDatabase } from './database'
 import { SqliteAgentRuntimeRunRepository } from './agent-runtime-run-repository'
 import * as budgetModule from './agent-runtime-budget-repository'
@@ -49,23 +47,16 @@ const consume = { runId: 'root', requestId: 'call-1', fingerprint: 'read-file', 
 async function createBranch(id: string, sourceId: string, valid = true) {
   const runs = new SqliteAgentRuntimeRunRepository(database)
   const source = runs.getById(sourceId)!
-  const checkpoint = createRunCheckpoint({
-    runId: sourceId, ordinal: 1, reason: 'paused', snapshotDigest: 'a'.repeat(64),
-    configurationDigests: {
-      agentProfile: 'a'.repeat(64), prompt: 'b'.repeat(64), policy: 'c'.repeat(64),
-      capabilityCatalog: 'd'.repeat(64), capabilityBinding: 'e'.repeat(64)
-    },
-    messageWindow: [], pendingCalls: [], projectionCursor: 0,
-    remainingBudgets: { toolCalls: 2, subagents: 1, retries: 1, timeoutMs: 1000, tokens: 100 },
-    createdAt: 10
-  })
-  await new SqliteAgentRunCheckpointRepository(database).save(checkpoint)
   await runs.create({
     id, status: 'running', createdAt: 11, updatedAt: 11,
     snapshot: {
       ...source.snapshot, runId: id, parentRunId: sourceId,
       delegationDepth: source.snapshot.delegationDepth + 1, delegationOrdinal: 1,
-      sourceCheckpoint: { runId: sourceId, ordinal: 1, resumeToken: valid ? checkpoint.resumeToken : 'f'.repeat(64) }
+      sourceCheckpoint: {
+        runId: valid ? sourceId : 'missing-source',
+        ordinal: 1,
+        resumeToken: 'f'.repeat(64)
+      }
     }
   })
 }
@@ -100,7 +91,7 @@ describe('durable shared runtime budget', () => {
     expect(() => store.consume({ ...consume, runId: 'child-branch', requestId: 'extra' })).toThrow('runtime_budget_exhausted')
   })
 
-  it('rejects a recovery account reference without its matching persisted checkpoint', async () => {
+  it('rejects a recovery account reference without its matching source lineage', async () => {
     const store = await fixture()
     await createBranch('forged', 'root', false)
     expect(() => store.consume({ ...consume, runId: 'forged' })).toThrow('runtime_budget_source_invalid')

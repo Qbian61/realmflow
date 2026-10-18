@@ -1,4 +1,4 @@
-import type { SpreadsheetComputeOperation } from '../../sidecar/client'
+import type { SpreadsheetComputeOperation } from '../files/private-python-worker-client'
 import type { JsonObject } from '../../../../domain/tool-protocol-validation'
 import type { LocalSpreadsheetSessionService } from '../files/local-spreadsheet-session-service'
 import { inspectLocalFileCapability } from '../files/local-file-capability-service'

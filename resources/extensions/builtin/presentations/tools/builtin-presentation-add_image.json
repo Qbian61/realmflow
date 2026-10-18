@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.presentation.add_image",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Add presentation image",
   "description": "Add an authorized local image to a slide.",
   "tags": [

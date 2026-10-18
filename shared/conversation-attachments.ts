@@ -1,4 +1,5 @@
 import type { ConversationAttachmentDescriptor } from '../domain/conversation-input'
+import type { OpenedSessionFiles } from './workspace'
 
 export type PickConversationAttachmentsCommand = {
   requestId: string
@@ -25,6 +26,8 @@ export interface ConversationAttachmentApi {
     command: PickConversationAttachmentsCommand
   ): Promise<ConversationAttachmentPickerResult>
   remove(command: RemoveConversationAttachmentCommand): Promise<void>
+  readImage(attachmentId: string): Promise<string>
+  open(attachmentId: string): Promise<OpenedSessionFiles>
 }
 
 export type ConversationAttachmentSubmission = {
@@ -52,6 +55,10 @@ export function parseRemoveConversationAttachmentCommand(
     draftId: identifier(input.draftId),
     attachmentId: identifier(input.attachmentId)
   }
+}
+
+export function parseConversationAttachmentId(value: unknown): string {
+  return identifier(value)
 }
 
 function command(

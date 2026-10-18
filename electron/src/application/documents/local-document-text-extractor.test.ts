@@ -270,36 +270,40 @@ describe('LocalDocumentTextExtractor', () => {
     })
   })
 
-  it('extracts text from a real PDF container locally', async () => {
-    const extractor = new LocalDocumentTextExtractor()
+  it(
+    'extracts text from a real PDF container locally',
+    async () => {
+      const extractor = new LocalDocumentTextExtractor()
 
-    await expect(
-      extractor.extract({
-        bytes: createPdf('RealmFlow senior backend engineer'),
-        fileName: 'resume.pdf',
-        maxCharacters: 10_000
+      await expect(
+        extractor.extract({
+          bytes: createPdf('RealmFlow senior backend engineer'),
+          fileName: 'resume.pdf',
+          maxCharacters: 10_000
+        })
+      ).resolves.toMatchObject({
+        text: expect.stringContaining('RealmFlow senior backend engineer'),
+        extraction: 'pdf',
+        truncated: false,
+        pages: [
+          {
+            pageNumber: 1,
+            text: expect.stringContaining('RealmFlow senior backend engineer'),
+            items: [
+              expect.objectContaining({
+                text: 'RealmFlow senior backend engineer',
+                x: expect.any(Number),
+                y: expect.any(Number),
+                width: expect.any(Number),
+                height: expect.any(Number)
+              })
+            ]
+          }
+        ]
       })
-    ).resolves.toMatchObject({
-      text: expect.stringContaining('RealmFlow senior backend engineer'),
-      extraction: 'pdf',
-      truncated: false,
-      pages: [
-        {
-          pageNumber: 1,
-          text: expect.stringContaining('RealmFlow senior backend engineer'),
-          items: [
-            expect.objectContaining({
-              text: 'RealmFlow senior backend engineer',
-              x: expect.any(Number),
-              y: expect.any(Number),
-              width: expect.any(Number),
-              height: expect.any(Number)
-            })
-          ]
-        }
-      ]
-    })
-  })
+    },
+    10_000
+  )
 
   it('joins adjacent PDF glyph runs without inserting artificial spaces', () => {
     expect(

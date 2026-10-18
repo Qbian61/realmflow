@@ -11,6 +11,7 @@ const session: Revisioned<ChatSessionRecord> = {
   knowledgeScope: { kind: 'none' },
   title: 'Original title',
   sortOrder: 0,
+  turns: [],
   messages: [],
   revision: 1,
   createdAt: 10,

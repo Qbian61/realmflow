@@ -76,6 +76,21 @@ describe('builtin process Tool handlers', () => {
     })
   })
 
+  it('treats dot cwd as the authorized workspace root', async () => {
+    await expect(
+      run('process.run', {
+        executable: 'python3',
+        arguments: ['-c', 'print("realmflow permission popup test")'],
+        cwd: '.'
+      })
+    ).resolves.toMatchObject({ exitCode: 0, stdout: 'ok' })
+    expect(processes.run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: expect.stringMatching(/\/workspace$/)
+      })
+    )
+  })
+
   it('accepts a small explicit process output limit', async () => {
     await expect(
       run('process.run', {

@@ -83,12 +83,6 @@ export class CredentialVault {
       return new CredentialVault(keyPath, keyring, writeKeyring)
     }
 
-    if (contents.byteLength === KEY_BYTES) {
-      const keyring = createInitialKeyring(contents)
-      await persistKeyring(writeKeyring, keyPath, keyring)
-      return new CredentialVault(keyPath, keyring, writeKeyring)
-    }
-
     const keyring = parseKeyring(contents)
     await chmod(keyPath, 0o600)
     return new CredentialVault(keyPath, keyring, writeKeyring)

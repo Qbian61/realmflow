@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.browser.select",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Select browser option",
   "description": "Select an option by value in the current Run browser using a current snapshot ref.",
   "tags": [

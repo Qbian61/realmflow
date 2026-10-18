@@ -7,9 +7,14 @@ export type RuntimeDelegation = {
   parentRunId: string
   rootRunId: string
   requestId: string
+  ordinal: number
+  agentId: string
+  agentName: string
   status: 'registered' | 'running' | SubagentTaskResult['status']
   task: ValidatedDelegationTask
   result?: SubagentTaskResult
+  startedAt?: number
+  completedAt?: number
   createdAt: number
   updatedAt: number
 }

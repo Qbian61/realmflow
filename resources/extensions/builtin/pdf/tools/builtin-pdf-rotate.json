@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.pdf.rotate",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "name": "Rotate PDF pages",
   "description": "Rotate explicit PDF pages by quarter turns.",
   "tags": [

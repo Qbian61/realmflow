@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { NavLink } from "react-router-dom";
+import { NavLink, useLocation } from "react-router-dom";
 import {
   Archive,
+  Blocks,
   Bot,
+  ChartNoAxesCombined,
   Check,
   ChevronRight,
   CircleHelp,
@@ -12,6 +14,7 @@ import {
   RefreshCw,
   Settings,
   Sun,
+  Workflow,
 } from "lucide-react";
 import { Menu, MenuContent } from "../../components/ui";
 import { useLocalization } from "../../localization/LocalizationProvider";
@@ -48,7 +51,18 @@ export function WorkspaceUserMenu(): JSX.Element {
   const { locale, setLocale, t } = useLocalization();
   const { preference, setTheme } = useTheme();
   const toast = useToast();
+  const location = useLocation();
   const [open, setOpen] = useState(false);
+  const [capabilitiesPath, setCapabilitiesPath] = useState(() =>
+    location.pathname === "/capabilities"
+      ? `${location.pathname}${location.search}`
+      : "/capabilities",
+  );
+  const [workflowPath, setWorkflowPath] = useState(() =>
+    isWorkflowLocation(location.pathname)
+      ? `${location.pathname}${location.search}`
+      : "/workflows",
+  );
   const [activePreferenceMenu, setActivePreferenceMenu] =
     useState<PreferenceMenu>();
   const [submenuPosition, setSubmenuPosition] = useState<SubmenuPosition>();
@@ -119,6 +133,14 @@ export function WorkspaceUserMenu(): JSX.Element {
     window.addEventListener("resize", updatePosition);
     return () => window.removeEventListener("resize", updatePosition);
   }, [activePreferenceMenu]);
+
+  useEffect(() => {
+    if (location.pathname === "/capabilities") {
+      setCapabilitiesPath(`${location.pathname}${location.search}`);
+    }
+    if (!isWorkflowLocation(location.pathname)) return;
+    setWorkflowPath(`${location.pathname}${location.search}`);
+  }, [location.pathname, location.search]);
 
   const togglePreferenceMenu = (
     menu: PreferenceMenu,
@@ -195,6 +217,27 @@ export function WorkspaceUserMenu(): JSX.Element {
               onClose={closeMenus}
             >
               {t("userMenu.modelConfiguration")}
+            </MenuLink>
+            <MenuLink
+              to={capabilitiesPath}
+              icon={<Blocks size={17} />}
+              onClose={closeMenus}
+            >
+              {t("navigation.capabilities")}
+            </MenuLink>
+            <MenuLink
+              to={workflowPath}
+              icon={<Workflow size={17} />}
+              onClose={closeMenus}
+            >
+              {t("navigation.workflows")}
+            </MenuLink>
+            <MenuLink
+              to="/analytics"
+              icon={<ChartNoAxesCombined size={17} />}
+              onClose={closeMenus}
+            >
+              {t("navigation.analytics")}
             </MenuLink>
             <MenuLink
               to="/settings?section=web"
@@ -413,5 +456,11 @@ function MenuLink({
       {icon}
       <span>{children}</span>
     </NavLink>
+  );
+}
+
+function isWorkflowLocation(pathname: string): boolean {
+  return (
+    pathname === "/workflows" || pathname.startsWith("/templates/")
   );
 }

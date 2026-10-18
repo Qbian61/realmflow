@@ -14,6 +14,7 @@ type ConversationMemoryRepository = {
     limit: number
   }): Array<{
     messageId: string
+    turnId: string
     role: 'user' | 'assistant'
     content: string
     rank: number

@@ -1,7 +1,6 @@
 import type { AiRunApi } from './ai-run'
 import type { BusinessApi } from './business'
 import type { NativeOverlayApi } from './native-overlay'
-import type { LegacyPersistenceReadApi } from './persistence'
 import type { WorkspaceApi } from './workspace'
 import type { WebWorkbenchApi } from './workbench'
 import type { TerminalApi } from './terminal'
@@ -45,7 +44,6 @@ export interface RealmFlowApi {
   conversationAttachments?: ConversationAttachmentApi
   quitApp: () => Promise<void>
   appLifecycle?: AppLifecycleApi
-  persistence: LegacyPersistenceReadApi
   nativeOverlay?: NativeOverlayApi
   workspace: WorkspaceApi
   webWorkbench: WebWorkbenchApi

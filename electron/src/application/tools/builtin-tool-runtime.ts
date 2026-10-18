@@ -44,7 +44,7 @@ import { createWebToolHandlers } from './builtin-web-tool-handlers'
 import { WebProviderRuntime } from '../web/web-provider-runtime'
 import type { WebProviderConfigurationService } from '../web/web-provider-configuration-service'
 import { createBrowserToolHandlers } from './builtin-browser-tool-handlers'
-import type { BrowserRuntimeService } from '../browser/browser-runtime-service'
+import type { BrowserToolRuntimePort } from '../browser/browser-runtime-port'
 import type { JsonObject } from '../../../../domain/tool-protocol-validation'
 import type { ToolSessionFamily } from './tool-effect-planner'
 
@@ -79,21 +79,7 @@ const CONTEXT_ARGUMENT_KEYS = [
 
 export type BuiltinToolRuntimeDependencies = {
   protectedRoots?: readonly string[]
-  browser?: Pick<
-    BrowserRuntimeService,
-    'createSession' | 'attachSession' | 'closeSession' | 'execute'
-  > &
-    Partial<
-      Pick<
-        BrowserRuntimeService,
-        | 'describe'
-        | 'describeCurrent'
-        | 'resolveCurrentSessionId'
-        | 'closeCurrent'
-        | 'executeCurrent'
-        | 'ensureCurrentSession'
-      >
-    >
+  browser?: BrowserToolRuntimePort
   resolveSessionPath?: (
     family: ToolSessionFamily,
     sessionId: string

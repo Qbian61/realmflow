@@ -3,8 +3,11 @@ import { realpath } from 'node:fs/promises'
 import { describe, expect, it, vi } from 'vitest'
 import type { JsonObject } from '../../../../domain/tool-protocol-validation'
 import { BuiltinCatalogLoader } from './builtin-catalog-loader'
-import { BrowserRuntimeService } from '../browser/browser-runtime-service'
-import type { BrowserSession } from '../browser/browser-runtime-port'
+import {
+  browserError,
+  type BrowserSession,
+  type BrowserToolRuntimePort
+} from '../browser/browser-runtime-port'
 import type { ToolExecutionContext } from './tool-adapter'
 import {
   APPLICATION_TOOL_HANDLER_NAMES,
@@ -12,19 +15,65 @@ import {
   type ApplicationToolHandlerName
 } from './builtin-tool-runtime'
 
+function owned(
+  records: Map<string, BrowserSession>,
+  id: string,
+  ownerKey: string
+): BrowserSession {
+  const session = records.get(id)
+  if (!session || session.ownerKey !== ownerKey) {
+    throw browserError('owner', 'Browser session owner does not match')
+  }
+  return session
+}
+
 describe('builtin Tool runtime', () => {
   it('executes browser lifecycle through the adapter with trusted owner/workspace and safe errors', async () => {
     const records = new Map<string, BrowserSession>()
-    const browser = new BrowserRuntimeService({
-      list: () => [...records.values()], get: (id) => records.get(id),
-      insert: (s) => { records.set(s.id, s) }, update: (s) => { records.set(s.id, s) }
-    }, {
-      open: async () => {}, close: async () => {},
-      execute: async (_session, action) => {
+    const browser: BrowserToolRuntimePort = {
+      createSession: async (call) => {
+        const session: BrowserSession = {
+          id: 'browser-created',
+          profileId: 'browser-profile',
+          ownerKey: call.ownerKey,
+          status: 'active',
+          revision: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          executionId: call.executionId
+        }
+        records.set(session.id, session)
+        return session
+      },
+      attachSession: async (profileId, call) => {
+        const session: BrowserSession = {
+          id: 'browser-attached',
+          profileId,
+          ownerKey: call.ownerKey,
+          status: 'active',
+          revision: 1,
+          createdAt: 2,
+          updatedAt: 2,
+          executionId: call.executionId
+        }
+        records.set(session.id, session)
+        return session
+      },
+      closeSession: async (id, call) => {
+        const session = owned(records, id, call.ownerKey)
+        records.set(id, {
+          ...session,
+          status: 'closed',
+          revision: session.revision + 1,
+          executionId: call.executionId
+        })
+      },
+      execute: async (id, action, _args, call) => {
+        owned(records, id, call.ownerKey)
         if (action === 'navigate') throw new Error('CDP failed secret-token-without-a-url')
         return { text: 'Ready' }
       }
-    })
+    }
     const adapter = createBuiltinToolAdapter({ ...dependencies(), browser })
     const definitions = (await new BuiltinCatalogLoader(join(process.cwd(), 'resources/extensions/builtin')).load()).flatMap((p) => p.tools)
     const context: ToolExecutionContext = {
@@ -60,7 +109,6 @@ describe('builtin Tool runtime', () => {
     expect(await execute('attach', { profileId: created.output.profileId })).toMatchObject({
       outcome: 'succeeded', output: { profileId: created.output.profileId, status: 'active' }
     })
-    await browser.shutdown()
   })
 
   it('registers every non-computer builtin definition at startup', async () => {

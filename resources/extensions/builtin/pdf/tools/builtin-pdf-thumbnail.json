@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.pdf.thumbnail",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "name": "Render PDF page",
   "description": "Render one PDF page as a bounded PNG thumbnail.",
   "tags": [

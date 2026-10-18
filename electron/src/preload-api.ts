@@ -37,7 +37,17 @@ export function createRealmFlowApi(
       pick: (command) =>
         invoke(IPC_COMMAND_CHANNELS.conversationAttachmentPick, command),
       remove: (command) =>
-        invoke(IPC_COMMAND_CHANNELS.conversationAttachmentRemove, command)
+        invoke(IPC_COMMAND_CHANNELS.conversationAttachmentRemove, command),
+      readImage: (attachmentId) =>
+        invoke(
+          IPC_QUERY_CHANNELS.conversationAttachmentReadImage,
+          attachmentId
+        ),
+      open: (attachmentId) =>
+        invoke(
+          IPC_COMMAND_CHANNELS.conversationAttachmentOpen,
+          attachmentId
+        )
     },
     workbenchHub: {
       layout: {
@@ -289,6 +299,8 @@ export function createRealmFlowApi(
         invoke(IPC_QUERY_CHANNELS.conversationListByWorkspace, command),
       getConversation: (command) =>
         invoke(IPC_QUERY_CHANNELS.conversationGet, command),
+      listConversationTurns: (query) =>
+        invoke(IPC_QUERY_CHANNELS.conversationListTurns, query),
       getConversationContextDiagnostics: (command) =>
         invoke(
           IPC_QUERY_CHANNELS.conversationContextDiagnosticsGet,
@@ -314,6 +326,12 @@ export function createRealmFlowApi(
         ),
       onConversationEvent: (listener) =>
         subscribe(ipcRenderer, IPC_EVENT_CHANNELS.conversationEvent, listener),
+      onConversationTurnProjection: (listener) =>
+        subscribe(
+          ipcRenderer,
+          IPC_EVENT_CHANNELS.conversationTurnProjection,
+          listener
+        ),
       listKnowledgeSources: (query) =>
         invoke(IPC_QUERY_CHANNELS.knowledgeSourceList, query),
       listKnowledgeSourceEvents: (query) =>
@@ -574,11 +592,6 @@ export function createRealmFlowApi(
       respondToCloseRequest: (approved) =>
         invoke(IPC_COMMAND_CHANNELS.appCloseRespond, { approved })
     },
-    persistence: {
-      load: (dataset) => invoke(IPC_QUERY_CHANNELS.persistenceLoad, dataset),
-      onChanged: (listener) =>
-        subscribe(ipcRenderer, IPC_EVENT_CHANNELS.persistenceChanged, listener)
-    },
     nativeOverlay: {
       show: (request) =>
         invoke(IPC_COMMAND_CHANNELS.nativeOverlayShow, request),
@@ -590,6 +603,8 @@ export function createRealmFlowApi(
       chooseFiles: () => invoke(IPC_COMMAND_CHANNELS.workspaceChooseFiles),
       openSessionFiles: (filePaths) =>
         invoke(IPC_COMMAND_CHANNELS.workspaceOpenSessionFiles, filePaths),
+      bindSessionDirectory: (rootPath) =>
+        invoke(IPC_COMMAND_CHANNELS.workspaceBindSessionDirectory, rootPath),
       chooseFolder: () => invoke(IPC_COMMAND_CHANNELS.workspaceChooseFolder),
       chooseDirectory: (requirementId) =>
         invoke(IPC_COMMAND_CHANNELS.workspaceChooseDirectory, requirementId),

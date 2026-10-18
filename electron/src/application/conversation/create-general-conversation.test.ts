@@ -11,6 +11,32 @@ describe('CreateGeneralConversationUseCase', () => {
     expect(execute).toHaveBeenCalledWith(expect.objectContaining({ approvalProfileId: 'trusted' }))
   })
 
+  it('forwards the selected Skill reference to the authoritative sender', async () => {
+    const execute = vi.fn().mockImplementation(async ({ session }) => ({
+      ...session,
+      revision: 1
+    }))
+    const skill = {
+      kind: 'skill' as const,
+      id: 'builtin.skill.code_review',
+      version: '1.0.2',
+      digest: 'c'.repeat(64)
+    }
+
+    await new CreateGeneralConversationUseCase({
+      sender: { execute }
+    }).execute({
+      ...command(),
+      capabilities: { skill }
+    })
+
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        capabilities: { skill }
+      })
+    )
+  })
+
   it('creates a trimmed context-free general conversation with a stable first message id', async () => {
     const execute = vi.fn().mockImplementation(async (input) => ({
       ...input.session,
@@ -38,6 +64,7 @@ describe('CreateGeneralConversationUseCase', () => {
         knowledgeScope: { kind: 'none' },
         title: 'First chat',
         sortOrder: 100,
+        turns: [],
         messages: [],
         createdAt: 100,
         updatedAt: 100

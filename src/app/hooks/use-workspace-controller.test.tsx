@@ -13,9 +13,11 @@ import type {
   CreateConversationCommand,
   ConversationDto,
   ConversationEventDto,
+  ConversationTurnProjectionEventDto,
   RequirementDto,
   SpaceDto
 } from '../../../shared/business'
+import type { AssistantTurnProjection } from '../../../domain/assistant-turn'
 
 const initialNavigation: WorkspaceNavigation = {
   spaces: [
@@ -69,6 +71,97 @@ function deferred<T>() {
     reject = nextReject
   })
   return { promise, resolve, reject }
+}
+
+type TestConversationTurn = {
+  userContent: string
+  assistantContent?: string
+  status?: ConversationDto['turns'][number]['status']
+  assistantStatus?: ConversationDto['messages'][number]['status']
+  runId?: string
+  createdAt?: number
+}
+
+function createConversationDto(input: {
+  id: string
+  kind?: ConversationDto['kind']
+  knowledgeScope?: ConversationDto['knowledgeScope']
+  workspaceId?: string
+  folderPath?: string
+  title: string
+  sortOrder?: number
+  revision?: number
+  createdAt?: number
+  updatedAt?: number
+  turns?: TestConversationTurn[]
+}): ConversationDto {
+  const createdAt = input.createdAt ?? 1
+  const messages: ConversationDto['messages'] = []
+  const turns = (input.turns ?? []).map((turn, index) => {
+    const turnCreatedAt = turn.createdAt ?? input.updatedAt ?? createdAt
+    const turnId = `${input.id}:turn:${index + 1}`
+    const userMessageId = `${turnId}:user`
+    const assistantMessageId = `${turnId}:assistant`
+    const status = turn.status ?? (
+      turn.assistantStatus === 'completed' ? 'completed' : 'running'
+    )
+    messages.push(
+      {
+        id: userMessageId,
+        turnId,
+        role: 'user',
+        status: 'completed',
+        content: turn.userContent,
+        sortOrder: index * 2,
+        createdAt: turnCreatedAt
+      },
+      {
+        id: assistantMessageId,
+        turnId,
+        role: 'assistant',
+        status: turn.assistantStatus ?? (
+          status === 'completed' ? 'completed' : 'pending'
+        ),
+        content: turn.assistantContent ?? '',
+        ...(turn.runId ? { runId: turn.runId } : {}),
+        sortOrder: index * 2 + 1,
+        createdAt: turnCreatedAt
+      }
+    )
+    return {
+      id: turnId,
+      sessionId: input.id,
+      index,
+      userMessageId,
+      assistantMessageId,
+      ...(turn.runId ? { runId: turn.runId } : {}),
+      status,
+      createdAt: turnCreatedAt,
+      ...(isTerminalConversationTurnStatus(status)
+        ? { completedAt: turnCreatedAt }
+        : {})
+    }
+  })
+  return {
+    id: input.id,
+    kind: input.kind ?? 'general',
+    ...(input.knowledgeScope ? { knowledgeScope: input.knowledgeScope } : {}),
+    ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+    ...(input.folderPath ? { folderPath: input.folderPath } : {}),
+    title: input.title,
+    sortOrder: input.sortOrder ?? 0,
+    turns,
+    messages,
+    revision: input.revision ?? 1,
+    createdAt,
+    updatedAt: input.updatedAt ?? createdAt
+  }
+}
+
+function isTerminalConversationTurnStatus(
+  status: ConversationDto['turns'][number]['status']
+): boolean {
+  return status === 'completed' || status === 'failed' || status === 'cancelled'
 }
 
 const sessionRepository = createSessionRepository()
@@ -573,25 +666,16 @@ describe('useWorkspaceController persistence', () => {
   })
 
   it('applies the committed conversation returned by Main and refreshes the list', async () => {
-    const created: ConversationDto = {
+    const created = createConversationDto({
       id: 'conversation-created',
       kind: 'general',
       title: 'Committed chat',
       sortOrder: 10,
-      messages: [
-        {
-          id: 'message-1',
-          role: 'user',
-          status: 'completed',
-          content: 'Committed prompt',
-          sortOrder: 0,
-          createdAt: 10
-        }
-      ],
       revision: 1,
       createdAt: 10,
-      updatedAt: 10
-    }
+      updatedAt: 10,
+      turns: [{ userContent: 'Committed prompt', createdAt: 10 }]
+    })
     const createConversation = vi.fn(async () => created)
     const business = {
       listSpaces: vi.fn(async () => []),
@@ -637,21 +721,22 @@ describe('useWorkspaceController persistence', () => {
       prompt: 'Committed prompt'
     })
     expect(business.listRecentConversations).toHaveBeenCalledTimes(2)
-    expect(business.listRecentConversations).toHaveBeenLastCalledWith({})
+    expect(business.listRecentConversations).toHaveBeenLastCalledWith({
+      limit: 50
+    })
   })
 
   it('creates a folder conversation with an opaque binding and adopts its canonical path', async () => {
-    const created: ConversationDto = {
+    const created = createConversationDto({
       id: 'conversation-folder',
       kind: 'general',
       folderPath: '/private/tmp/canonical-task',
       title: 'Folder chat',
       sortOrder: 10,
-      messages: [],
       revision: 1,
       createdAt: 10,
       updatedAt: 10
-    }
+    })
     const createConversation = vi.fn(
       async (_command: CreateConversationCommand) => created
     )
@@ -710,17 +795,18 @@ describe('useWorkspaceController persistence', () => {
   })
 
   it('maps the all-workspaces selection to a persisted global knowledge scope', async () => {
-    const createConversation = vi.fn(async (command: CreateConversationCommand) => ({
-      id: command.id,
-      kind: 'general' as const,
-      knowledgeScope: { kind: 'all_workspaces' as const },
-      title: command.title,
-      sortOrder: 10,
-      messages: [],
-      revision: 1,
-      createdAt: 10,
-      updatedAt: 10
-    }))
+    const createConversation = vi.fn(async (command: CreateConversationCommand) =>
+      createConversationDto({
+        id: command.id,
+        kind: 'general',
+        knowledgeScope: { kind: 'all_workspaces' },
+        title: command.title,
+        sortOrder: 10,
+        revision: 1,
+        createdAt: 10,
+        updatedAt: 10
+      })
+    )
     const business = {
       listSpaces: vi.fn(async () => []),
       listRequirements: vi.fn(async () => []),
@@ -766,38 +852,33 @@ describe('useWorkspaceController persistence', () => {
   })
 
   it('applies the committed append snapshot and refreshes the list', async () => {
-    const conversation: ConversationDto = {
+    const conversation = createConversationDto({
       id: 'conversation-1',
       kind: 'general',
       title: 'Existing chat',
       sortOrder: 1,
-      messages: [],
       revision: 2,
       createdAt: 1,
       updatedAt: 1
-    }
-    const updated: ConversationDto = {
-      ...conversation,
+    })
+    const updated = createConversationDto({
+      id: 'conversation-1',
+      kind: 'general',
+      title: 'Existing chat',
+      sortOrder: 1,
       revision: 5,
+      createdAt: 1,
       updatedAt: 5,
-      messages: [
-        {
-          id: 'message-2',
-          role: 'user',
-          status: 'completed',
-          content: 'Committed reply',
-          sortOrder: 0,
-          createdAt: 5
-        }
-      ]
-    }
+      turns: [{ userContent: 'Committed reply', createdAt: 5 }]
+    })
     const business = {
       listSpaces: vi.fn(async () => []),
       listRequirements: vi.fn(async () => []),
       listRecentConversations: vi.fn(async () => ({
-        conversations: [conversation],
+        conversations: [],
         folderPaths: []
       })),
+      getConversation: vi.fn(async () => conversation),
       appendConversationMessage: vi.fn(async () => updated)
     } as unknown as BusinessApi
 
@@ -805,10 +886,12 @@ describe('useWorkspaceController persistence', () => {
       const controller = useWorkspaceController({
         navigationRepository: createNavigationRepository(initialNavigation),
         sessionRepository,
-        business
+        business,
+        activeSessionId: 'conversation-1'
       })
       return (
         <>
+          <div>{controller.sessions[0]?.title}</div>
           <div>
             {controller.sessions.flatMap((session) =>
               session.messages.map((message) => message.content)
@@ -830,11 +913,14 @@ describe('useWorkspaceController persistence', () => {
 
     render(<BusinessHarness />)
     await waitFor(() => expect(business.listRecentConversations).toHaveBeenCalledOnce())
+    expect(await screen.findByText('Existing chat')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '追加消息' }))
 
     expect(await screen.findByText('Committed reply')).toBeInTheDocument()
     expect(business.listRecentConversations).toHaveBeenCalledTimes(2)
-    expect(business.listRecentConversations).toHaveBeenLastCalledWith({})
+    expect(business.listRecentConversations).toHaveBeenLastCalledWith({
+      limit: 50
+    })
   })
 
   it('loads a linked child conversation that is absent from the recent list before ending route loading', async () => {
@@ -857,24 +943,28 @@ describe('useWorkspaceController persistence', () => {
     await waitFor(() => expect(business.listRecentConversations).toHaveBeenCalledOnce())
     expect(screen.getByText('Loading child')).toBeVisible()
     expect(business.getConversation).toHaveBeenCalledWith({ sessionId: 'child-session' })
-    await act(async () => response.resolve({
-      id: 'child-session', kind: 'general', title: 'Recovered child', sortOrder: 0,
-      messages: [], revision: 1, createdAt: 1, updatedAt: 1
-    }))
+    await act(async () => response.resolve(createConversationDto({
+      id: 'child-session',
+      kind: 'general',
+      title: 'Recovered child',
+      sortOrder: 0,
+      revision: 1,
+      createdAt: 1,
+      updatedAt: 1
+    })))
     expect(await screen.findByText('Recovered child')).toBeVisible()
   })
 
   it('projects streamed conversation snapshots before the append command settles', async () => {
-    const conversation: ConversationDto = {
+    const conversation = createConversationDto({
       id: 'conversation-stream',
       kind: 'general',
       title: 'Streaming chat',
       sortOrder: 1,
-      messages: [],
       revision: 2,
       createdAt: 1,
       updatedAt: 1
-    }
+    })
     const completion = deferred<ConversationDto>()
     let streamListener: ((event: ConversationEventDto) => void) | undefined
     const unsubscribe = vi.fn()
@@ -882,9 +972,10 @@ describe('useWorkspaceController persistence', () => {
       listSpaces: vi.fn(async () => []),
       listRequirements: vi.fn(async () => []),
       listRecentConversations: vi.fn(async () => ({
-        conversations: [conversation],
+        conversations: [],
         folderPaths: []
       })),
+      getConversation: vi.fn(async () => conversation),
       appendConversationMessage: vi.fn(() => completion.promise),
       onConversationEvent: vi.fn((listener) => {
         streamListener = listener
@@ -896,11 +987,13 @@ describe('useWorkspaceController persistence', () => {
       const controller = useWorkspaceController({
         navigationRepository: createNavigationRepository(initialNavigation),
         sessionRepository,
-        business
+        business,
+        activeSessionId: 'conversation-stream'
       })
       const messages = controller.sessions[0]?.messages ?? []
       return (
         <>
+          <div>{controller.sessions[0]?.title}</div>
           <div>{messages.map((message) => message.content).join('|')}</div>
           <button
             onClick={() =>
@@ -918,33 +1011,28 @@ describe('useWorkspaceController persistence', () => {
 
     const view = render(<BusinessHarness />)
     await waitFor(() => expect(streamListener).toBeTypeOf('function'))
+    expect(await screen.findByText('Streaming chat')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '追加消息' }))
 
     act(() => {
       streamListener?.({
-        conversation: {
-          ...conversation,
+        conversation: createConversationDto({
+          id: conversation.id,
+          kind: conversation.kind,
+          title: conversation.title,
+          sortOrder: conversation.sortOrder,
           revision: 3,
-          messages: [
-            {
-              id: 'user-1',
-              role: 'user',
-              status: 'completed',
-              content: 'Question',
-              sortOrder: 0,
-              createdAt: 2
-            },
-            {
-              id: 'assistant-1',
-              role: 'assistant',
-              status: 'pending',
-              content: 'First chunk',
-              runId: 'run-1',
-              sortOrder: 1,
-              createdAt: 2
-            }
-          ]
-        }
+          createdAt: conversation.createdAt,
+          updatedAt: 2,
+          turns: [{
+            userContent: 'Question',
+            assistantContent: 'First chunk',
+            assistantStatus: 'pending',
+            status: 'running',
+            runId: 'run-1',
+            createdAt: 2
+          }]
+        })
       })
     })
 
@@ -953,6 +1041,83 @@ describe('useWorkspaceController persistence', () => {
 
     view.unmount()
     expect(unsubscribe).toHaveBeenCalledOnce()
+  })
+
+  it('applies streamed assistant turn projections to the active conversation', async () => {
+    const conversation = createConversationDto({
+      id: 'conversation-projection',
+      kind: 'general',
+      title: 'Projection chat',
+      sortOrder: 1,
+      revision: 2,
+      createdAt: 1,
+      updatedAt: 1,
+      turns: [
+        {
+          userContent: 'Run a command',
+          assistantStatus: 'pending',
+          status: 'running',
+          runId: 'run-1',
+          createdAt: 2
+        }
+      ]
+    })
+    let projectionListener:
+      | ((event: ConversationTurnProjectionEventDto) => void)
+      | undefined
+    const business = {
+      listSpaces: vi.fn(async () => []),
+      listRequirements: vi.fn(async () => []),
+      listRecentConversations: vi.fn(async () => ({
+        conversations: [],
+        folderPaths: []
+      })),
+      getConversation: vi.fn(async () => conversation),
+      onConversationTurnProjection: vi.fn((listener) => {
+        projectionListener = listener
+        return vi.fn()
+      })
+    } as unknown as BusinessApi
+
+    function BusinessHarness(): JSX.Element {
+      const controller = useWorkspaceController({
+        navigationRepository: createNavigationRepository(initialNavigation),
+        sessionRepository,
+        business,
+        activeSessionId: 'conversation-projection'
+      })
+      const session = controller.sessions[0]
+      const turn = session?.turns[0]
+      const assistant = session?.messages.find(
+        (message) => message.role === 'assistant'
+      )
+      return (
+        <div>
+          {turn?.status ?? 'missing'}:
+          {assistant?.execution?.status ?? 'none'}
+        </div>
+      )
+    }
+
+    render(<BusinessHarness />)
+    await waitFor(() => expect(projectionListener).toBeTypeOf('function'))
+    expect(await screen.findByText('running:none')).toBeInTheDocument()
+
+    act(() => {
+      projectionListener?.({
+        sessionId: 'conversation-projection',
+        turnId: 'conversation-projection:turn:1',
+        projection: assistantProjection(
+          'run-1',
+          'conversation-projection:turn:1',
+          'conversation-projection:turn:1:assistant'
+        )
+      })
+    })
+
+    expect(
+      screen.getByText('waiting_permission:waiting_permission')
+    ).toBeInTheDocument()
   })
 
   it('releases a new conversation for navigation after its first committed snapshot', async () => {
@@ -1004,33 +1169,22 @@ describe('useWorkspaceController persistence', () => {
 
     act(() => {
       streamListener?.({
-        conversation: {
+        conversation: createConversationDto({
           id: command.id,
           kind: 'general',
           title: command.title,
           sortOrder: 2,
-          messages: [
-            {
-              id: `${command.id}:message:1`,
-              role: 'user',
-              status: 'completed',
-              content: command.prompt,
-              sortOrder: 0,
-              createdAt: 2
-            },
-            {
-              id: 'assistant-1',
-              role: 'assistant',
-              status: 'pending',
-              content: '',
-              sortOrder: 1,
-              createdAt: 2
-            }
-          ],
           revision: 1,
           createdAt: 2,
-          updatedAt: 2
-        }
+          updatedAt: 2,
+          turns: [{
+            userContent: command.prompt,
+            assistantContent: '',
+            assistantStatus: 'pending',
+            status: 'running',
+            createdAt: 2
+          }]
+        })
       })
     })
 
@@ -1084,23 +1238,23 @@ describe('useWorkspaceController persistence', () => {
   })
 
   it('does not expose a message when Main rejects its append command', async () => {
-    const conversation: ConversationDto = {
+    const conversation = createConversationDto({
       id: 'conversation-1',
       kind: 'general',
       title: 'Existing chat',
       sortOrder: 1,
-      messages: [],
       revision: 2,
       createdAt: 1,
       updatedAt: 1
-    }
+    })
     const business = {
       listSpaces: vi.fn(async () => []),
       listRequirements: vi.fn(async () => []),
       listRecentConversations: vi.fn(async () => ({
-        conversations: [conversation],
+        conversations: [],
         folderPaths: []
       })),
+      getConversation: vi.fn(async () => conversation),
       appendConversationMessage: vi.fn(async () => {
         throw new Error('database unavailable')
       })
@@ -1110,7 +1264,8 @@ describe('useWorkspaceController persistence', () => {
       const controller = useWorkspaceController({
         navigationRepository: createNavigationRepository(initialNavigation),
         sessionRepository,
-        business
+        business,
+        activeSessionId: 'conversation-1'
       })
       const session = controller.sessions[0]
       return (
@@ -1247,5 +1402,30 @@ function createNavigationRepository(
       status: 'saved',
       snapshot: { value: nextValue, revision: expectedRevision + 1 }
     })
+  }
+}
+
+function assistantProjection(
+  runId: string,
+  turnId: string,
+  assistantMessageId: string
+): AssistantTurnProjection {
+  return {
+    schemaVersion: 2,
+    runId,
+    turnId,
+    assistantMessageId,
+    startedAt: 3,
+    status: 'waiting_permission',
+    answer: '',
+    tree: [],
+    collapsedDefaults: [],
+    executionSummaries: [],
+    references: [],
+    toolCalls: [],
+    delegations: [],
+    compactions: [],
+    lastSequence: 4,
+    elapsedAt: 4
   }
 }

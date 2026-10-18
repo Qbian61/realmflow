@@ -65,6 +65,7 @@ export type WriteWorkspaceFileInput = {
 export interface WorkspaceApi {
   chooseFiles: () => Promise<OpenedSessionFiles | null>
   openSessionFiles: (filePaths: string[]) => Promise<OpenedSessionFiles>
+  bindSessionDirectory: (rootPath: string) => Promise<WorkspaceBinding>
   chooseFolder: () => Promise<WorkspaceBinding | null>
   chooseDirectory: (requirementId: string) => Promise<WorkspaceBinding | null>
   getBinding: (requirementId: string) => Promise<WorkspaceBinding | null>

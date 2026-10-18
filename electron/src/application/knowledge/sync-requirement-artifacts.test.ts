@@ -216,6 +216,7 @@ function artifact(
   return {
     id: 'artifact-1',
     requirementId: 'requirement-1',
+    nodeId: 'node-design',
     relativePath: 'artifacts/design.md',
     checksum: digest('accepted design'),
     version: 2,

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.document.export_pdf",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "name": "Export document to PDF",
   "description": "Export a checksum-bound DOCX to a verified PDF at an authorized new path.",
   "tags": [

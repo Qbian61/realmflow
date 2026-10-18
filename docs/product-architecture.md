@@ -35,8 +35,8 @@ RealmFlow 应支持以下完整闭环：
 
 - SQLite、文件系统和应用私有凭据密钥文件是本地数据基础设施。
 - Electron Main 是业务数据和本地能力的唯一所有者。
-- Renderer 不直接访问 SQLite、文件系统、Shell 或 Python Sidecar。
-- Python Sidecar 不直接访问 SQLite，不直接提交正式产物。
+- Renderer 不直接访问 SQLite、文件系统、Shell、DSH Runtime 或私有计算 worker。
+- DSH Runtime、DSH 插件和私有计算 worker 不直接访问 SQLite，不直接提交正式产物。
 - 无网络时，除依赖外部模型或连接器的操作外，应用仍可浏览、编辑、搜索和管理本地内容。
 
 ### 3.2 联网可用性
@@ -200,7 +200,7 @@ RealmFlow 应支持以下完整闭环：
 | 数据库凭据加密密钥 | `userData` 下权限受限的应用私有密钥文件 | Electron Main |
 | 正式产物 | 需求目录 | Electron Main 文件服务 |
 | 用户附件 | 需求或空间目录 | Electron Main 文件服务 |
-| 知识索引 | 本地 SQLite 或本地索引文件 | Electron Main / Sidecar Adapter |
+| 知识索引 | SQLite、Qdrant 和本地模型资产 | Electron Main / DSH Knowledge Runtime |
 | 临时生成内容 | `.realmflow/tmp` | Electron Main |
 | 已删除目录 | `.realmflow/trash` | Electron Main |
 | UI 偏好 | Renderer `localStorage` | Renderer |
@@ -238,27 +238,46 @@ RealmFlow 应支持以下完整闭环：
 
 ## 6. 目标运行时架构
 
+RealmFlow 采用 RealmFlow Control Plane + DSH Runtime Plane 的分层。RealmFlow
+拥有产品状态、策略、凭据、知识源、工作流和人机交互；DSH 拥有 Agent 执行循环
+和能力执行。两者之间只通过不可变 `DshRunManifest`、Interaction Bridge、
+Credential Broker、Knowledge Index Port、Product Command API 和 Runtime Event
+Ingestor 连接。
+
 ```mermaid
 flowchart LR
   User[用户] --> Renderer[React Renderer]
 
   subgraph LocalDevice[本地设备]
     Renderer -->|类型化 IPC| Main[Electron Main]
-    Main --> Commands[Application Commands]
-    Commands --> Workflow[Workflow Runtime]
-    Workflow --> Context[Context Assembler]
-    Workflow --> Policy[Capability and Network Gateway]
-    Workflow --> Skills[Skill and Connector Runtime]
-    Workflow --> Sidecar[Python Sidecar]
+    Main --> Product[RealmFlow Control Plane]
+    Product --> Commands[Application Commands]
+    Product --> Manifest[DshRunManifest Publisher]
+    Product --> Interactions[Interaction Bridge]
+    Product --> Credentials[Credential Broker]
+    Product --> ProductCommands[Product Command API]
+    Product --> Events[Runtime Event Ingestor]
+    Product --> Policy[Policy / Budget / Permission Authoring]
+    Commands --> Workflow[Workflow State Machine]
     Commands --> Repositories[Repository Ports]
     Repositories --> SQLite[(SQLite)]
     Commands --> Files[Managed Workspace Files]
-    Context --> Knowledge[Local Knowledge Index]
-    Policy --> Credentials[Encrypted Credentials in SQLite]
+    Commands --> Knowledge[Knowledge Source and Index Control]
+    Knowledge --> Qdrant[Local Qdrant Projection]
+    Knowledge --> LocalWorkers[DSH-owned local workers]
+    Manifest --> DSH[DSH Runtime Plane]
+    DSH --> AgentLoop[Agent Session and Model Loop]
+    AgentLoop --> DshTools[Tools / Skills / Subagents]
+    AgentLoop --> DshMcp[MCP / Connectors]
+    AgentLoop --> DshKnowledge[Knowledge Runtime and Embedding]
+    DSH --> Events
+    DSH --> Interactions
+    DSH --> Credentials
+    DSH --> ProductCommands
   end
 
-  Policy -->|设备联网且配置有效| Model[LLM Provider API]
-  Policy -.->|按功能配置调用| External[Online Docs and Connectors]
+  DSH -->|设备联网且配置有效| Model[LLM Provider API]
+  DSH -.->|按 manifest 和连接器配置调用| External[Online Docs and Connectors]
 ```
 
 ### 6.1 Renderer
@@ -268,52 +287,59 @@ flowchart LR
 - 页面渲染和用户交互。
 - 展示工作流、节点、待办、对话、产物和运行状态。
 - 发送结构化命令。
-- 订阅领域事件和流式输出。
+- 订阅领域事件、DSH runtime event 投影和流式输出。
 
 禁止：
 
-- 直接访问 SQLite、文件系统和 Sidecar。
+- 直接访问 SQLite、文件系统、DSH Runtime、私有计算 worker 或本地网络端口。
 - 保存完整业务聚合快照。
 - 自行决定工作流推进。
 - 持有明文 API Key 或凭据解密密钥。
 
-### 6.2 Electron Main
+### 6.2 Electron Main / RealmFlow Control Plane
 
 职责：
 
 - 应用组合根和业务数据唯一所有者。
-- 执行空间、需求、流程、对话、待办和调度命令。
-- 运行工作流状态机。
-- 管理文件、数据库事务和原子提交。
-- 管理文件与终端权限、数据库凭据加密和统一网络调用。
-- 管理 Sidecar 生命周期和运行恢复。
-
-### 6.3 Python Sidecar
-
-职责：
-
-- Provider Adapter。
-- Prompt 构建和模型流式调用。
-- 技能执行。
-- 文档解析、Embedding 和本地检索。
-- 可选 Agent 策略和工具调用循环。
+- 执行空间、需求、流程、对话、待办、调度、备份、统计和工作台命令。
+- 运行产品工作流状态机和自动推进规则。
+- 管理文件、数据库事务和正式产物原子提交。
+- 管理 Capability Catalog、Workflow Template、Knowledge Source、Model Profile、Credential、Permission Policy 和预算配置。
+- 为每次 Agent 运行发布不可变、无密钥的 `DshRunManifest`。
+- 提供 Interaction Bridge、Credential Broker、Knowledge Index Port、Product Command API 和 Runtime Event Ingestor。
+- 将 DSH runtime events 投影到对话、需求节点、工作流、治理、分析和诊断视图。
 
 禁止：
 
-- 直接访问 SQLite。
-- 自行推进需求或节点状态。
-- 绕过 Main 的网络网关访问网络，或绕过文件权限访问本地文件。
-- 直接覆盖正式产物。
+- 保留 fallback Agent loop、通用 Tool executor、Skill runtime、Subagent runtime、MCP runtime 或 Connector runtime。
+- 将 RealmFlow SQLite、明文凭据或未声明工作区路径暴露给 DSH。
+- 通过兼容旧本地运行状态牺牲 DSH-native 架构边界。
 
-Sidecar 只返回事件和候选产物，最终提交由 Electron Main 完成。
+### 6.3 DSH Runtime Plane
 
-### 6.4 本地 Sidecar 通信
+职责：
 
-- 仅监听回环地址或使用 Unix Domain Socket。
-- 每次应用启动生成随机认证令牌。
-- Electron Main 启动 Sidecar 时通过环境变量或受保护管道传入令牌。
-- 每个请求必须验证令牌。
-- Sidecar 不向 Renderer 暴露端口。
+- DSH Session 生命周期、prompt admission、模型流式调用、重试、取消和 usage 采集。
+- Turn、Step、Goal、Goal Round、上下文压缩和恢复。
+- Tool、Skill、Subagent、MCP、Connector、Browser、Computer、Web、file、shell、Git、media、Office 等 Agent 能力执行。
+- 根据冻结的 `DshRunManifest`、短期 credential lease、knowledge lease、Product Command grant 和预算执行 runtime policy。
+- 为高风险能力启动 DSH 管理的 Worker 或 OS sandbox，并负责超时、取消、hard kill、stderr bounding 和 orphan cleanup。
+- 生产规范 runtime events，供 RealmFlow 投影为产品状态。
+
+禁止：
+
+- 直接读取 RealmFlow SQLite、持久凭据、未授权 Qdrant collection 或未声明工作区根目录。
+- 绕过 Product Command API 修改空间、需求、工作流、产物、统计、备份或设置。
+- 将 credential lease 转交给其他 session、worker、MCP server 或 connector。
+
+### 6.4 DSH 与 RealmFlow 通信
+
+- DSH Host 由 Electron Main 监督启动，使用固定版本 runtime 和 profile。
+- 每个 RealmFlow Run 绑定一个 DSH Session 和一个 manifest digest。
+- ACP/stdio 通道只承载 runtime 控制和事件；产品状态修改必须走 Product Command API。
+- Interaction Bridge 的响应绑定 runtime、session、run、request、activity、capability、scope、effect 和 nonce。
+- Credential Broker 只签发调用级短期 lease，并支持撤销、审计和脱敏。
+- Runtime Event Ingestor 在投影前校验 runtime instance、session、owner、manifest digest 和事件序号。
 
 ## 7. 核心领域模型
 
@@ -529,7 +555,7 @@ registered -> syncing -> indexed -> stale | failed | removed
 
 ### 10.7 本地知识隐私与备份
 
-- Qdrant 与 embedding Sidecar 只监听 loopback，关闭遥测，不发起外网请求。
+- Qdrant 与 DSH-owned local embedding worker 只监听 loopback 或 stdio，关闭遥测，不发起外网请求。
 - `.env`、凭据、私钥、密钥包、构建目录、依赖目录、二进制和超限文件在扫描、
   来源读取和分块/写入三层拒绝。
 - 日志、错误、IPC 和审计不得包含知识正文、向量、凭据或绝对路径。
@@ -553,7 +579,7 @@ registered -> syncing -> indexed -> stale | failed | removed
 
 节点可以固定模型，也可以声明能力要求，由本地路由器从启用模型中选择。
 
-API Key 使用应用生成的本地加密密钥加密后写入 `model_credentials`。加密密钥保存在 Electron `userData` 下权限受限的应用私有文件中，不写入环境变量，不使用系统 Keychain。Main 仅在发起 Provider 请求时短暂解密，Renderer、日志和 Sidecar 启动参数均不能获得明文密钥。
+API Key 使用应用生成的本地加密密钥加密后写入 `model_credentials`。加密密钥保存在 Electron `userData` 下权限受限的应用私有文件中，不写入环境变量，不使用系统 Keychain。Main 仅在 Credential Broker 签发调用级 lease 时短暂解密，Renderer、日志、DSH 启动参数和私有 worker 均不能获得持久明文密钥。
 
 ### 11.2 技能
 
@@ -781,7 +807,7 @@ model-stats:query
 - SQLite 写入失败：清理临时目录并返回结构化错误。
 - 原子 rename 失败：回滚事务并恢复旧文件。
 - 模型超时：保留上下文快照和已接收内容，节点进入失败或等待重试。
-- Sidecar 崩溃：活动 Run 进入 `interrupted`。
+- DSH session 或受限 worker 崩溃：活动 Run 进入 `interrupted`，恢复时先执行 HistorySync 和 manifest/session 校验。
 - 文件被外部修改：使用 checksum 和版本比较，禁止静默覆盖。
 - 当前默认工作根目录丢失：禁止创建新空间，并提示重新选择工作文件夹；其他路径正常的已有空间不受影响。
 - 已有空间目录丢失：仅该空间进入不可用状态，并支持单空间重新定位。
@@ -817,29 +843,29 @@ model-stats:query
 
 - SQLite Migration 和 Repository。
 - 数据库凭据加密和密钥文件权限。
-- Provider Adapter。
+- DSH model adapter、ACP session 和 Runtime Event 投影。
 - 文件原子提交和越界路径拒绝。
-- Sidecar 认证、SSE 重连和事件去重。
+- DSH runtime manifest、Interaction Bridge、Credential Broker、Product Command API 和事件去重。
 - 知识索引增量更新。
 - Network Gateway 的代理、超时、重试和统计。
 
 ### 19.4 架构守卫
 
-- Renderer 禁止导入 Node、Electron、SQLite 和 Sidecar Client。
-- Sidecar 禁止访问 SQLite 和正式产物路径。
+- Renderer 禁止导入 Node、Electron、SQLite 和 DSH infrastructure。
+- DSH 插件和私有 worker 禁止访问 SQLite、持久凭据和正式产物路径。
 - IPC 禁止承载业务编排。
 - Application 层禁止依赖 React。
-- Provider、Skill 和 Connector 必须通过 Port 接入。
+- Provider、Skill、Connector、MCP 和 Product Command 必须通过 manifest-bound port 接入。
 - 所有网络请求必须通过 Network Gateway。
 
 ## 20. 当前实现差距
 
 当前已具备：
 
-- Electron Main、Renderer 和 Python Sidecar 进程边界。
+- Electron Main、Renderer、DSH Host 和私有 worker 进程边界。
 - SQLite 主存储、Migration、WAL、外键和 revision CAS。
 - 空间、需求、会话、资源和产物基础持久化。
-- AI Run 状态机、SSE、取消、重连、事件去重和中断恢复。
+- AI Run 状态机、DSH Session binding、取消、HistorySync、事件去重和中断恢复。
 - 正式产物的临时文件、数据库事务和原子替换。
 - 文件、网页、终端工作区和安全 IPC。
 - 本地 Qdrant、GTE 768 维 Dense + BM25 + RRF、generation 门禁、启动恢复和
@@ -847,7 +873,7 @@ model-stats:query
 - 本地文件、在线文档、代码仓库、正式产物、Requirement Memory、Knowledge
   Note 以及 Template/Skill Catalog 的摄取、索引和检索。
 - 三态普通会话知识作用域、单空间会话和需求节点知识开关。
-- 普通对话和空间对话已接入真实 Provider Run、持久化消息生命周期、模型调用
+- 普通对话和空间对话已接入 DSH-backed Provider Run、持久化消息生命周期、模型调用
   指标与刷新恢复；空间对话按每轮用户输入检索本地空间知识，且不隐式授予文件、
   终端或仓库权限。
 - 需求节点对话绑定当前 NodeRun 并复用原子问题回答与门禁重评估；文件夹对话
@@ -864,7 +890,7 @@ model-stats:query
 - 部分设置与帮助能力仍需继续完善。
 - 需求仍支持独立目录绑定，没有完全收敛为工作根目录层级。
 - 需求流程实例不支持插入、删除和调整节点。
-- 中断任务不会在应用重新打开后自动续跑。
+- 中断任务的自动续跑必须依赖 DSH manifest publication、session binding 和 HistorySync，缺失任一事实时应明确阻断而不是回退到旧 checkpoint。
 
 ## 21. 实施优先级
 
@@ -879,7 +905,7 @@ model-stats:query
 
 - 模板版本、节点、边和发布校验。
 - 需求基于模板创建可独立调整的流程实例。
-- Workflow Runtime、NodeRun、Todo、Question 和自动推进。
+- Workflow State Machine、NodeRun、Todo、Question 和自动推进。
 - 节点暂停、自动恢复和实例 DAG 编辑。
 
 ### P0-C：真实 AI 闭环
@@ -894,8 +920,8 @@ model-stats:query
 
 - 本地知识摄取和检索。
 - 需求完成后正式产物自动回灌空间知识库。
-- 技能运行时。
-- 连接器和统一网络调用。
+- DSH Skill 能力接入与 RealmFlow Capability Catalog 管理。
+- DSH Connector 能力接入和统一网络调用。
 - 定时任务持久化和本地调度。
 
 ### P2：产品完善
@@ -941,7 +967,7 @@ model-stats:query
 - 应用重新打开后自动唤醒中断任务，用户主动暂停的任务保持暂停。
 - 最近列表只展示普通对话和空间对话。
 - 需求完成后可自动回灌正式产物到空间知识库。
-- Electron Main 负责流程编排，Sidecar 负责 AI、技能和检索执行。
+- Electron Main 负责产品流程编排、manifest、权限和投影；DSH Runtime Plane 负责 AI、Tool、Skill、Subagent、MCP、Connector 和检索执行。
 
 这些决策构成后续实施计划的架构基线。评审修改应先更新本文，再进入任务拆分和编码。
 

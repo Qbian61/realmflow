@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.computer.type",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Type text",
   "description": "Type text into a non-secure field.",
   "tags": [

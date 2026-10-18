@@ -14,12 +14,11 @@ import type {
   UnitOfWork
 } from '../../application/ports/business-repositories'
 import type {
+  NodeContextRepository,
   NodeExecutionContext,
-  StageContextRepository
 } from '../application/ports'
 
 type Dependencies = {
-  legacy: Pick<StageContextRepository, 'load'>
   requirements: Pick<RequirementRepository, 'get'>
   workflows: Pick<RequirementWorkflowRepository, 'get'>
   nodeRuns: Pick<NodeRunRepository, 'get' | 'save'>
@@ -36,11 +35,8 @@ type Dependencies = {
   now?: () => number
 }
 
-export class AssembledNodeContextRepository implements StageContextRepository {
+export class AssembledNodeContextRepository implements NodeContextRepository {
   constructor(private readonly dependencies: Dependencies) {}
-
-  load: StageContextRepository['load'] = (requirementId, stageId) =>
-    this.dependencies.legacy.load(requirementId, stageId)
 
   async loadNode(input: {
     requirementId: string
@@ -216,7 +212,7 @@ export class AssembledNodeContextRepository implements StageContextRepository {
         sourcePolicy?.attachments ?? input.executor.context?.attachments ?? [],
       includeRequirementBody,
       predecessorArtifacts: sourcePolicy?.predecessorArtifacts ?? 'direct',
-      includeSpaceKnowledge: sourcePolicy?.includeSpaceKnowledge ?? true,
+      includeSpaceKnowledge: false,
       maxCharacters: this.dependencies.maxCharacters ?? 100_000
     })
   }

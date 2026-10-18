@@ -9,7 +9,9 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
-import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { House, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { NavLink } from "react-router-dom";
+import { IconButton } from "../../components/ui";
 import {
   WorkspaceSidebar,
   type WorkspaceSidebarProps,
@@ -17,11 +19,11 @@ import {
 import { useWorkspacePageActive } from "./WorkspaceRouteCache";
 import { useLocalization } from "../../localization/LocalizationProvider";
 
-const DEFAULT_SIDEBAR_WIDTH = 248;
+const DEFAULT_SIDEBAR_WIDTH = 256;
 const MIN_SIDEBAR_WIDTH = 220;
 const MAX_SIDEBAR_WIDTH = 420;
 const MIN_CONTENT_WIDTH = 320;
-const CONTENT_PANEL_INSET = 8;
+const CONTENT_PANEL_INSET = 0;
 const CONTENT_PANEL_HORIZONTAL_INSET = CONTENT_PANEL_INSET * 2;
 const SIDEBAR_WIDTH_KEY = "realmflow:sidebar-width";
 const WorkspaceHeaderContext = createContext<HTMLDivElement | null | undefined>(
@@ -69,6 +71,44 @@ export function WorkspaceLayout({
   const focusMainContent = (): void => {
     document.getElementById("main-content")?.focus();
   };
+  const sidebarEdgeActions = (
+    <div className="sidebar-edge-actions">
+      {sidebarVisible && (
+        <NavLink
+          className="ui-button ui-button--ghost ui-button--default ui-icon-button sidebar-home-link"
+          to="/"
+          end
+          aria-label={t("navigation.home")}
+          title={t("navigation.home")}
+        >
+          <span className="ui-button__label">
+            <House size={18} strokeWidth={1.8} />
+          </span>
+        </NavLink>
+      )}
+      <IconButton
+        className="sidebar-edge-toggle"
+        variant="ghost"
+        aria-label={
+          sidebarVisible
+            ? t("layout.hideSidebar")
+            : t("layout.showSidebar")
+        }
+        title={
+          sidebarVisible
+            ? t("layout.hideSidebar")
+            : t("layout.showSidebar")
+        }
+        onClick={() => setSidebarVisible((visible) => !visible)}
+      >
+        {sidebarVisible ? (
+          <PanelLeftClose size={18} strokeWidth={1.8} />
+        ) : (
+          <PanelLeftOpen size={18} strokeWidth={1.8} />
+        )}
+      </IconButton>
+    </div>
+  );
 
   const updateSidebarWidth = (width: number): void => {
     const shellWidth = shellRef.current?.getBoundingClientRect().width ?? 0;
@@ -131,6 +171,7 @@ export function WorkspaceLayout({
           {t("layout.skipToMainContent")}
         </a>
         <WorkspaceSidebar visible={sidebarVisible} {...sidebarProps} />
+        {sidebarVisible && sidebarEdgeActions}
 
         {sidebarVisible && (
           <div
@@ -166,27 +207,7 @@ export function WorkspaceLayout({
             }`}
             aria-label={t("layout.toolbar")}
           >
-            <button
-              className="sidebar-edge-toggle"
-              type="button"
-              aria-label={
-                sidebarVisible
-                  ? t("layout.hideSidebar")
-                  : t("layout.showSidebar")
-              }
-              title={
-                sidebarVisible
-                  ? t("layout.hideSidebar")
-                  : t("layout.showSidebar")
-              }
-              onClick={() => setSidebarVisible((visible) => !visible)}
-            >
-              {sidebarVisible ? (
-                <PanelLeftClose size={18} strokeWidth={1.8} />
-              ) : (
-                <PanelLeftOpen size={18} strokeWidth={1.8} />
-              )}
-            </button>
+            {!sidebarVisible && sidebarEdgeActions}
             <div
               ref={setHeaderHost}
               className="app-content-header-slot"

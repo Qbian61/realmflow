@@ -252,6 +252,7 @@ export class SendRequirementNodeMessageUseCase {
         nodeRunId,
         title: input.sessionIdentity?.title as string,
         sortOrder: timestamp,
+        turns: [],
         messages: [],
         createdAt: timestamp,
         updatedAt: timestamp

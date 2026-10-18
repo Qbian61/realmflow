@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.browser.upload",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Upload browser file",
   "description": "Upload a regular file up to 32 MiB from authorized roots using a current file-input ref in the current Run browser.",
   "tags": [

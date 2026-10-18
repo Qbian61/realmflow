@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.presentation.update_text",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Update presentation text",
   "description": "Replace text in a shape selected by stable ID.",
   "tags": [

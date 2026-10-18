@@ -228,8 +228,8 @@ describe("CapabilitiesPage", () => {
           ? facadeCatalogFixture()
           : catalogFixture(),
     );
-    const duplicate = legacyCapabilityFixture({
-      id: "legacy.tool.filesystem_read",
+    const duplicate = capabilityFixture({
+      id: "com.example.filesystem-read",
       kind: "tool",
       name: "Filesystem read",
       runtime: { kind: "tool", definitionId: "filesystem_read" },
@@ -296,16 +296,6 @@ describe("CapabilitiesPage", () => {
   });
 
   it("shows one Skill per capability without registry or package sections", async () => {
-    const duplicate = legacyCapabilityFixture({
-      id: "legacy.skill.builtin.skill.requirement_analysis",
-      kind: "skill",
-      name: "需求分析",
-      runtime: {
-        kind: "skill",
-        instructionsPath: "skills/requirement-analysis/SKILL.md",
-        executable: false,
-      },
-    });
     window.realmflow = {
       business: {
         listConnectors: vi.fn().mockResolvedValue([]),
@@ -313,8 +303,8 @@ describe("CapabilitiesPage", () => {
       toolCatalog: createToolCatalog(),
       capabilityCatalog: {
         list: vi.fn().mockResolvedValue({
-          definitions: [duplicate.definition],
-          installations: [duplicate.installation],
+          definitions: [],
+          installations: [],
           displayByDefinitionKey: {},
         }),
       },
@@ -1649,7 +1639,7 @@ function capabilityDefinitionFixture(version: string) {
   } as const;
 }
 
-function legacyCapabilityFixture(input: {
+function capabilityFixture(input: {
   id: string;
   kind: "tool" | "skill";
   name: string;
@@ -1664,7 +1654,7 @@ function legacyCapabilityFixture(input: {
     manifestDigest: "a".repeat(64),
     definitionDigest: "b".repeat(64),
     name: input.name,
-    description: `${input.name} legacy projection`,
+    description: `${input.name} native capability`,
     runtime: input.runtime,
     permissions: {
       capabilities: [],

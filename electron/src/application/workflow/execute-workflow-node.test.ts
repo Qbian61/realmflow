@@ -291,6 +291,7 @@ describe('ExecuteWorkflowNodeUseCase', () => {
     expect(harness.models.routeModel).toHaveBeenCalledOnce()
     expect(harness.generate.execute).toHaveBeenCalledWith({
       requirementId: 'requirement-1',
+      stageId: 'implementation',
       nodeId: 'custom-tool',
       nodeRunId: 'node-run-1',
       executor: {
@@ -319,6 +320,7 @@ describe('ExecuteWorkflowNodeUseCase', () => {
     expect(harness.calls).toEqual(['route', 'reserve', 'generate', 'bind'])
     expect(harness.generate.execute).toHaveBeenCalledWith({
       requirementId: 'requirement-1',
+      stageId: 'implementation',
       nodeId: 'custom-security',
       nodeRunId: 'node-run-1',
       executor: workflow.nodes[0].executor,

@@ -11,6 +11,7 @@ import type {
   ModelProfile,
   ModelProvider
 } from '../../../domain/model'
+import type { RequirementWorkflow } from '../../../domain/workflow'
 import {
   openRealmFlowDatabase,
   type RealmFlowDatabase
@@ -55,6 +56,59 @@ const configuredProfile = {
   timeoutMs: 120_000,
   maxRetries: 2,
   maxConcurrency: 4
+}
+
+async function seedWorkflowNode(
+  repositories: ReturnType<typeof createSqliteRepositories>
+): Promise<void> {
+  await repositories.workspaces.save(
+    {
+      id: 'workspace-1',
+      path: '/spaces/one',
+      label: 'One',
+      description: '',
+      sortOrder: 0,
+      createdAt: 1,
+      updatedAt: 1
+    },
+    0
+  )
+  await repositories.requirements.save(
+    {
+      id: 'requirement-1',
+      workspaceId: 'workspace-1',
+      title: 'Requirement one',
+      stage: 'analysis',
+      status: 'active',
+      bodyRelativePath: 'requirement.md',
+      sortOrder: 0,
+      createdAt: 2,
+      updatedAt: 2
+    },
+    0
+  )
+  const workflow: RequirementWorkflow = {
+    requirementId: 'requirement-1',
+    templateVersionId: 'builtin-sdlc-v1',
+    revision: 0,
+    maxParallelism: 1,
+    nodes: [
+      {
+        id: 'node-analysis',
+        type: 'ai_generate',
+        name: 'Analysis',
+        description: '',
+        order: 0,
+        status: 'ready',
+        allowSkip: false
+      }
+    ],
+    edges: []
+  }
+  await repositories.requirementWorkflows.save(workflow, 0, {
+    reason: 'workflow_created',
+    triggerSource: 'system'
+  })
 }
 
 beforeEach(async () => {
@@ -713,6 +767,7 @@ describe('ModelService', () => {
         kind: 'general',
         title: 'General chat',
         sortOrder: 0,
+        turns: [],
         messages: [],
         createdAt: 1,
         updatedAt: 1
@@ -759,32 +814,7 @@ describe('ModelService', () => {
 
   it('records token, latency, retry, status and estimated cost metrics', async () => {
     const repositories = createSqliteRepositories(database)
-    await repositories.workspaces.save(
-      {
-        id: 'workspace-1',
-        path: '/spaces/one',
-        label: 'One',
-        description: '',
-        sortOrder: 0,
-        createdAt: 1,
-        updatedAt: 1
-      },
-      0
-    )
-    await repositories.requirements.save(
-      {
-        id: 'requirement-1',
-        workspaceId: 'workspace-1',
-        title: 'Requirement one',
-        stage: 'analysis',
-        status: 'active',
-        bodyRelativePath: 'requirement.md',
-        sortOrder: 0,
-        createdAt: 2,
-        updatedAt: 2
-      },
-      0
-    )
+    await seedWorkflowNode(repositories)
     await repositories.modelPool.saveProvider(provider, 0)
     await repositories.modelPool.saveProfile(profile, 0)
     const service = new ModelService({
@@ -800,10 +830,11 @@ describe('ModelService', () => {
     })
 
     await service.recordCall({
-      source: 'workflow_stage',
+      source: 'workflow_node',
       modelProfileId: profile.id,
       workspaceId: 'workspace-1',
       requirementId: 'requirement-1',
+      nodeId: 'node-analysis',
       aiRunId: 'run-1',
       startedAt: 900,
       inputTokens: 2_000,
@@ -819,11 +850,12 @@ describe('ModelService', () => {
     await expect(repositories.modelMetrics.list()).resolves.toEqual([
       {
         id: 'metric-1',
-        source: 'workflow_stage',
+        source: 'workflow_node',
         providerId: provider.id,
         modelProfileId: profile.id,
         workspaceId: 'workspace-1',
         requirementId: 'requirement-1',
+        nodeId: 'node-analysis',
         aiRunId: 'run-1',
         inputTokens: 2_000,
         outputTokens: 500,
@@ -852,6 +884,7 @@ describe('ModelService', () => {
         kind: 'general',
         title: 'General chat',
         sortOrder: 0,
+        turns: [],
         messages: [],
         createdAt: 1,
         updatedAt: 1
@@ -904,6 +937,7 @@ describe('ModelService', () => {
         kind: 'general',
         title: 'General chat',
         sortOrder: 0,
+        turns: [],
         messages: [],
         createdAt: 1,
         updatedAt: 1
@@ -1056,15 +1090,23 @@ describe('ModelService', () => {
       },
       profiles: [
         {
-          id: 'builtin-deepseek:deepseek-v4-flash',
+          id: 'builtin-deepseek:deepseek-flash',
           providerId: 'builtin-deepseek',
-          modelId: 'deepseek-v4-flash',
+          modelId: 'deepseek-flash',
+          displayName: 'DeepSeek-V4.1-Flash',
           source: 'catalog',
           catalogProviderId: 'deepseek',
-          catalogModelId: 'deepseek-v4-flash',
-          catalogVersion: 1,
+          catalogModelId: 'deepseek-flash',
+          catalogVersion: 3,
           enabledOverride: null,
           enabled: true,
+          inputTypes: ['text', 'image'],
+          capabilities: {
+            text: true,
+            vision: true,
+            toolCalling: true,
+            structuredOutput: true
+          },
           revision: 1
         },
         {
@@ -1074,7 +1116,7 @@ describe('ModelService', () => {
           source: 'catalog',
           catalogProviderId: 'deepseek',
           catalogModelId: 'deepseek-v4-pro',
-          catalogVersion: 1,
+          catalogVersion: 3,
           enabledOverride: null,
           enabled: true,
           revision: 1
@@ -1097,7 +1139,7 @@ describe('ModelService', () => {
         .prepare('SELECT catalog_version FROM model_catalog_applications')
         .pluck()
         .all()
-    ).toEqual([1])
+    ).toEqual([3])
     expect(
       database.prepare('SELECT COUNT(*) FROM model_catalog_events').pluck().get()
     ).toBe(1)
@@ -1158,12 +1200,12 @@ describe('ModelService', () => {
       outcome: 'configured',
       profiles: expect.arrayContaining([
         expect.objectContaining({
-          id: 'builtin-ark:doubao-seed-2-1-pro-260628',
-          modelId: 'doubao-seed-2-1-pro-260628'
+          id: 'builtin-ark:doubao-seed-2-1-pro-260915',
+          modelId: 'doubao-seed-2-1-pro-260915'
         })
       ])
     })
-    await expect(repositories.modelPool.listProfiles()).resolves.toHaveLength(5)
+    await expect(repositories.modelPool.listProfiles()).resolves.toHaveLength(4)
   })
 
   it('treats repeated builtin configuration as read-only replay', async () => {
@@ -1188,7 +1230,7 @@ describe('ModelService', () => {
       outcome: 'already_configured',
       provider: { id: 'builtin-deepseek', revision: 1 },
       profiles: [
-        { id: 'builtin-deepseek:deepseek-v4-flash', revision: 1 },
+        { id: 'builtin-deepseek:deepseek-flash', revision: 1 },
         { id: 'builtin-deepseek:deepseek-v4-pro', revision: 1 }
       ]
     })
@@ -1254,7 +1296,7 @@ describe('ModelService', () => {
     )
     const versionOne = deepseekCatalogVersion(1)
     const versionTwo = deepseekCatalogVersion(2, {
-      updateFirstName: 'DeepSeek V4 Flash Updated',
+      updateFirstName: 'DeepSeek-V4.1-Flash Updated',
       addModel: true,
       removeSecond: true
     })
@@ -1266,7 +1308,7 @@ describe('ModelService', () => {
     await initialService.configureBuiltinProvider('deepseek', 'secret')
     const firstProfile = (await repositories.modelPool.listProfiles()).find(
       (candidate) =>
-        candidate.id === 'builtin-deepseek:deepseek-v4-flash'
+        candidate.id === 'builtin-deepseek:deepseek-flash'
     )!
     await initialService.saveProfile(
       {
@@ -1297,10 +1339,10 @@ describe('ModelService', () => {
     expect(
       profiles.find(
         (candidate) =>
-          candidate.id === 'builtin-deepseek:deepseek-v4-flash'
+          candidate.id === 'builtin-deepseek:deepseek-flash'
       )
     ).toMatchObject({
-      displayName: 'DeepSeek V4 Flash Updated',
+      displayName: 'DeepSeek-V4.1-Flash Updated',
       catalogVersion: 2,
       enabledOverride: false,
       enabled: false,
@@ -1462,7 +1504,7 @@ describe('ModelService', () => {
     await expect(repositories.modelPool.listProfiles()).resolves.toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: 'builtin-deepseek:deepseek-v4-flash',
+          id: 'builtin-deepseek:deepseek-flash',
           catalogVersion: 1,
           revision: 1
         })
@@ -1589,6 +1631,46 @@ describe('ModelService', () => {
     const serialized = database.serialize()
     expect(serialized.includes(Buffer.from('api-secret'))).toBe(false)
     expect(serialized.includes(Buffer.from('resolved-tenant-secret'))).toBe(false)
+  })
+
+  it('resolves provider credential material for the DSH credential broker without exposing stored secrets elsewhere', async () => {
+    const repositories = createSqliteRepositories(database)
+    const service = new ModelService({
+      modelPool: repositories.modelPool,
+      credentials: repositories.modelCredentials,
+      metrics: repositories.modelMetrics,
+      providerEvents: repositories.modelProviderEvents,
+      profileEvents: repositories.modelProfileEvents,
+      unitOfWork: repositories.unitOfWork,
+      vault: await CredentialVault.open(join(directory, 'credentials.key')),
+      environment: { TENANT_TOKEN: 'resolved-tenant-secret' }
+    } as never)
+
+    await service.saveProvider(
+      provider,
+      0,
+      {
+        apiKey: 'api-secret',
+        customHeaders: {
+          'X-Tenant': '${TENANT_TOKEN}',
+          'X-Trace-Mode': 'strict'
+        }
+      } as never
+    )
+
+    await expect(
+      service.resolveProviderCredentialMaterial(provider.id)
+    ).resolves.toEqual({
+      apiKey: 'api-secret',
+      customHeaders: {
+        'X-Tenant': 'resolved-tenant-secret',
+        'X-Trace-Mode': 'strict'
+      }
+    })
+    expect(JSON.stringify(await service.listModels())).not.toContain(
+      'api-secret'
+    )
+    expect(database.serialize().includes(Buffer.from('api-secret'))).toBe(false)
   })
 
   it('removes a provider credential only after the expected revision matches', async () => {
@@ -1725,13 +1807,15 @@ describe('ModelService', () => {
       })
     ).resolves.toMatchObject({
       outcome: 'saved',
-      profiles: configured.profiles.map((current) =>
-        expect.objectContaining({
-          id: current.id,
-          enabled: false,
-          enabledOverride: false,
-          revision: current.revision + 1
-        })
+      profiles: expect.arrayContaining(
+        configured.profiles.map((current) =>
+          expect.objectContaining({
+            id: current.id,
+            enabled: false,
+            enabledOverride: false,
+            revision: current.revision + 1
+          })
+        )
       )
     })
   })
@@ -1860,6 +1944,58 @@ describe('ModelService', () => {
     await expect(repositories.modelPool.listProfiles()).resolves.toEqual([])
   })
 
+  it('clears conversation model references when deleting a provider', async () => {
+    const repositories = createSqliteRepositories(database)
+    const service = new ModelService({
+      modelPool: repositories.modelPool,
+      credentials: repositories.modelCredentials,
+      metrics: repositories.modelMetrics,
+      providerEvents: repositories.modelProviderEvents,
+      profileEvents: repositories.modelProfileEvents,
+      unitOfWork: repositories.unitOfWork,
+      vault: await CredentialVault.open(join(directory, 'credentials.key')),
+      createId: () => 'stable-id',
+      now: () => 410
+    })
+    await service.saveProvider(provider, 0, 'secret')
+    await service.saveProfile(profile, 0)
+    await repositories.chatSessions.save(
+      {
+        id: 'provider-conversation',
+        kind: 'general',
+        knowledgeScope: { kind: 'none' },
+        title: 'Pinned conversation',
+        sortOrder: 1,
+        turns: [],
+        messages: [],
+        modelProfileId: profile.id,
+        createdAt: 80,
+        updatedAt: 80
+      },
+      0
+    )
+
+    await expect(service.deleteProvider(provider.id, 1)).resolves.toEqual({
+      outcome: 'deleted',
+      providerId: provider.id
+    })
+
+    expect(
+      database
+        .prepare(
+          `SELECT model_profile_id, revision, updated_at
+           FROM chat_sessions WHERE id = ?`
+        )
+        .get('provider-conversation')
+    ).toEqual({
+      model_profile_id: null,
+      revision: 2,
+      updated_at: 410
+    })
+    await expect(repositories.modelPool.listProviders()).resolves.toEqual([])
+    await expect(repositories.modelPool.listProfiles()).resolves.toEqual([])
+  })
+
   it('keeps a provider active when an owned profile has a business reference', async () => {
     const repositories = createSqliteRepositories(database)
     const service = new ModelService({
@@ -1933,7 +2069,7 @@ describe('ModelService', () => {
         'availability-delete',
         'request-delete',
         'builtin-deepseek',
-        'builtin-deepseek:deepseek-v4-flash',
+        'builtin-deepseek:deepseek-flash',
         1,
         1,
         'available',
@@ -1966,7 +2102,7 @@ describe('ModelService', () => {
     ).resolves.toBeUndefined()
     await expect(
       repositories.modelProfileEvents.listByProfile(
-        'builtin-deepseek:deepseek-v4-flash'
+        'builtin-deepseek:deepseek-flash'
       )
     ).resolves.toEqual([
       expect.objectContaining({ eventType: 'created', toRevision: 1 }),
@@ -2010,7 +2146,7 @@ describe('ModelService', () => {
       now: () => 500
     })
     await service.configureBuiltinProvider('deepseek', 'old-secret')
-    const profileId = 'builtin-deepseek:deepseek-v4-flash'
+    const profileId = 'builtin-deepseek:deepseek-flash'
     await repositories.modelMetrics.append({
       id: 'historical-metric',
       source: 'general_conversation',
@@ -2059,7 +2195,7 @@ describe('ModelService', () => {
         .all()
     ).toEqual([
       {
-        id: 'builtin-deepseek:deepseek-v4-flash',
+        id: 'builtin-deepseek:deepseek-flash',
         deleted_at: 500
       },
       {
@@ -2085,16 +2221,16 @@ describe('ModelService', () => {
       outcome: 'configured',
       provider: { id: 'builtin-deepseek' },
       profiles: [
-        { id: 'builtin-deepseek:deepseek-v4-flash' },
+        { id: 'builtin-deepseek:deepseek-flash' },
         { id: 'builtin-deepseek:deepseek-v4-pro' }
       ]
     })
     await expect(service.listModels()).resolves.toMatchObject({
       providers: [{ id: 'builtin-deepseek' }],
-      profiles: [
-        { id: 'builtin-deepseek:deepseek-v4-flash' },
-        { id: 'builtin-deepseek:deepseek-v4-pro' }
-      ]
+      profiles: expect.arrayContaining([
+        expect.objectContaining({ id: 'builtin-deepseek:deepseek-flash' }),
+        expect.objectContaining({ id: 'builtin-deepseek:deepseek-v4-pro' })
+      ])
     })
     expect(
       database
@@ -2126,162 +2262,6 @@ describe('ModelService', () => {
     ).toEqual({
       provider_id: 'builtin-deepseek',
       model_profile_id: profileId
-    })
-  })
-
-  it('upgrades a restored legacy builtin identity without exposing its historical profile', async () => {
-    const repositories = createSqliteRepositories(database)
-    const service = new ModelService({
-      modelPool: repositories.modelPool,
-      credentials: repositories.modelCredentials,
-      metrics: repositories.modelMetrics,
-      providerEvents: repositories.modelProviderEvents,
-      profileEvents: repositories.modelProfileEvents,
-      unitOfWork: repositories.unitOfWork,
-      vault: await CredentialVault.open(join(directory, 'credentials.key')),
-      createId: (() => {
-        let index = 0
-        return () => `legacy-restore-${++index}`
-      })(),
-      now: () => 550
-    })
-    await service.saveProvider(
-      {
-        ...provider,
-        id: 'builtin-deepseek',
-        name: 'Legacy DeepSeek',
-        baseUrl: 'https://api.deepseek.com'
-      },
-      0,
-      'old-secret'
-    )
-    await service.saveProfile(
-      {
-        ...configuredProfile,
-        id: 'builtin-deepseek-default',
-        providerId: 'builtin-deepseek',
-        modelId: 'deepseek-v4-flash'
-      },
-      0
-    )
-    await repositories.modelMetrics.append({
-      id: 'legacy-historical-metric',
-      source: 'general_conversation',
-      providerId: 'builtin-deepseek',
-      modelProfileId: 'builtin-deepseek-default',
-      aiRunId: 'legacy-historical-run',
-      inputTokens: 1,
-      outputTokens: 1,
-      cachedTokens: 0,
-      reasoningTokens: 0,
-      durationMs: 1,
-      throughputTokensPerSecond: 1_000,
-      retryCount: 0,
-      status: 'completed',
-      estimatedInputCost: 0,
-      estimatedOutputCost: 0,
-      estimatedCost: 0,
-      startedAt: 500
-    })
-
-    await service.deleteProvider('builtin-deepseek', 1)
-    await service.configureBuiltinProvider('deepseek', 'new-secret')
-
-    const models = await service.listModels()
-    expect(models.providers).toEqual([
-      expect.objectContaining({
-        id: 'builtin-deepseek',
-        name: 'DeepSeek',
-        source: 'builtin',
-        catalogProviderId: 'deepseek'
-      })
-    ])
-    expect(models.profiles.map(({ id }) => id)).toEqual([
-      'builtin-deepseek-default',
-      'builtin-deepseek:deepseek-v4-pro'
-    ])
-    expect(
-      database
-        .prepare(
-          `SELECT deleted_at, source, catalog_model_id FROM model_profiles
-           WHERE id = 'builtin-deepseek-default'`
-        )
-        .get()
-    ).toEqual({
-      deleted_at: null,
-      source: 'catalog',
-      catalog_model_id: 'deepseek-v4-flash'
-    })
-    expect(
-      database
-        .prepare(
-          `SELECT provider_id, model_profile_id FROM model_call_metrics
-           WHERE id = 'legacy-historical-metric'`
-        )
-        .get()
-    ).toEqual({
-      provider_id: 'builtin-deepseek',
-      model_profile_id: 'builtin-deepseek-default'
-    })
-  })
-
-  it('adopts a legacy profile by model ID during catalog reconciliation', async () => {
-    const repositories = createSqliteRepositories(database)
-    const service = new ModelService({
-      modelPool: repositories.modelPool,
-      credentials: repositories.modelCredentials,
-      metrics: repositories.modelMetrics,
-      providerEvents: repositories.modelProviderEvents,
-      profileEvents: repositories.modelProfileEvents,
-      unitOfWork: repositories.unitOfWork,
-      vault: await CredentialVault.open(join(directory, 'credentials.key')),
-      createId: (() => {
-        let index = 0
-        return () => `legacy-reconcile-${++index}`
-      })(),
-      now: () => 575
-    })
-    await service.saveProvider(
-      {
-        ...provider,
-        id: 'builtin-deepseek',
-        name: 'DeepSeek',
-        baseUrl: 'https://api.deepseek.com',
-        source: 'builtin',
-        catalogProviderId: 'deepseek'
-      },
-      0,
-      'secret'
-    )
-    await service.saveProfile(
-      {
-        ...configuredProfile,
-        id: 'builtin-deepseek-default',
-        providerId: 'builtin-deepseek',
-        modelId: 'deepseek-v4-flash'
-      },
-      0
-    )
-
-    await expect(
-      service.reconcileBuiltinProviderCatalog('deepseek')
-    ).resolves.toMatchObject({
-      outcome: 'reconciled',
-      providerId: 'builtin-deepseek',
-      createdCount: 1,
-      updatedCount: 1
-    })
-    const models = await service.listModels()
-    expect(models.profiles.map(({ id }) => id)).toEqual([
-      'builtin-deepseek-default',
-      'builtin-deepseek:deepseek-v4-pro'
-    ])
-    expect(
-      models.profiles.find(({ id }) => id === 'builtin-deepseek-default')
-    ).toMatchObject({
-      source: 'catalog',
-      catalogProviderId: 'deepseek',
-      catalogModelId: 'deepseek-v4-flash'
     })
   })
 

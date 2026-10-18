@@ -206,42 +206,38 @@ export function WorkbenchDashboardPage({
             title={t("workbenchDashboard.section.spaces")}
             className="workbench-dashboard-spaces"
           >
-            {(snapshot?.spaces ?? []).length === 0 ? (
-              <Empty />
-            ) : (
-              snapshot!.spaces.map((space) => (
-                <Link key={space.id} to={`/spaces/${space.id}`}>
-                  <div>
-                    <strong>{space.label}</strong>
-                    <span data-health={space.health}>
-                      {healthLabel(space.health, t)}
-                    </span>
-                  </div>
-                  <div className="workbench-dashboard-progress-track">
-                    <i
-                      style={{
-                        transform: `scaleX(${
-                          space.totalRequirements === 0
-                            ? 0
-                            : space.completedRequirements /
-                              space.totalRequirements
-                        })`,
-                      }}
-                    />
-                  </div>
-                  <small>
-                    {t("workbenchDashboard.spaceProgress", {
-                      completed: space.completedRequirements,
-                      total: space.totalRequirements,
-                    })}
-                    {" · "}
-                    {t("workbenchDashboard.activeCount", {
-                      count: space.activeRequirements,
-                    })}
-                  </small>
-                </Link>
-              ))
-            )}
+            {(snapshot?.spaces ?? []).map((space) => (
+              <Link key={space.id} to={`/spaces/${space.id}`}>
+                <div>
+                  <strong>{space.label}</strong>
+                  <span data-health={space.health}>
+                    {healthLabel(space.health, t)}
+                  </span>
+                </div>
+                <div className="workbench-dashboard-progress-track">
+                  <i
+                    style={{
+                      transform: `scaleX(${
+                        space.totalRequirements === 0
+                          ? 0
+                          : space.completedRequirements /
+                            space.totalRequirements
+                      })`,
+                    }}
+                  />
+                </div>
+                <small>
+                  {t("workbenchDashboard.spaceProgress", {
+                    completed: space.completedRequirements,
+                    total: space.totalRequirements,
+                  })}
+                  {" · "}
+                  {t("workbenchDashboard.activeCount", {
+                    count: space.activeRequirements,
+                  })}
+                </small>
+              </Link>
+            ))}
           </DashboardSection>
 
           <DashboardSection title={t("workbenchDashboard.section.inProgress")}>
@@ -313,13 +309,9 @@ export function WorkbenchDashboardPage({
             </div>
           </header>
           <ol>
-            {exceptions.length === 0 ? (
-              <Empty />
-            ) : (
-              exceptions.map((exception) => (
-                <ExceptionRow key={exception.id} exception={exception} />
-              ))
-            )}
+            {exceptions.map((exception) => (
+              <ExceptionRow key={exception.id} exception={exception} />
+            ))}
           </ol>
         </section>
       </div>
@@ -367,13 +359,6 @@ function ExceptionRow({
         <span data-kind={exception.kind}>{exception.kind}</span>
       </Link>
     </li>
-  );
-}
-
-function Empty(): JSX.Element {
-  const { t } = useLocalization();
-  return (
-    <p className="workbench-dashboard-empty">{t("workbenchDashboard.empty")}</p>
   );
 }
 

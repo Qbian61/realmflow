@@ -12,7 +12,6 @@ import {
   beginNativeDrag,
   finishNativeDrag,
 } from "../features/drag/native-drag-feedback";
-import { DragHandle } from "../features/drag/DragHandle";
 import { WorkbenchDashboardPage } from "../features/workbench-hub/dashboard/WorkbenchDashboardPage";
 import { TaskWorkbenchPage } from "../features/workbench-hub/tasks/TaskWorkbenchPage";
 import { SiteWorkbenchPage } from "../features/workbench-hub/sites/SiteWorkbenchPage";
@@ -390,12 +389,6 @@ export default function WorkbenchHubPage({
                   setModuleDropTarget(undefined);
                 }}
               >
-                <DragHandle
-                  className="workbench-hub-module-drag"
-                  name={t(module.labelKey)}
-                  disabled={savingLayout}
-                  draggable
-                />
                 <span>{t(module.labelKey)}</span>
                 <button
                   type="button"

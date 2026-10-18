@@ -3,16 +3,7 @@ import csv
 import io
 import zipfile
 
-from fastapi.testclient import TestClient
-
-from app import create_app
-
-
-def client() -> TestClient:
-    return TestClient(
-        create_app(auth_token="session-secret"),
-        headers={"Authorization": "Bearer session-secret"},
-    )
+from private_worker import run_worker
 
 
 def encoded(text: str) -> str:
@@ -30,17 +21,15 @@ def compute(
     text: str,
     parameters: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    response = client().post(
-        "/api/v1/office/spreadsheets/compute",
-        json={
+    return run_worker(
+        "office.spreadsheet.compute",
+        {
             "format": format_,
             "operation": operation,
             "documentBase64": encoded(text),
             "parameters": parameters or {},
         },
     )
-    assert response.status_code == 200, response.text
-    return response.json()
 
 
 def compute_bytes(
@@ -49,17 +38,15 @@ def compute_bytes(
     document: bytes,
     parameters: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    response = client().post(
-        "/api/v1/office/spreadsheets/compute",
-        json={
+    return run_worker(
+        "office.spreadsheet.compute",
+        {
             "format": "xlsx",
             "operation": operation,
             "documentBase64": base64.b64encode(document).decode("ascii"),
             "parameters": parameters or {},
         },
     )
-    assert response.status_code == 200, response.text
-    return response.json()
 
 
 def xlsx_fixture() -> bytes:

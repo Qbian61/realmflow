@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.browser.press",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Press browser key",
   "description": "Send a supported key to a current snapshot ref in the current Run browser. May submit data.",
   "tags": [

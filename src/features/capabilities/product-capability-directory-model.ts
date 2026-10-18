@@ -84,14 +84,10 @@ export function buildProductCapabilityItems(input: {
     input.kind === "tool"
       ? aggregateCatalogTools(input.catalog)
       : latestById(input.catalog.skills).map(fromCatalogSkill);
-  const representedRuntimeIds = new Set(
-    catalogItems.flatMap((item) => [
-      item.id,
-      ...(item.catalogItem?.kind === "tool"
-        ? [item.catalogItem.definition.id]
-        : []),
-    ]),
-  );
+  const representedRuntimeIds =
+    input.kind === "tool"
+      ? catalogToolRuntimeIds(input.catalog.tools)
+      : new Set(catalogItems.map((item) => item.id));
   const nativeItems = input.capabilities.installations.flatMap(
     (installation) => {
       const definition = input.capabilities.definitions.find(
@@ -102,7 +98,6 @@ export function buildProductCapabilityItems(input: {
       );
       if (
         !definition ||
-        isLegacyCapability(definition) ||
         representedRuntimeIds.has(runtimeIdentity(definition))
       ) {
         return [];
@@ -241,6 +236,18 @@ function aggregateCatalogTools(
         ...(productFamily ? { productFamily } : {}),
       };
     },
+  );
+}
+
+function catalogToolRuntimeIds(tools: ToolCatalogDto["tools"]): Set<string> {
+  return new Set(
+    latestById(tools).flatMap((item) => [
+      item.id,
+      item.definition.id,
+      ...(item.modelFacing?.kind === "facade"
+        ? item.modelFacing.coveredPrimitiveToolIds
+        : []),
+    ]),
   );
 }
 
@@ -425,10 +432,6 @@ function toolProductIdentity(item: ToolCatalogToolDto): {
 function inferredBuiltinPackageId(id: string): string {
   const match = /^builtin\.([a-z0-9_-]+)\./u.exec(id);
   return match ? `realmflow.builtin.${match[1]}` : "";
-}
-
-function isLegacyCapability(definition: CapabilityDefinition): boolean {
-  return definition.id.startsWith("legacy.");
 }
 
 function runtimeIdentity(definition: CapabilityDefinition): string {

@@ -18,9 +18,9 @@ afterEach(async () => {
   await rm(directory, { recursive: true, force: true })
 })
 
-describe('Tool Runtime SQLite schema', () => {
-  it('creates the event store, outbox, snapshots, and projections', () => {
-    expect(REALMFLOW_SCHEMA_VERSION).toBe(115)
+describe('Tool control-plane SQLite schema', () => {
+  it('creates the catalog event store and catalog projections only', () => {
+    expect(REALMFLOW_SCHEMA_VERSION).toBe(116)
     const tables = database
       .prepare(
         `SELECT name FROM sqlite_master
@@ -30,19 +30,10 @@ describe('Tool Runtime SQLite schema', () => {
       .all() as Array<{ name: string }>
 
     expect(tables.map(({ name }) => name)).toEqual([
-      'tool_adapter_health_projections',
-      'tool_catalog_search_projections',
       'tool_commands',
       'tool_definition_projections',
       'tool_event_streams',
-      'tool_events',
-      'tool_execution_projections',
-      'tool_outbox',
-      'tool_permission_grant_projections',
-      'tool_permission_request_projections',
-      'tool_projection_checkpoints',
-      'tool_snapshots',
-      'tool_usage_daily_projections'
+      'tool_events'
     ])
     expect(
       database
@@ -64,8 +55,8 @@ describe('Tool Runtime SQLite schema', () => {
     ).toEqual({ name: 'skill_definition_projections' })
   })
 
-  it('does not create legacy Skill, permission, or execution authority tables', () => {
-    const legacyTables = database
+  it('does not create removed Skill, permission, or execution authority tables', () => {
+    const removedTables = database
       .prepare(
         `SELECT name FROM sqlite_master
          WHERE type = 'table'
@@ -80,13 +71,23 @@ describe('Tool Runtime SQLite schema', () => {
              'permission_commands',
              'skill_executions',
              'skill_execution_events',
-             'skill_execution_commands'
+             'skill_execution_commands',
+             'tool_outbox',
+             'tool_snapshots',
+             'tool_projection_checkpoints',
+             'tool_execution_projections',
+             'tool_permission_request_projections',
+             'tool_permission_grant_projections',
+             'tool_catalog_search_projections',
+             'tool_adapter_health_projections',
+             'tool_usage_daily_projections',
+             'runtime_resource_leases'
            )
          ORDER BY name`
       )
       .all() as Array<{ name: string }>
 
-    expect(legacyTables).toEqual([])
+    expect(removedTables).toEqual([])
   })
 
   it('stores immutable definition references for schedules', () => {

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type {
   SpreadsheetComputeInput,
   SpreadsheetComputeResult
-} from '../../sidecar/client'
+} from './private-python-worker-client'
 import {
   LocalSpreadsheetSessionService,
   SpreadsheetSessionError,

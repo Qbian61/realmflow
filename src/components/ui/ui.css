@@ -15,6 +15,7 @@
   --ui-motion-default: 140ms;
   --ui-layer-base: 0;
   --ui-layer-sticky: 20;
+  --ui-layer-chrome: 40;
   --ui-layer-menu: 80;
   --ui-layer-overlay: 100;
   --ui-layer-dialog: 120;
@@ -731,8 +732,12 @@
   pointer-events: none;
 }
 
+.app-content-header.sidebar-open .ui-toolbar--workspace-header {
+  padding-left: 18px;
+}
+
 .app-content-header.sidebar-closed .ui-toolbar--workspace-header {
-  padding-left: 125px;
+  padding-left: 142px;
 }
 
 .ui-toolbar--workspace-header > .ui-tabs,

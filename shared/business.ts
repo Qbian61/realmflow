@@ -32,6 +32,10 @@ import type {
   ValidateModelProfileResult as DomainValidateModelProfileResult
 } from '../domain/model'
 import type { BuiltinModelProviderId } from '../domain/model-provider-catalog'
+import type {
+  ConversationTurn,
+  ConversationTurnView
+} from '../domain/conversation-turn'
 import type { ReasoningPreference } from '../domain/reasoning-router'
 import type { AssistantTurnProjection } from '../domain/assistant-turn'
 import type {
@@ -59,6 +63,7 @@ import type {
   KnowledgeSearchResult
 } from '../domain/knowledge-search'
 import type { ConversationKnowledgeScope } from '../domain/conversation-knowledge-scope'
+import type { ConversationMessageAttachment } from '../domain/conversation-input'
 import type {
   KnowledgeRefreshPreset,
   KnowledgeRefreshRun
@@ -90,6 +95,7 @@ import type { LocalFileStorageMode } from '../domain/local-file-source'
 import type { KnowledgeNoteKind } from '../domain/knowledge-note'
 import type { OpenedSessionFiles } from './workspace'
 import type { ConversationAttachmentSubmission } from './conversation-attachments'
+import type { ToolDefinitionReference } from '../domain/tool-definition'
 
 export type SelectWorkRootCommand = {
   id: string
@@ -710,7 +716,8 @@ export type ConversationKind = 'general' | 'space' | 'requirement_node'
 
 export type ConversationMessageDto = {
   id: string
-  role: 'user' | 'assistant' | 'tool'
+  turnId: string
+  role: 'user' | 'assistant'
   status: 'pending' | 'completed' | 'failed'
   content: string
   modelName?: string
@@ -723,6 +730,7 @@ export type ConversationMessageDto = {
   execution?: AssistantTurnProjection
   source?: ConversationMessageSource
   followUp?: AssistantMessageFollowUp
+  attachments?: readonly ConversationMessageAttachment[]
   sortOrder: number
   createdAt: number
 }
@@ -739,6 +747,7 @@ export type ConversationDto = {
   modelProfileId?: string
   title: string
   sortOrder: number
+  turns: ConversationTurn[]
   messages: ConversationMessageDto[]
   revision: number
   createdAt: number
@@ -749,12 +758,40 @@ export type ConversationEventDto = {
   conversation: ConversationDto
 }
 
+export type ListConversationTurnsQuery = {
+  sessionId: string
+  cursor?: string
+  anchorTurnId?: string
+  limit: number
+}
+
+export type ListConversationTurnsResponse = {
+  turns: ConversationTurnView[]
+  nextCursor?: string
+  totalCount: number
+}
+
+export type ConversationTurnProjectionEventDto = {
+  sessionId: string
+  turnId: string
+  projection: AssistantTurnProjection
+}
+
 export type ConversationMessageReferences = {
   questionId?: string
   expectedQuestionRevision?: number
   todoId?: string
   toolCallId?: string
   artifactId?: string
+}
+
+export type ConversationCapabilitySelection = {
+  skill?: ToolDefinitionReference
+  connectorBindings?: Array<{
+    service: string
+    connectorId: string
+  }>
+  mcpServerIds?: string[]
 }
 
 export type CreateConversationCommand = {
@@ -774,6 +811,7 @@ export type CreateConversationCommand = {
   applicationLocale?: 'zh-CN' | 'en' | 'ja'
   references?: ConversationMessageReferences
   attachments?: ConversationAttachmentSubmission
+  capabilities?: ConversationCapabilitySelection
 }
 
 export type AppendConversationMessageCommand = {
@@ -788,6 +826,7 @@ export type AppendConversationMessageCommand = {
   applicationLocale?: 'zh-CN' | 'en' | 'ja'
   references?: ConversationMessageReferences
   attachments?: ConversationAttachmentSubmission
+  capabilities?: ConversationCapabilitySelection
 }
 
 export type ConversationContextDiagnosticsDto = {
@@ -816,6 +855,7 @@ export type ConversationContextDiagnosticsDto = {
 
 export type ConversationTranscriptSearchResultDto = {
   messageId: string
+  turnId: string
   role: 'user' | 'assistant'
   content: string
   rank: number
@@ -1675,11 +1715,32 @@ export type RecentConversationQuery = {
   workspaceId?: string
   folderPath?: string
   updatedAfter?: number
+  cursor?: string
+  limit?: number
+}
+
+export type RecentConversationDto = {
+  id: string
+  approvalProfileId: import('../domain/approval-profile').ApprovalProfileId
+  kind: 'general' | 'space'
+  workspaceId?: string
+  folderPath?: string
+  modelProfileId?: string
+  title: string
+  sortOrder: number
+  revision: number
+  turnCount: number
+  latestTurnStatus?: ConversationTurn['status']
+  latestAnswerPreview?: string
+  createdAt: number
+  updatedAt: number
 }
 
 export type RecentConversationListDto = {
-  conversations: ConversationDto[]
+  conversations: RecentConversationDto[]
   folderPaths: string[]
+  totalCount: number
+  nextCursor?: string
 }
 
 export type SaveApplicationModelDefaultCommand = {
@@ -1736,6 +1797,9 @@ export interface BusinessQueryApi {
   getConversation: (query: {
     sessionId: string
   }) => Promise<ConversationDto | undefined>
+  listConversationTurns: (
+    query: ListConversationTurnsQuery
+  ) => Promise<ListConversationTurnsResponse>
   getConversationContextDiagnostics: (query: {
     sessionId: string
   }) => Promise<ConversationContextDiagnosticsDto | undefined>
@@ -2083,6 +2147,9 @@ export interface BusinessCommandApi {
 export interface BusinessApi extends BusinessQueryApi, BusinessCommandApi {
   onConversationEvent?: (
     listener: (event: ConversationEventDto) => void
+  ) => () => void
+  onConversationTurnProjection?: (
+    listener: (event: ConversationTurnProjectionEventDto) => void
   ) => () => void
 }
 

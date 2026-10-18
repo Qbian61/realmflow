@@ -4,7 +4,7 @@ import type {
   WordComputeOperation,
   WordComputeResult,
   WordPreservationRisk
-} from '../../sidecar/client'
+} from './private-python-worker-client'
 
 export type WordSessionStatus =
   | 'ready'

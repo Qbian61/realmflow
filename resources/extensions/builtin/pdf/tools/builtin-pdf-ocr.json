@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.pdf.ocr",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "name": "Recognize PDF page text",
   "description": "Render and recognize one scanned PDF page locally.",
   "tags": [

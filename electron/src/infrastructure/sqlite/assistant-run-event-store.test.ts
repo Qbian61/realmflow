@@ -1,16 +1,22 @@
 import Database from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-  createAssistantTurnProjection,
+  createAssistantTurnProjection as createProjection,
   projectAssistantTurn,
   type AssistantRunEvent
 } from '../../../../domain/assistant-turn'
 import { applyMigrations } from './migrations'
 import { SqliteAssistantRunEventStore } from './assistant-run-event-store'
 import { SqliteAgentRuntimeRunRepository } from './agent-runtime-run-repository'
-import { SqliteAgentRunCheckpointRepository } from './agent-run-checkpoint-repository'
 import { createAgentRunSnapshot } from '../../../../domain/agent-runtime'
-import { createRunCheckpoint } from '../../../../domain/agent-run-recovery'
+
+function createAssistantTurnProjection(
+  input: Omit<Parameters<typeof createProjection>[0], 'turnId'> & {
+    turnId?: string
+  }
+) {
+  return createProjection({ turnId: 'turn-1', ...input })
+}
 
 describe('SqliteAssistantRunEventStore', () => {
   let database: Database.Database
@@ -34,14 +40,6 @@ describe('SqliteAssistantRunEventStore', () => {
     await new SqliteAgentRuntimeRunRepository(database).create({
       id: 'run-1', snapshot, status: 'completed', createdAt: 100, updatedAt: 200
     })
-    await new SqliteAgentRunCheckpointRepository(database).save(createRunCheckpoint({
-      runId: 'run-1', ordinal: 1, reason: 'terminal', snapshotDigest: 'a'.repeat(64),
-      configurationDigests: { agentProfile: 'a'.repeat(64), prompt: 'b'.repeat(64),
-        policy: 'c'.repeat(64), capabilityCatalog: 'd'.repeat(64), capabilityBinding: 'e'.repeat(64) },
-      messageWindow: [{ id: 'answer:run-1', role: 'assistant', content: 'Durable answer' }],
-      pendingCalls: [], remainingBudgets: { toolCalls: 1, subagents: 0, retries: 0, timeoutMs: 10, tokens: 10 },
-      projectionCursor: 3, createdAt: 200
-    }))
   }
 
   it('reconciles a terminal run whose projection failed, without restarting the provider or duplicating the answer', async () => {
@@ -50,7 +48,7 @@ describe('SqliteAssistantRunEventStore', () => {
     const initial = createAssistantTurnProjection({
       runId: 'run-1', assistantMessageId: 'assistant-1', startedAt: 100
     })
-    const delta = event(1, 'answer.delta', { delta: 'Durable ' })
+    const delta = event(1, 'answer.delta', { delta: 'Durable answer' })
     await store.appendAndProject(delta, projectAssistantTurn(initial, delta))
     expect(store.reconcileTerminalConversations).toBeTypeOf('function')
     await store.reconcileTerminalConversations()
@@ -77,7 +75,28 @@ describe('SqliteAssistantRunEventStore', () => {
       .toEqual({ status: 'completed', content: 'Durable answer' })
     expect(database.prepare('SELECT revision FROM chat_sessions').get())
       .toEqual({ revision: 1 })
+    expect(database.prepare('SELECT status, completed_at FROM conversation_turns').get())
+      .toEqual({ status: 'completed', completed_at: 200 })
     expect(await store.listAfter('run-1', 0)).toHaveLength(1)
+  })
+
+  it('rebuilds a missing terminal projection from append-only events during startup reconciliation', async () => {
+    await completedRuntime()
+    const store = new SqliteAssistantRunEventStore(database)
+    const initial = createAssistantTurnProjection({
+      runId: 'run-1', assistantMessageId: 'assistant-1', startedAt: 100
+    })
+    const delta = event(1, 'answer.delta', { delta: 'Durable answer' })
+    const answered = projectAssistantTurn(initial, delta)
+    await store.appendAndProject(delta, answered)
+    const terminal = event(2, 'run.completed', {})
+    const completed = projectAssistantTurn(answered, terminal)
+    await store.appendRecoveredAndProject(terminal, completed)
+    database.prepare('DELETE FROM assistant_turn_projections WHERE run_id = ?').run('run-1')
+
+    await store.reconcileTerminalConversations()
+
+    expect(await store.getSnapshot('run-1')).toEqual(completed)
   })
 
   it('uses the durable runtime terminal state when an older timeline terminal differs', async () => {
@@ -93,7 +112,11 @@ describe('SqliteAssistantRunEventStore', () => {
     await store.reconcileTerminalConversations()
 
     expect(database.prepare('SELECT status, content, error FROM chat_messages').get())
-      .toEqual({ status: 'completed', content: 'Durable answer', error: null })
+      .toEqual({
+        status: 'completed',
+        content: 'Task completed. Check the execution details.',
+        error: null
+      })
     expect(database.prepare('SELECT revision FROM chat_sessions').get())
       .toEqual({ revision: 1 })
     expect(await store.listAfter('run-1', 0)).toEqual([failed])
@@ -111,7 +134,10 @@ describe('SqliteAssistantRunEventStore', () => {
     database.exec('DROP TRIGGER reject_reconcile')
     await store.reconcileTerminalConversations()
     expect(database.prepare('SELECT status, content FROM chat_messages').get())
-      .toEqual({ status: 'completed', content: 'Durable answer' })
+      .toEqual({
+        status: 'completed',
+        content: 'Task completed. Check the execution details.'
+      })
   })
 
   it('excludes rebound conversations from terminal reconciliation', async () => {
@@ -213,6 +239,7 @@ describe('SqliteAssistantRunEventStore', () => {
 
   it('marks a resumed answer pending again so another turn cannot start while recovery is running', async () => {
     database.prepare("UPDATE chat_messages SET status = 'failed', error = 'disconnected', completed_at = 101").run()
+    database.prepare("UPDATE conversation_turns SET status = 'failed', completed_at = 101").run()
     const store = new SqliteAssistantRunEventStore(database)
     const initial = createAssistantTurnProjection({
       runId: 'run-1', assistantMessageId: 'assistant-1', startedAt: 100
@@ -221,6 +248,29 @@ describe('SqliteAssistantRunEventStore', () => {
     await store.appendRecoveredAndProject(resumed, projectAssistantTurn(initial, resumed))
     expect(database.prepare('SELECT status, error, completed_at FROM chat_messages').get())
       .toEqual({ status: 'pending', error: null, completed_at: null })
+    expect(database.prepare('SELECT status, completed_at FROM conversation_turns').get())
+      .toEqual({ status: 'running', completed_at: null })
+  })
+
+  it('marks the Turn recovery blocked while keeping its answer pending', async () => {
+    const store = new SqliteAssistantRunEventStore(database)
+    const initial = createAssistantTurnProjection({
+      runId: 'run-1', assistantMessageId: 'assistant-1', startedAt: 100
+    })
+    const blocked = event(1, 'run.recovery_blocked', {
+      reason: 'checkpoint_unavailable',
+      actions: ['resume', 'branch', 'cancel']
+    })
+
+    await store.appendRecoveredAndProject(
+      blocked,
+      projectAssistantTurn(initial, blocked)
+    )
+
+    expect(database.prepare('SELECT status, completed_at FROM conversation_turns').get())
+      .toEqual({ status: 'recovery_blocked', completed_at: null })
+    expect(database.prepare('SELECT status FROM chat_messages').get())
+      .toEqual({ status: 'pending' })
   })
 
   it('does not overwrite a message rebound to a newer run during recovery', async () => {
@@ -377,6 +427,93 @@ describe('SqliteAssistantRunEventStore', () => {
     ).rejects.toThrow('projection does not match event')
   })
 
+  it('rebuilds durable Sub-agent and Todo trees from append-only events', async () => {
+    const store = new SqliteAssistantRunEventStore(database)
+    let projection = createAssistantTurnProjection({
+      runId: 'run-1',
+      assistantMessageId: 'assistant-1',
+      startedAt: 100
+    })
+    const delegation = event(1, 'delegation.updated', {
+      groupId: 'delegation:delegate-1',
+      callId: 'delegate-1',
+      parentRunId: 'run-1',
+      strategy: 'parallel',
+      requestedAt: 101,
+      completedAt: 103,
+      children: [
+        {
+          taskId: 'docs',
+          childRunId: 'child-1',
+          childSessionId: 'session-child-1',
+          ordinal: 1,
+          agentId: 'builtin.general',
+          agentName: 'General',
+          objective: 'Inspect docs',
+          status: 'completed',
+          resultSummary: 'Done',
+          evidenceCount: 0,
+          artifactIds: [],
+          startedAt: 102,
+          completedAt: 103,
+          tree: [
+            {
+              id: 'finish:child-1:assistant',
+              kind: 'finish',
+              order: 1,
+              answerMessageId: 'child-1:assistant'
+            }
+          ]
+        }
+      ]
+    })
+    projection = projectAssistantTurn(projection, delegation)
+    await store.appendAndProject(delegation, projection)
+    const todo = event(2, 'todo.updated', {
+      todoId: 'plan-1',
+      title: 'Implementation plan',
+      items: [
+        {
+          id: 'implement',
+          ordinal: 1,
+          title: 'Implement',
+          status: 'completed',
+          children: []
+        }
+      ]
+    })
+    projection = projectAssistantTurn(projection, todo)
+    await store.appendAndProject(todo, projection)
+
+    database
+      .prepare('DELETE FROM assistant_turn_projections WHERE run_id = ?')
+      .run('run-1')
+    const rebuilt = await store.rebuildProjection('run-1')
+
+    expect(rebuilt).toEqual(projection)
+    expect(JSON.stringify(rebuilt?.tree)).toContain('session-child-1')
+    expect(JSON.stringify(rebuilt?.tree)).toContain('todo-group:plan-1')
+  })
+
+  it('rejects a projection owned by another Turn before persisting facts', async () => {
+    const store = new SqliteAssistantRunEventStore(database)
+    const answerEvent = event(1, 'answer.delta', { delta: 'Hello' })
+    const projection = projectAssistantTurn(
+      createAssistantTurnProjection({
+        runId: 'run-1',
+        turnId: 'another-turn',
+        assistantMessageId: 'assistant-1',
+        startedAt: 100
+      }),
+      answerEvent
+    )
+
+    await expect(
+      store.appendAndProject(answerEvent, projection)
+    ).rejects.toThrow('projection Turn ownership does not match message')
+    expect(await store.listAfter('run-1', 0)).toEqual([])
+  })
+
   it('keeps facts append-only and cascades them with the assistant message', async () => {
     const store = new SqliteAssistantRunEventStore(database)
     const initial = createAssistantTurnProjection({
@@ -415,10 +552,23 @@ describe('SqliteAssistantRunEventStore', () => {
       .run()
     database
       .prepare(
-        `INSERT INTO chat_messages (
-          id, session_id, role, status, content, run_id, sort_order, created_at
+        `INSERT INTO conversation_turns (
+          id, session_id, turn_index, user_message_id, assistant_message_id,
+          run_id, status, created_at
         ) VALUES (
-          'assistant-2', 'session-1', 'assistant', 'pending', '', 'run-2', 1, 2
+          'turn-2', 'session-1', 1, 'user-2', 'assistant-2',
+          'run-2', 'running', 2
+        )`
+      )
+      .run()
+    database
+      .prepare(
+        `INSERT INTO chat_messages (
+          id, session_id, turn_id, role, status, content, run_id, sort_order,
+          created_at
+        ) VALUES (
+          'assistant-2', 'session-1', 'turn-2', 'assistant', 'pending', '',
+          'run-2', 1, 2
         )`
       )
       .run()
@@ -436,6 +586,7 @@ describe('SqliteAssistantRunEventStore', () => {
     const second = projectAssistantTurn(
       createAssistantTurnProjection({
         runId: 'run-2',
+        turnId: 'turn-2',
         assistantMessageId: 'assistant-2',
         startedAt: 200
       }),
@@ -501,13 +652,28 @@ function seedAssistantMessage(database: Database.Database): void {
       )`
     )
     .run()
-  database
-    .prepare(
+  database.transaction(() => {
+    database
+      .prepare(
+        `INSERT INTO conversation_turns (
+          id, session_id, turn_index, user_message_id, assistant_message_id,
+          run_id, status, created_at
+        ) VALUES (
+          'turn-1', 'session-1', 0, 'user-1', 'assistant-1',
+          'run-1', 'running', 1
+        )`
+      )
+      .run()
+    database
+      .prepare(
       `INSERT INTO chat_messages (
-        id, session_id, role, status, content, run_id, sort_order, created_at
+        id, session_id, turn_id, role, status, content, run_id, sort_order,
+        created_at
       ) VALUES (
-        'assistant-1', 'session-1', 'assistant', 'pending', '', 'run-1', 0, 1
+        'assistant-1', 'session-1', 'turn-1', 'assistant', 'pending', '',
+        'run-1', 0, 1
       )`
-    )
-    .run()
+      )
+      .run()
+  })()
 }

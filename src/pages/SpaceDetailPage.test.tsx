@@ -65,13 +65,6 @@ function createApi(): RealmFlowApi {
     business: {} as never,
     toolCatalog: {} as never,
     toolPermissions: {} as never,
-    persistence: {
-      load: vi.fn().mockResolvedValue({
-        status: "loaded",
-        snapshot: { revision: 0, value: null },
-      }),
-      onChanged: vi.fn().mockReturnValue(() => undefined),
-    },
     workspace: {
       chooseFiles: vi.fn().mockResolvedValue({
         binding: {
@@ -99,6 +92,11 @@ function createApi(): RealmFlowApi {
           rootPath: "/tmp/docs",
         },
         files: [],
+      }),
+      bindSessionDirectory: vi.fn().mockResolvedValue({
+        requirementId: "session-space-folder",
+        rootName: "docs",
+        rootPath: "/tmp/docs",
       }),
       chooseFolder: vi.fn().mockResolvedValue(null),
       chooseDirectory: vi.fn().mockResolvedValue(null),

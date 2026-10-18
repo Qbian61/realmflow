@@ -9,11 +9,6 @@ import type {
   ConversationMemoryEntry,
   ConversationMemoryScope
 } from '../../../../domain/conversation-memory'
-import type {
-  RuntimeResourceLeaseStatus,
-  RuntimeResourceType
-} from '../../../../domain/runtime-resource-lease'
-
 type TurnContextRouteRow = {
   source_message_id: string
   policy_version: string
@@ -33,6 +28,7 @@ type ContextProjectionRow = {
 
 type TranscriptSearchRow = {
   message_id: string
+  turn_id: string
   role: 'user' | 'assistant'
   content: string
   rank: number
@@ -163,6 +159,7 @@ export class SqliteConversationContextRepository {
     limit: number
   }): Array<{
     messageId: string
+    turnId: string
     role: 'user' | 'assistant'
     content: string
     rank: number
@@ -172,10 +169,18 @@ export class SqliteConversationContextRepository {
     return (
       this.database
         .prepare(
-          `SELECT message_id, role, content, bm25(chat_messages_fts) AS rank
+          `SELECT chat_messages_fts.message_id,
+                  chat_messages.turn_id,
+                  chat_messages_fts.role,
+                  chat_messages_fts.content,
+                  bm25(chat_messages_fts) AS rank
            FROM chat_messages_fts
-           WHERE chat_messages_fts MATCH ? AND session_id = ?
-           ORDER BY rank, message_id
+           JOIN chat_messages
+             ON chat_messages.id = chat_messages_fts.message_id
+            AND chat_messages.session_id = chat_messages_fts.session_id
+           WHERE chat_messages_fts MATCH ?
+             AND chat_messages_fts.session_id = ?
+           ORDER BY rank, chat_messages_fts.message_id
            LIMIT ?`
         )
         .all(
@@ -185,6 +190,7 @@ export class SqliteConversationContextRepository {
         ) as TranscriptSearchRow[]
     ).map((row) => ({
       messageId: row.message_id,
+      turnId: row.turn_id,
       role: row.role,
       content: row.content,
       rank: row.rank
@@ -289,19 +295,6 @@ export class SqliteConversationContextRepository {
         (exclusionCounts.get(exclusion.reason) ?? 0) + 1
       )
     }
-    const leases = this.database
-      .prepare(
-        `SELECT resource_type, status, epoch
-         FROM runtime_resource_leases
-         WHERE conversation_id = ?
-         ORDER BY created_at DESC, id DESC
-         LIMIT 8`
-      )
-      .all(conversationId) as Array<{
-        resource_type: RuntimeResourceType
-        status: RuntimeResourceLeaseStatus
-        epoch: number
-      }>
     return {
       sourceMessageId: row.source_message_id,
       relation: row.relation,
@@ -320,11 +313,7 @@ export class SqliteConversationContextRepository {
       estimatedTokens: projection.estimatedTokens,
       projectionDigest: row.projection_digest,
       createdAt: projection.createdAt,
-      leases: leases.map((lease) => ({
-        resourceType: lease.resource_type,
-        status: lease.status,
-        epoch: lease.epoch
-      }))
+      leases: []
     }
   }
 }

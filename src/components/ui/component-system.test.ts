@@ -108,7 +108,7 @@ describe("frontend component system", () => {
       "utf8",
     );
 
-    for (const legacySelector of [
+    for (const removedSelector of [
       ".schedule-dialog-backdrop",
       ".template-dialog-backdrop",
       ".template-migration-backdrop",
@@ -116,7 +116,7 @@ describe("frontend component system", () => {
       ".template-migration-dialog footer button",
       ".schedule-recommendation:hover",
     ]) {
-      expect(applicationStyles).not.toContain(legacySelector);
+      expect(applicationStyles).not.toContain(removedSelector);
     }
 
     expect(applicationStyles).toMatch(
@@ -127,7 +127,7 @@ describe("frontend component system", () => {
     );
   });
 
-  it("keeps legacy tone declarations inside theme token blocks", () => {
+  it("keeps concrete-value tone declarations inside theme token blocks", () => {
     const applicationStyles = readFileSync(
       resolve(process.cwd(), "src/styles.css"),
       "utf8",
@@ -319,13 +319,13 @@ describe("frontend component system", () => {
 
   it("keeps sortable feature surfaces on their approved drag targets", () => {
     const dragHandleSources = [
-      "pages/WorkbenchHubPage.tsx",
       "features/workbench-hub/tasks/TaskTableGrid.tsx",
     ].map((path) => ({
       path,
       source: readFileSync(resolve(process.cwd(), "src", path), "utf8"),
     }));
     const nameDragSources = [
+      "pages/WorkbenchHubPage.tsx",
       "features/navigation/WorkspaceSpaceEntry.tsx",
       "features/workbench-hub/tasks/TaskTableNavigation.tsx",
       "features/workbench-hub/memos/MemoWorkbenchPage.tsx",
@@ -986,18 +986,23 @@ describe("frontend component system", () => {
     const packageJson = JSON.parse(
       readFileSync(resolve(process.cwd(), "package.json"), "utf8"),
     ) as { dependencies?: Record<string, string> };
+    const applicationStyles = readFileSync(
+      resolve(process.cwd(), "src/styles.css"),
+      "utf8",
+    );
     expect(packageJson.dependencies?.["@tanstack/react-virtual"]).toBeTruthy();
 
     const readSource = (path: string): string =>
       readFileSync(resolve(process.cwd(), "src", path), "utf8");
     expect(
-      readSource("features/conversation/ConversationMessageList.tsx"),
+      readSource("features/conversation/ConversationTurnList.tsx"),
     ).toContain("useVirtualizer");
+    expect(
+      readSource("features/conversation/ConversationMessageList.tsx"),
+    ).not.toContain("useVirtualizer");
 
     for (const path of [
       "features/resources/RepositorySnapshotDialog.tsx",
-      "features/sessions/RecentSessions.tsx",
-      "features/conversation/AssistantExecutionTimeline.tsx",
       "features/resources/KnowledgeNotesPanel.tsx",
       "features/capabilities/InstalledCapabilityList.tsx",
       "features/capabilities/ToolCatalogPanel.tsx",
@@ -1005,6 +1010,17 @@ describe("frontend component system", () => {
       expect(readSource(path)).toContain("useListPagination");
       expect(readSource(path)).toContain("<ListPagination");
     }
+    const recentSessions = readSource("features/sessions/RecentSessions.tsx");
+    expect(recentSessions).toContain("LOAD_MORE_THRESHOLD_PX");
+    expect(recentSessions).toContain("onLoadMore");
+    expect(recentSessions).toContain("onScroll");
+    expect(recentSessions).not.toContain("<ListPagination");
+    const assistantTreeRule =
+      applicationStyles.match(
+        /\.assistant-display-tree\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    expect(assistantTreeRule).toContain("max-height: 360px");
+    expect(assistantTreeRule).toContain("overflow: auto");
     expect(readSource("features/resources/SpaceKnowledgePanel.tsx")).toContain(
       "useListPagination",
     );
@@ -1123,7 +1139,10 @@ describe("frontend component system", () => {
       }));
     });
 
-    expect(imageElements).toHaveLength(6);
+    expect(imageElements).toHaveLength(7);
+    expect(imageFiles).toContain(
+      "features/conversation/UserMessageAttachments.tsx",
+    );
     for (const image of imageElements) {
       expect(image.source, image.path).toMatch(/\bloading=/);
       expect(image.source, image.path).toContain('decoding="async"');

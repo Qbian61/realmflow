@@ -22,6 +22,7 @@ describe('SendFollowUpSuggestionUseCase', () => {
         title: 'Conversation',
         sortOrder: 0,
         revision: 7,
+        turns: [],
         messages: [],
         createdAt: 1,
         updatedAt: 200

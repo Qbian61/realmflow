@@ -74,6 +74,50 @@ describe('LocalContentExtractionService', () => {
     expect(pdf.extract).toHaveBeenCalledOnce()
   })
 
+  it('routes legacy Office CFB files to native legacy extraction before conversion', async () => {
+    const bytes = Uint8Array.from([
+      0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1,
+      ...Buffer.from('native legacy body', 'utf16le')
+    ])
+    const legacyOffice = {
+      ...fakeExtractor('legacy_office' as LocalContentExtractor['strategy'], {
+        sourceChecksum: digest(bytes),
+        format: 'doc',
+        extractorVersion: 'legacy-native-v1',
+        units: [
+          {
+            key: 'content',
+            title: 'brief.doc',
+            text: 'native legacy body',
+            checksum: digest(Buffer.from('native legacy body')),
+            byteSize: 18
+          }
+        ]
+      }),
+      formats: ['doc']
+    }
+    const converter = {
+      ...fakeExtractor('office_convert'),
+      formats: ['doc', 'wps']
+    }
+    const service = new LocalContentExtractionService({
+      extractors: [legacyOffice, converter],
+      cache: new MemoryContentExtractionCache()
+    })
+
+    await service.extract({
+      bytes,
+      fileName: 'brief.doc',
+      sourceChecksum: digest(bytes),
+      policy,
+      signal: new AbortController().signal,
+      depth: 0
+    })
+
+    expect(legacyOffice.extract).toHaveBeenCalledOnce()
+    expect(converter.extract).not.toHaveBeenCalled()
+  })
+
   it('coalesces concurrent requests for the same extraction key', async () => {
     let release!: (bundle: ExtractedContentBundle) => void
     const extractor = fakeExtractor(

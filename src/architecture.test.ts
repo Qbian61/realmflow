@@ -271,7 +271,7 @@ describe('renderer architecture boundaries', () => {
     expect(violations).toEqual([])
   })
 
-  it('prevents renderer production code from connecting to the Sidecar directly', () => {
+  it('prevents renderer production code from connecting to private worker internals directly', () => {
     const violations = sourceFiles
       .filter(
         (file) => !file.endsWith('.test.ts') && !file.endsWith('.test.tsx')
@@ -301,7 +301,7 @@ describe('renderer architecture boundaries', () => {
         )
       )
       .map((file) => relative(resolve('.'), file))
-    const sidecarLeaks = pythonFiles
+    const pythonLeaks = pythonFiles
       .filter((file) =>
         /agent_run_checkpoints|RunCheckpointRepository/.test(
           readFileSync(file, 'utf8')
@@ -310,7 +310,7 @@ describe('renderer architecture boundaries', () => {
       .map((file) => relative(resolve('.'), file))
 
     expect(rendererLeaks).toEqual([])
-    expect(sidecarLeaks).toEqual([])
+    expect(pythonLeaks).toEqual([])
   })
 
   it('keeps Qdrant runtime details inside the Electron Main boundary', () => {
@@ -397,7 +397,7 @@ describe('renderer architecture boundaries', () => {
     expect(violations).toEqual([])
   })
 
-  it('keeps provider-specific authentication logic out of the Sidecar', () => {
+  it('keeps provider-specific authentication logic out of Python private workers', () => {
     const violations = pythonFiles
       .filter((file) => !file.includes('/tests/'))
       .filter((file) => {
@@ -431,7 +431,7 @@ describe('renderer architecture boundaries', () => {
     expect(violations).toEqual([])
   })
 
-  it('keeps Skill persistence and package access out of the Sidecar', () => {
+  it('keeps Skill persistence and package access out of Python private workers', () => {
     const violations = pythonFiles
       .filter((file) => !file.includes('/tests/'))
       .filter((file) =>
@@ -466,7 +466,7 @@ describe('renderer architecture boundaries', () => {
     expect(violations).toEqual([])
   })
 
-  it('does not register legacy Tool Runtime repositories in production', () => {
+  it('does not register removed Tool Runtime repositories in production', () => {
     const mainSource = readFileSync(resolve(electronRoot, 'main.ts'), 'utf8')
     const forbidden = [
       'SqliteSkillRepository',
@@ -498,7 +498,7 @@ describe('renderer architecture boundaries', () => {
     expect(violations).toEqual([])
   })
 
-  it('does not construct the legacy Skill execution service', () => {
+  it('does not construct the removed Skill execution service', () => {
     const constructors = electronFiles
       .filter((file) => !file.endsWith('.test.ts'))
       .filter((file) =>
@@ -609,7 +609,7 @@ describe('renderer architecture boundaries', () => {
     expect(violations).toEqual([])
   })
 
-  it('prevents renderer production code from writing business aggregates through legacy persistence', () => {
+  it('prevents renderer production code from writing business aggregates through removed persistence IPC', () => {
     const violations = sourceFiles
       .filter(
         (file) => !file.endsWith('.test.ts') && !file.endsWith('.test.tsx')
@@ -622,6 +622,84 @@ describe('renderer architecture boundaries', () => {
       .map((file) => relative(sourceRoot, file))
 
     expect(violations).toEqual([])
+  })
+
+  it('does not keep unpublished historical data compatibility bridges in production', () => {
+    const productionFiles = [
+      ...collectSourceFiles(resolve('domain')),
+      ...sharedFiles,
+      ...sourceFiles,
+      ...electronFiles
+    ].filter(
+      (file) => !file.endsWith('.test.ts') && !file.endsWith('.test.tsx')
+    )
+    const forbidden = [
+      'LegacyCapabilityProjectionService',
+      'legacy-capability-projection-service',
+      'synchronizeLegacy',
+      'legacyStageId',
+      'legacyStageFromNodeId',
+      'persistenceLoad',
+      'persistence:load',
+      'registerPersistenceIpc',
+      'LegacyPersistenceReadApi',
+      'synthesizeLegacySkillPackage',
+      'upcastToolDomainEvent',
+      'tool-event-upcaster',
+      'prepareQdrantIndexStorageUpgrade',
+      'qdrant-storage-migration',
+      'legacyKnowledgeContext',
+      'legacySkillInstructions',
+      'legacyUnavailableSnapshot',
+      'getUnavailableToolIds',
+      'contents.byteLength === KEY_BYTES',
+      'runtime_dependency_unavailable',
+      "dependencyRevision: 'legacy'",
+      'profile.catalogModelId ?? profile.modelId',
+      'definition.id.startsWith("legacy.")',
+      '? IS NULL AND stage_id'
+    ]
+    const violations = productionFiles.flatMap((file) => {
+      const source = readFileSync(file, 'utf8')
+      return forbidden
+        .filter((token) => source.includes(token))
+        .map((token) => `${relative(resolve('.'), file)} contains ${token}`)
+    })
+
+    expect(violations).toEqual([])
+  })
+
+  it('keeps conversation virtualization and rendering behind Turn and registry boundaries', () => {
+    const messageList = readFileSync(
+      resolve(sourceRoot, 'features/conversation/ConversationMessageList.tsx'),
+      'utf8'
+    )
+    const parentRenderers = [
+      'features/conversation/AssistantExecutionTimeline.tsx',
+      'features/conversation/AssistantDisplayTree.tsx'
+    ].map((path) => readFileSync(resolve(sourceRoot, path), 'utf8'))
+    const projection = readFileSync(resolve('domain/assistant-turn.ts'), 'utf8')
+    const rendererFiles = [
+      'features/conversation/assistant-node-renderers.tsx',
+      'features/conversation/tool-renderers.tsx'
+    ]
+
+    expect(messageList).not.toContain('useVirtualizer')
+    expect(parentRenderers.join('\n')).not.toMatch(
+      /\b(?:toolName|tool\.name)\b/
+    )
+    expect(projection).not.toMatch(
+      /\b(?:className|componentName|cssClass|pixelValue)\b/
+    )
+    expect(
+      rendererFiles.flatMap((path) =>
+        importsOf(resolve(sourceRoot, path))
+          .filter((specifier) =>
+            /(?:repositories|infrastructure|better-sqlite3)/.test(specifier)
+          )
+          .map((specifier) => `${path} -> ${specifier}`)
+      )
+    ).toEqual([])
   })
 
   it('keeps SQLite access in Electron Main infrastructure only', () => {
@@ -671,21 +749,100 @@ describe('renderer architecture boundaries', () => {
     expect(violations).toEqual([])
   })
 
-  it('routes direct Sidecar run creation through the network gateway adapter', () => {
+  it('admits Agent runs through DSH without direct Sidecar run creation', () => {
     const violations = electronFiles
       .filter((file) => !file.endsWith('.test.ts'))
       .filter((file) => {
         const source = readFileSync(file, 'utf8')
-        return (
-          /getSidecarClient\(\)\.createRun\(/.test(source) &&
-          !file.endsWith('/network/gateway-run-adapter.ts')
-        )
+        return /getSidecarClient\(\)\.createRun\(/.test(source)
       })
       .map((file) => relative(electronRoot, file))
     const main = readFileSync(resolve(electronRoot, 'main.ts'), 'utf8')
+    const bootstrapPath = resolve(
+      electronRoot,
+      'bootstrap/dsh-control-plane-bootstrap.ts'
+    )
+    const bootstrap = existsSync(bootstrapPath)
+      ? readFileSync(bootstrapPath, 'utf8')
+      : ''
 
     expect(violations).toEqual([])
-    expect(main).toContain('runtimeRuns: agentRuntimeRuns')
+    expect(main).toContain('createDshControlPlaneBootstrap')
+    expect(main).toContain('dshRunGateway = dshControlPlane.gateway')
+    expect(bootstrap).toContain('new DshAiRunGateway')
+    expect(main).toContain('gateway: dshRunGateway')
+    expect(main).not.toContain('new AgentToolLoopCoordinator')
+    expect(main).not.toContain('runtimeRuns: agentRuntimeRuns')
+  })
+
+  it('documents RealmFlow as the control plane and DSH as the runtime plane', () => {
+    const documentationFiles = [
+      'README.md',
+      'docs/architecture.md',
+      'docs/product-architecture.md'
+    ]
+    const forbiddenRuntimeClaims = [
+      'Python Sidecar 流式生成阶段产物',
+      'Python FastAPI Sidecar',
+      'FastAPI sidecar',
+      'Provider Adapter',
+      '技能执行。',
+      '可选 Agent 策略和工具调用循环',
+      'Workflow --> Sidecar',
+      'Skill and Connector Runtime'
+    ]
+    const violations = documentationFiles.flatMap((path) => {
+      const source = readFileSync(resolve(path), 'utf8')
+      const missing = [
+        !source.includes('RealmFlow Control Plane') &&
+          !source.includes('RealmFlow 控制面')
+          ? `${path} missing RealmFlow control-plane wording`
+          : '',
+        !source.includes('DSH Runtime Plane') &&
+          !source.includes('DSH 运行时面')
+          ? `${path} missing DSH runtime-plane wording`
+          : '',
+        !source.includes('DshRunManifest') &&
+          !source.includes('Run Manifest')
+          ? `${path} missing DSH run manifest boundary`
+          : ''
+      ].filter(Boolean)
+      const forbidden = forbiddenRuntimeClaims
+        .filter((token) => source.includes(token))
+        .map((token) => `${path} still documents legacy runtime claim: ${token}`)
+
+      return [...missing, ...forbidden]
+    })
+
+    expect(violations).toEqual([])
+  })
+
+  it('keeps DSH control-plane composition inside bootstrap modules', () => {
+    const main = readFileSync(resolve(electronRoot, 'main.ts'), 'utf8')
+    const bootstrapPath = resolve(
+      electronRoot,
+      'bootstrap/dsh-control-plane-bootstrap.ts'
+    )
+
+    expect(existsSync(bootstrapPath)).toBe(true)
+    const bootstrap = readFileSync(bootstrapPath, 'utf8')
+    const dshControlPlaneConstructors = [
+      'new DshAiRunGateway',
+      'new DshRunManifestPublisher',
+      'new DshRuntimeEventIngestor',
+      'new DshInteractionService',
+      'new DshCredentialBroker',
+      'new DshProductCommandRegistry',
+      'new DshProductCommandServer'
+    ]
+
+    expect(main).toContain("from './bootstrap/dsh-runtime-bootstrap'")
+    expect(main).toContain("from './bootstrap/dsh-control-plane-bootstrap'")
+    expect(main).toContain('await dshControlPlane?.drainAndStop()')
+    expect(dshControlPlaneConstructors.filter((token) => main.includes(token))).toEqual([])
+    expect(
+      dshControlPlaneConstructors.filter((token) => bootstrap.includes(token))
+    ).toEqual(dshControlPlaneConstructors)
   })
 
   it('keeps Agent Runtime dependent only on resolved Profile snapshots', () => {
@@ -747,7 +904,7 @@ describe('renderer architecture boundaries', () => {
         )
       )
       .map((file) => relative(sourceRoot, file))
-    const sidecarViolations = collectSourceFiles(
+    const pythonWorkerViolations = collectSourceFiles(
       resolve('python-service'),
       /\.py$/
     )
@@ -759,7 +916,7 @@ describe('renderer architecture boundaries', () => {
       )
       .map((file) => relative(resolve('python-service'), file))
 
-    expect([...rendererViolations, ...sidecarViolations]).toEqual([])
+    expect([...rendererViolations, ...pythonWorkerViolations]).toEqual([])
   })
 
   it('does not load uploaded capability code into Electron Main', () => {
@@ -777,15 +934,23 @@ describe('renderer architecture boundaries', () => {
     expect(importer).not.toMatch(/\bimport\s*\(/)
   })
 
-  it('closes model-managed local processes before the Sidecar on shutdown', () => {
+  it('keeps capability-owned local process management out of Electron Main', () => {
     const main = readFileSync(resolve(electronRoot, 'main.ts'), 'utf8')
-    const closeProcesses = main.indexOf(
-      'await localToolProcesses?.close()'
-    )
-    const stopSidecar = main.indexOf('await sidecar.stop()')
+    const stopDsh = main.indexOf('await dshControlPlane?.drainAndStop()')
+    const legacyCapabilityRuntimeTokens = [
+      'localToolProcesses',
+      'NodeLocalProcessService',
+      'BrowserRuntimeService',
+      'ToolOutboxDispatcher',
+      'ToolExecutionApplicationService',
+      'SkillRuntimeApplicationService',
+      'RuntimeResourceLeaseService'
+    ]
 
-    expect(closeProcesses).toBeGreaterThan(-1)
-    expect(stopSidecar).toBeGreaterThan(closeProcesses)
+    expect(stopDsh).toBeGreaterThan(-1)
+    expect(
+      legacyCapabilityRuntimeTokens.filter((token) => main.includes(token))
+    ).toEqual([])
   })
 
   it('keeps trigger repositories independent from capability installation', () => {

@@ -31,6 +31,7 @@ function render(ui: Parameters<typeof testingRender>[0]) {
 
 vi.mock("../features/workbench/WorkbenchProvider", () => ({
   useWorkbench: () => ({ openRequirementArtifact }),
+  useOptionalWorkbench: () => null,
 }));
 
 vi.mock("../features/workflow/RequirementDagCanvas", () => ({
@@ -151,7 +152,7 @@ describe("RequirementDetailPage AI run controls", () => {
     ).toBeInTheDocument();
   });
 
-  it("starts the selected stage and displays streaming progress and content", () => {
+  it("shows the selected workflow node run progress and content", () => {
     const start = vi.fn().mockResolvedValue("run-1");
     const aiRuns: AiRunController = {
       runs: {},
@@ -161,7 +162,7 @@ describe("RequirementDetailPage AI run controls", () => {
       findRun: () => ({
         runId: "run-1",
         requirementId: "requirement-1",
-        stageId: "analysis",
+        nodeId: "requirement-1:analysis",
         status: "running",
         progress: 40,
         content: "# Scope",
@@ -175,25 +176,6 @@ describe("RequirementDetailPage AI run controls", () => {
     expect(screen.getByText("# Scope")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "取消生成" }));
     expect(aiRuns.cancel).toHaveBeenCalledWith("run-1");
-  });
-
-  it("starts generation through the application controller", () => {
-    const start = vi.fn().mockResolvedValue("run-1");
-    const aiRuns: AiRunController = {
-      runs: {},
-      start,
-      attach: vi.fn(),
-      cancel: vi.fn(),
-      findRun: () => undefined,
-    };
-
-    renderPage(aiRuns);
-    fireEvent.click(screen.getByRole("button", { name: "生成需求分析产物" }));
-
-    expect(start).toHaveBeenCalledWith({
-      requirementId: "requirement-1",
-      stageId: "analysis",
-    });
   });
 
   it("binds generation to the selected workflow node run", async () => {
@@ -1805,13 +1787,35 @@ describe("RequirementDetailPage AI run controls", () => {
       title: "开发实现",
       sortOrder: 1,
       revision: 2,
+      turns: [
+        {
+          id: "turn-1",
+          sessionId: "conversation-node",
+          index: 0,
+          userMessageId: "message-0",
+          assistantMessageId: "message-1",
+          status: "completed",
+          createdAt: 1,
+          completedAt: 1,
+        },
+      ],
       messages: [
         {
+          id: "message-0",
+          turnId: "turn-1",
+          role: "user",
+          status: "completed",
+          content: "",
+          sortOrder: 0,
+          createdAt: 1,
+        },
+        {
           id: "message-1",
+          turnId: "turn-1",
           role: "assistant",
           status: "completed",
           content: "节点对话已恢复",
-          sortOrder: 0,
+          sortOrder: 1,
           createdAt: 1,
         },
       ],
@@ -2116,7 +2120,6 @@ function installNodeInteractionApi(input: {
             relativePath: "analysis/analysis.md",
             kind: "analysis",
           },
-          legacyStageId: "analysis",
         },
       },
     ],

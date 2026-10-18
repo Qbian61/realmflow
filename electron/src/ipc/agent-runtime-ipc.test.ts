@@ -42,8 +42,32 @@ describe('agent runtime IPC', () => {
     expect(orchestrator.command).toHaveBeenCalledOnce()
     const cancelHandler = handlers.get('agent-runtime:cancel')!
     await expect(cancelHandler({}, { runId: 'provider', sessionId: 'session-1' })).resolves.toBeUndefined()
-    expect(cancel).toHaveBeenCalledWith('canonical')
+    expect(cancel).toHaveBeenCalledWith('canonical', 'session-1')
     await expect(cancelHandler({}, { runId: 'provider', sessionId: 'foreign' }))
       .rejects.toThrow('runtime_scope_denied')
+  })
+
+  it('cancels an active DSH conversation run that has no legacy runtime row', async () => {
+    const handlers = new Map<string, (...args: unknown[]) => unknown>()
+    const cancel = vi.fn().mockResolvedValue(undefined)
+    const resolveRun = vi.fn()
+    registerAgentRuntimeIpc({
+      orchestrator: { status: vi.fn(), command: vi.fn() },
+      resolveRunId: async () => undefined,
+      resolveRun,
+      cancel,
+      ipcMain: {
+        handle: (name, handler) =>
+          handlers.set(name, handler as (...args: unknown[]) => unknown)
+      }
+    })
+
+    const cancelHandler = handlers.get('agent-runtime:cancel')!
+    await expect(
+      cancelHandler({}, { runId: 'dsh-run-1', sessionId: 'session-1' })
+    ).resolves.toBeUndefined()
+
+    expect(resolveRun).not.toHaveBeenCalled()
+    expect(cancel).toHaveBeenCalledWith('dsh-run-1', 'session-1')
   })
 })

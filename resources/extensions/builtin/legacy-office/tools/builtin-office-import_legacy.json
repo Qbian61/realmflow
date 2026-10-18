@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.office.import_legacy",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "name": "Import legacy Office file",
   "description": "Convert an authorized legacy Office or WPS file into a new modern Office document.",
   "tags": [

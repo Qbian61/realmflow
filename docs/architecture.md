@@ -2,6 +2,14 @@
 
 ## Runtime boundaries
 
+RealmFlow is split into a product-owned RealmFlow Control Plane and a
+DSH-owned DSH Runtime Plane. RealmFlow owns UI, product data, policy
+authoring, credentials, knowledge sources and product projections. DSH owns
+the Agent model loop, Tool execution, Skill execution, Subagents, MCP,
+Connectors, compaction and low-level runtime history. The boundary between
+the planes is an immutable, secret-free `DshRunManifest` plus narrow callback
+interfaces.
+
 ```mermaid
 flowchart TB
   Kernel["domain/* process-neutral domain kernel"]
@@ -29,22 +37,41 @@ flowchart TB
     Preload --> Validators
   end
 
-  subgraph Main["Electron main process"]
+  subgraph Main["Electron main process / RealmFlow Control Plane"]
     IPC["IPC adapters"]
     AiRuns["AI run + workflow use cases"]
     Persistence["SQLite repositories + UnitOfWork"]
     Knowledge["Knowledge index coordinator"]
     Workspace["WorkspaceService"]
     Workbench["Web / terminal / overlay managers"]
-    SidecarManager["SidecarManager"]
+    Manifest["DshRunManifest publisher"]
+    DshBridge["Interaction / Credential / Product Command bridges"]
+    EventIngestor["Runtime Event Ingestor"]
+    DshSupervisor["DshRuntimeSupervisor"]
+    PrivateWorkers["Bounded local compute workers"]
     IPC --> AiRuns
     AiRuns --> Workspace
-    AiRuns --> SidecarManager
+    AiRuns --> Manifest
+    Manifest --> DshSupervisor
+    DshBridge --> AiRuns
+    EventIngestor --> AiRuns
     IPC --> Persistence
     IPC --> Knowledge
     Knowledge --> Persistence
-    Knowledge --> SidecarManager
+    Knowledge --> PrivateWorkers
     IPC --> Workbench
+  end
+
+  subgraph DSH["DSH Runtime Plane"]
+    DshSession["DSH Session"]
+    ModelLoop["Model loop"]
+    Tools["Tools / Skills / Subagents"]
+    Mcp["MCP / Connectors"]
+    RuntimeHistory["Canonical runtime events"]
+    DshSession --> ModelLoop
+    ModelLoop --> Tools
+    ModelLoop --> Mcp
+    ModelLoop --> RuntimeHistory
   end
 
   Domain --> Kernel
@@ -55,7 +82,10 @@ flowchart TB
   Knowledge --> Qdrant["Local Qdrant (rebuildable projection)"]
   Workspace --> FS["Authorized local files"]
   Workbench --> Native["WebContentsView / node-pty / BrowserWindow"]
-  SidecarManager --> Sidecar["FastAPI sidecar"]
+  DshSupervisor --> DshSession
+  DshSession --> DshBridge
+  RuntimeHistory --> EventIngestor
+  PrivateWorkers --> WorkerProcess["stdio Python workers"]
 ```
 
 The renderer is a low-privilege client. It cannot import Electron or Node
@@ -109,7 +139,8 @@ These rules are checked by `src/architecture.test.ts`.
 | Chat sessions and messages | Electron Main repositories/use cases | SQLite |
 | Space resource metadata | Electron Main repositories/use cases | SQLite |
 | Artifact metadata | Electron Main artifact transaction | SQLite |
-| AI runs and durable run events | Electron Main AI run use cases | SQLite |
+| AI runs, DSH session bindings and durable product run events | Electron Main AI run use cases | SQLite |
+| Low-level Agent runtime history | DSH Runtime Plane | DSH session persistence |
 | Model providers, profiles, encrypted credentials and metrics | Electron Main model service | SQLite + mode-`0600` key file |
 | Knowledge source versions, jobs, generations and current pointers | Electron Main knowledge services | SQLite |
 | Searchable knowledge chunks and Dense/BM25 indexes | Electron Main Qdrant adapters | Local Qdrant, rebuildable |
@@ -132,9 +163,9 @@ General and space conversations share one Main-owned turn state machine.
 identity; each send then checks that workspace again and asks
 `SpaceConversationContextAssembler` for matching local knowledge before the
 atomic user-plus-assistant-placeholder write. Retrieval failure therefore
-cannot leave a partial turn or Provider Run. The Sidecar receives the assembled
-knowledge as a system context before persisted message history, but never
-receives the workspace path or an implicit file, terminal or repository grant.
+cannot leave a partial turn or DSH admission. DSH receives only the
+manifest-bound context blocks and persisted message history selected by
+RealmFlow; it never receives an implicit file, terminal or repository grant.
 
 Requirement-node conversations reuse that turn state machine but remain bound
 to one current NodeRun and are queried only through the requirement execution
@@ -149,8 +180,9 @@ a workspace. Electron Main converts a native directory selection into a
 process-local opaque binding, canonicalizes it through `SecurePathService`, and
 persists only the resolved path with the conversation. Every later turn
 revalidates that persisted directory before model routing or message writes.
-The folder path scopes the Sidecar Run but is not forwarded to the Provider and
-does not grant automatic file, terminal or repository operations.
+The folder path scopes the `DshRunManifest` but is not forwarded as an
+unbounded Provider prompt and does not grant automatic file, terminal or
+repository operations.
 
 Recent conversations are a Main-owned SQLite query with an immutable
 `general | space` base predicate. Type, workspace, canonical folder and
@@ -181,7 +213,9 @@ Prepared-statement adapters and the transaction boundary live under
 `electron/src/infrastructure/sqlite/`. The Renderer issues narrow business
 commands and refreshes query snapshots after acknowledgement; it never sends a
 complete business aggregate for persistence. Renderer and Python never import
-`better-sqlite3`, database paths, statements or connection objects.
+`better-sqlite3`, database paths, statements or connection objects. DSH plugins
+and local compute workers must use Product Command, Knowledge Index or
+Credential Broker contracts instead of direct database access.
 
 Mutable aggregates use revision compare-and-swap. A stale command cannot
 overwrite newer data. `persistence:load` remains exposed only for legacy
@@ -211,7 +245,8 @@ An exact replay of the same Run, candidate and completion event returns the
 original immutable artifact result with `idempotent: true`; any changed replay
 is rejected. Versions increase per requirement and node, only the latest
 version is primary, and B18 completion gates read only matching formal primary
-metadata. Renderer and Sidecar never write formal artifact paths directly.
+metadata. Renderer, DSH and private workers never write formal artifact paths
+directly.
 
 ## Local vector knowledge
 
@@ -223,13 +258,13 @@ rebuildable projection. It stores 768-dimensional L2-normalized
 and filtered payload metadata; it never owns business state.
 
 Index writes use an outbox and generation protocol. Main freezes a canonical
-source version, asks the Sidecar to chunk and embed text, writes a staging
-generation to Qdrant, verifies its manifest, then atomically switches the
-SQLite current-generation pointer. Queries only include current generation
-IDs, so failed rebuilds preserve the previous readable index. Startup recovery
-continues `qdrant_written` jobs, removes incomplete staging/orphan data and
-rebuilds a missing or incompatible collection under an isolated vector
-profile.
+source version, asks the DSH-owned local embedding service to chunk and embed
+text, writes a staging generation to Qdrant, verifies its manifest, then
+atomically switches the SQLite current-generation pointer. Queries only include
+current generation IDs, so failed rebuilds preserve the previous readable
+index. Startup recovery continues `qdrant_written` jobs, removes incomplete
+staging/orphan data and rebuilds a missing or incompatible collection under an
+isolated vector profile.
 
 All workspace searches carry an explicit workspace tenant filter. Space
 conversations use one workspace; general conversations persist `none` or
@@ -239,12 +274,12 @@ current non-deleted workspace list for `all_workspaces`; Renderer cannot submit
 that list. Catalog search uses a separate collection and never mixes template
 or Skill records with workspace knowledge.
 
-Qdrant and the embedding Sidecar bind only to loopback, disable telemetry and
-do not make outbound requests. Sensitive paths and content are rejected at
-scanner, source-reader and chunk/write boundaries. Logs, errors and Renderer
-DTOs omit source bodies, vectors, credentials and absolute paths. Qdrant
-storage, snapshots and model assets are excluded from business backups because
-they are reproducible from canonical SQLite and managed files.
+Qdrant and the local embedding worker bind only to loopback or stdio, disable
+telemetry and do not make outbound requests. Sensitive paths and content are
+rejected at scanner, source-reader and chunk/write boundaries. Logs, errors and
+Renderer DTOs omit source bodies, vectors, credentials and absolute paths.
+Qdrant storage, snapshots and model assets are excluded from business backups
+because they are reproducible from canonical SQLite and managed files.
 
 ## IPC contract
 
@@ -271,81 +306,66 @@ computed in Main. Rollback creates append-only NodeRun attempts for the target
 and its transitive descendants, invalidates only their current artifacts, and
 commits workflow, execution, dispatch, audit and operation state atomically.
 Post-commit AI Run cancellation and knowledge synchronization are recoverable;
-cancelling a Sidecar run that no longer exists is an idempotent success.
+cancelling a DSH session that no longer exists is an idempotent success.
 
-## Sidecar boundary
+## DSH runtime boundary
 
-The Python process is an optional local execution service managed by Electron.
-It exposes `/health`, `/api/v1/info`, `POST /api/v1/runs`,
-`GET /api/v1/runs/{run_id}/events` and
-`POST /api/v1/runs/{run_id}/cancel`. It executes a deterministic fake provider
-or consumes an OpenAI-compatible SSE stream through Main's loopback network
-gateway. It never mutates requirement state, persistence data or formal
-workspace artifacts.
+DSH is the only Agent and capability runtime plane. It is supervised by
+Electron Main, but it owns session lifecycle, model calls, streaming, Tool and
+Skill invocation, Subagent lineage, MCP and Connector execution, compaction,
+cancellation, resume and canonical runtime history. RealmFlow does not expose
+a generic Tool execution endpoint to DSH.
 
-Electron Main owns the complete run workflow:
+Electron Main owns the complete product workflow:
 
-1. `ExecuteWorkflowStageUseCase` binds an AI run to a `node_run`, then delegates
-   generation to `GenerateStageArtifactUseCase`.
-2. `GenerateStageArtifactUseCase` loads stage context through
-   `StageContextRepository` and creates the Sidecar run through
-   `AiRunGateway`.
-3. Main creates a single-use network grant. The Sidecar receives only a
-   loopback URL and token; Main adds the Provider credential, requests
-   `stream: true`, and forwards `text/event-stream` bytes with backpressure.
-   Retry is allowed only before streaming starts. Mid-stream Provider failure
-   closes the response instead of attempting a second JSON response.
-4. `SidecarClient` parses SSE frames, validates event envelopes, tracks
-   sequence numbers and reconnects at most three times with `Last-Event-ID`.
-   Replayed sequences are ignored and a sequence gap is a protocol failure.
-5. `RunRepository` serializes run updates. Duplicate sequences and late
-   non-terminal events after cancellation are ignored.
-6. `RunEventPublisher` sends events only to the Renderer that started the run.
-   Renderer unmount removes its preload listener but does not cancel Main work.
-7. `CancelAiRunUseCase` makes cancellation idempotent. Sidecar cancellation
-   errors become typed `run.failed` events.
-8. Only a continuous `run.completed` with a validated `artifact.ready` payload
-   reaches `CommitFormalArtifactUseCase`. It validates the trusted artifact
-   specification before `ArtifactRepository` coordinates the filesystem rename
-   with the SQLite transaction.
-9. The workflow coordinator advances the node, waits for user gates, or mirrors
-   failed/cancelled terminal state.
+1. Product use cases validate the user command, create or update the relevant
+   conversation, AI run, workflow node or schedule record, and freeze the run
+   owner.
+2. `DshRunManifestPublisher` publishes a secret-free `DshRunManifest` that
+   contains product identity, model route references, knowledge leases, policy,
+   budget and allowed Product Command grants.
+3. `DshAiRunGateway` starts or resumes the owner-bound DSH Session through the
+   supervised ACP runtime.
+4. DSH emits runtime events. `DshRuntimeEventIngestor` validates session,
+   owner and manifest digest before projecting events into conversation,
+   workflow, analytics, governance and diagnostic views.
+5. Human-in-the-loop requests cross `DshInteractionService`; RealmFlow
+   persists the pending request before presenting it, then resumes only the
+   exact DSH activity bound to the signed response.
+6. Model credentials cross `DshCredentialBroker` as call-scoped leases. DSH
+   never receives durable secret material or RealmFlow credential storage.
+7. Product mutations cross `DshProductCommandServer` and
+   `DshProductCommandRegistry`; commands are manifest-granted, typed and
+   validated before they touch SQLite or managed files.
+8. Formal artifact commits still use RealmFlow's artifact transaction. DSH may
+   produce candidate content or a Product Command request, but Main validates
+   and commits the final product state.
 
-The Sidecar keeps a bounded replay buffer, emits monotonic sequences and allows
-exactly one terminal event. An unknown or expired `Last-Event-ID` returns HTTP
-409 instead of silently replaying from the retained window. Cancellation is
-idempotent and aborts the active Provider task. Renderer attach first hydrates
-the durable content checkpoint and `lastSequence`, then accepts only higher
-sequences from live IPC. Renderer code cannot open Sidecar HTTP connections;
-all traffic crosses typed preload IPC channels `ai-run:start`,
-`ai-run:cancel`, `ai-run:get`, `ai-run:attach`, `ai-run:list-events` and
-`ai-run:event`.
-
-On startup, unfinished AI and node executions are first marked
-`interrupted`. Eligible node runs are then restarted through the same workflow
-coordinator with a new Sidecar run and the original node identity. `paused`,
-`waiting_user` and `blocked` nodes are never auto-resumed. Manual pause commits
-the node state before cancelling its active AI run; manual resume starts and
-binds a new run using the selected model profile.
+On startup, unfinished AI and node executions are marked `interrupted` before
+recovery. Eligible runs load the accepted manifest publication, sync DSH
+session history through `DshHistorySync`, then resume the same owner-bound DSH
+Session. `paused`, `waiting_user` and `blocked` nodes are never auto-resumed.
+Manual pause commits product state before cancelling DSH work; manual resume
+uses the stored manifest and session binding instead of reconstructing a legacy
+checkpoint.
 
 Provider credentials are encrypted with AES-256-GCM in SQLite; the encryption
-key is stored under Electron `userData` with mode `0600`. Provider requests
-receive credentials in request bodies, never environment variables. Main
-records token categories, latency, retries, status and estimated cost without
-allowing metrics failures to change run outcomes.
+key is stored under Electron `userData` with mode `0600`. DSH requests
+call-scoped leases and receives non-delegatable tokens only for the current
+operation. Main records token categories, latency, retries, status and
+estimated cost without allowing metrics failures to change run outcomes.
 
 General conversations are Main-owned aggregates: SQLite atomically appends the
 user message and pending assistant placeholder, then binds and consumes an
-independent Sidecar Run before committing a completed or failed terminal state.
-Renderer navigation and message updates use committed snapshots only. Startup
-recovery deterministically fails abandoned pending assistants, while Sidecar
-Run identifiers remain queryable in model metrics without requiring an
-`ai_runs` row. Workspace, requirement-node and local-folder bindings extend the
-same conversation model. Requirement-node conversations are queried only from
-their node detail and excluded from Recent. When a requirement completes and
-sync is enabled, formal artifacts are checksum-synchronized into the local
-knowledge store; retryable sync failure does not roll back requirement
-completion.
+independent DSH Session before committing a completed, waiting or failed
+terminal state. Renderer navigation and message updates use committed
+snapshots only. Startup recovery deterministically reconciles abandoned pending
+assistants with DSH session history. Workspace, requirement-node and
+local-folder bindings extend the same conversation model. Requirement-node
+conversations are queried only from their node detail and excluded from
+Recent. When a requirement completes and sync is enabled, formal artifacts are
+checksum-synchronized into the local knowledge store; retryable sync failure
+does not roll back requirement completion.
 
 ## Verification
 
@@ -353,7 +373,8 @@ completion.
 npm test
 npm run typecheck
 npm run build
-.venv/bin/python -m pytest python-service/tests
+npm run verify:dsh-runtime-architecture
+npm run verify:dsh-package-layout
 npm run rebuild:native
 npm run verify:sqlite
 git diff --check

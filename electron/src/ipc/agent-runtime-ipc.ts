@@ -9,7 +9,7 @@ export function registerAgentRuntimeIpc({ orchestrator, resolveRunId, resolveRun
   orchestrator: Pick<AgentRuntimeOrchestrator, 'status' | 'command'>
   resolveRunId(id: string): Promise<string | undefined>
   resolveRun(id: string): Promise<AgentRuntimeRun | undefined>
-  cancel(runId: string): Promise<void>
+  cancel(runId: string, sessionId: string): Promise<void>
   ipcMain: Pick<IpcMain, 'handle'>
 }): void {
   const routes = [
@@ -40,10 +40,13 @@ export function registerAgentRuntimeIpc({ orchestrator, resolveRunId, resolveRun
     const requestedId = requireIdentifier(value.runId, 'Run ID')
     const sessionId = requireIdentifier(value.sessionId, 'Session ID')
     const runId = await resolveRunId(requestedId)
-    if (!runId) throw new Error('runtime_run_unavailable')
+    if (!runId) {
+      await cancel(requestedId, sessionId)
+      return
+    }
     const run = await resolveRun(runId)
     if (!run) throw new Error('runtime_run_unavailable')
     if (run.snapshot.conversationId !== sessionId) throw new Error('runtime_scope_denied')
-    await cancel(runId)
+    await cancel(runId, sessionId)
   })
 }

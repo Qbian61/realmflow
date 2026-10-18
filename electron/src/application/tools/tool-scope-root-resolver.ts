@@ -5,7 +5,7 @@ import type {
   RequirementRepository,
   WorkspaceRepository,
 } from '../ports/business-repositories'
-import type { ToolExecutionCommand } from './tool-execution-application-service'
+import type { ToolExecutionCommand } from './tool-execution-contract'
 
 type Dependencies = {
   assertFolderAvailable: (folderPath: string) => Promise<void>

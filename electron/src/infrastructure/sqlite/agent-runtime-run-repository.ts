@@ -149,20 +149,6 @@ export class SqliteAgentRuntimeRunRepository
       .run(next, error ?? current.error ?? null, updatedAt, runId)
   }
 
-  async getByProviderRunId(
-    providerRunId: string
-  ): Promise<AgentRuntimeRun | undefined> {
-    const row = this.database
-      .prepare(
-        `SELECT id, provider_run_id, lifecycle_status, snapshot_json,
-                error, created_at, updated_at
-         FROM agent_runtime_runs
-         WHERE provider_run_id = ?`
-      )
-      .get(providerRunId) as AgentRuntimeRunRow | undefined
-    return row ? mapRow(row) : undefined
-  }
-
   async listByRootRunId(rootRunId: string): Promise<AgentRuntimeRun[]> {
     return this.listByLineage('root_run_id', rootRunId)
   }

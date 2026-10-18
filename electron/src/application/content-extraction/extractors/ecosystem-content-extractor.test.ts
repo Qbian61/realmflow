@@ -9,17 +9,47 @@ import { CapabilityProbeContentExtractor } from './capability-probe-content-extr
 
 describe('EcosystemContentExtractor', () => {
   it.each([
-    ['odt', 'docx'],
-    ['rtf', 'docx'],
-    ['ods', 'xlsx'],
-    ['odp', 'pptx']
-  ] as const)('converts %s locally before modern extraction', async (
+    ['odt', 'content', 'Native ODT paragraph'],
+    ['ods', 'sheet/summary', 'Metric\tValue'],
+    ['odp', 'slide/000001', 'Launch plan'],
+    ['rtf', 'content', 'Native RTF text']
+  ] as const)('extracts %s natively before LibreOffice fallback', async (
     sourceFormat,
-    outputFormat
+    expectedKey,
+    expectedText
   ) => {
     const converter = {
       convertBytes: vi.fn().mockResolvedValue({
-        outputFormat,
+        outputFormat: sourceFormat === 'ods' ? 'xlsx' : sourceFormat === 'odp' ? 'pptx' : 'docx',
+        bytes: MODERN_BYTES
+      })
+    }
+    const modern = modernExtractor()
+    const bytes = await nativeEcosystemBytes(sourceFormat)
+
+    const result = await new EcosystemContentExtractor({
+      converter,
+      modern,
+      children: { extract: vi.fn() }
+    }).extract(input(`document.${sourceFormat}`, bytes))
+
+    expect(converter.convertBytes).not.toHaveBeenCalled()
+    expect(modern.extract).not.toHaveBeenCalled()
+    expect(result.units[0]).toMatchObject({
+      key: expectedKey,
+      text: expect.stringContaining(expectedText),
+      metadata: {
+        format: sourceFormat,
+        extraction:
+          sourceFormat === 'rtf' ? 'rtf_native' : 'opendocument_native'
+      }
+    })
+  })
+
+  it('falls back to LibreOffice when native ODF extraction is empty', async () => {
+    const converter = {
+      convertBytes: vi.fn().mockResolvedValue({
+        outputFormat: 'docx',
         bytes: MODERN_BYTES
       })
     }
@@ -29,15 +59,15 @@ describe('EcosystemContentExtractor', () => {
       converter,
       modern,
       children: { extract: vi.fn() }
-    }).extract(input(`document.${sourceFormat}`, SOURCE_BYTES))
+    }).extract(input('document.odt', SOURCE_BYTES))
 
     expect(converter.convertBytes).toHaveBeenCalledWith({
       bytes: SOURCE_BYTES,
-      sourceFormat,
+      sourceFormat: 'odt',
       signal: expect.any(AbortSignal)
     })
     expect(modern.extract).toHaveBeenCalledWith(
-      outputFormat,
+      'docx',
       expect.objectContaining({ bytes: MODERN_BYTES })
     )
     expect(result.units[0]?.metadata?.extraction).toContain(
@@ -303,6 +333,53 @@ async function epub(): Promise<Uint8Array> {
   )
   zip.file('OPS/Text/Chapter 1.xhtml', '<html><body><p>First chapter</p></body></html>')
   zip.file('OPS/Text/Chapter 2.xhtml', '<html><body><p>Second chapter</p></body></html>')
+  return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' })
+}
+
+async function nativeEcosystemBytes(
+  format: 'odt' | 'ods' | 'odp' | 'rtf'
+): Promise<Uint8Array> {
+  if (format === 'rtf') {
+    return Uint8Array.from(
+      Buffer.from('{\\rtf1\\ansi Native RTF text\\par Second line}')
+    )
+  }
+  const zip = new JSZip()
+  const namespaces =
+    'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" ' +
+    'xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" ' +
+    'xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" ' +
+    'xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"'
+  if (format === 'odt') {
+    zip.file(
+      'content.xml',
+      `<office:document-content ${namespaces}><office:body><office:text>` +
+        '<text:h>Native ODT Title</text:h>' +
+        '<text:p>Native ODT paragraph</text:p>' +
+        '</office:text></office:body></office:document-content>'
+    )
+  } else if (format === 'ods') {
+    zip.file(
+      'content.xml',
+      `<office:document-content ${namespaces}><office:body><office:spreadsheet>` +
+        '<table:table table:name="Summary">' +
+        '<table:table-row>' +
+        '<table:table-cell><text:p>Metric</text:p></table:table-cell>' +
+        '<table:table-cell><text:p>Value</text:p></table:table-cell>' +
+        '</table:table-row>' +
+        '</table:table>' +
+        '</office:spreadsheet></office:body></office:document-content>'
+    )
+  } else {
+    zip.file(
+      'content.xml',
+      `<office:document-content ${namespaces}><office:body><office:presentation>` +
+        '<draw:page draw:name="Slide 1">' +
+        '<draw:frame><draw:text-box><text:p>Launch plan</text:p></draw:text-box></draw:frame>' +
+        '</draw:page>' +
+        '</office:presentation></office:body></office:document-content>'
+    )
+  }
   return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' })
 }
 

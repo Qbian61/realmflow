@@ -45,10 +45,8 @@ export class RuntimeFilteredToolProjectionStore
     const catalog = filterContractValidCatalog(
       await this.dependencies.source.getCatalog(),
     )
-    const eligibility = await eligibilitySnapshot(
-      this.dependencies.availability,
-      catalog
-    )
+    const eligibility =
+      await this.dependencies.availability.getEligibilitySnapshot(catalog)
     await this.auditEligibilityChanges(eligibility)
     const tools = catalog.tools.map((tool) =>
       applyRuntimeEligibility(tool, eligibility.get(tool.id))
@@ -100,31 +98,6 @@ export class RuntimeFilteredToolProjectionStore
     }
   }
 
-  getExecution: ToolProjectionStore['getExecution'] = (executionId) =>
-    this.dependencies.source.getExecution(executionId)
-
-  getPermission: ToolProjectionStore['getPermission'] = (requestId) =>
-    this.dependencies.source.getPermission(requestId)
-
-  listPendingPermissions: ToolProjectionStore['listPendingPermissions'] = () =>
-    this.dependencies.source.listPendingPermissions()
-
-  getCheckpoint: ToolProjectionStore['getCheckpoint'] = (projectionName) =>
-    this.dependencies.source.getCheckpoint(projectionName)
-
-  commitExecutionBatch: ToolProjectionStore['commitExecutionBatch'] = (input) =>
-    this.dependencies.source.commitExecutionBatch(input)
-
-  replaceExecutionProjection: ToolProjectionStore['replaceExecutionProjection'] =
-    (input) => this.dependencies.source.replaceExecutionProjection(input)
-
-  commitPermissionBatch: ToolProjectionStore['commitPermissionBatch'] = (
-    input
-  ) => this.dependencies.source.commitPermissionBatch(input)
-
-  replacePermissionProjection: ToolProjectionStore['replacePermissionProjection'] =
-    (input) => this.dependencies.source.replacePermissionProjection(input)
-
   commitCatalogProjection: ToolProjectionStore['commitCatalogProjection'] = (
     input
   ) => this.dependencies.source.commitCatalogProjection(input)
@@ -132,29 +105,6 @@ export class RuntimeFilteredToolProjectionStore
   replaceCatalogProjection: ToolProjectionStore['replaceCatalogProjection'] = (
     input
   ) => this.dependencies.source.replaceCatalogProjection(input)
-}
-
-async function eligibilitySnapshot(
-  provider: RuntimeToolAvailabilityProvider,
-  catalog: ToolCatalogState
-): Promise<RuntimeToolEligibilitySnapshot> {
-  if (provider.getEligibilitySnapshot) {
-    return provider.getEligibilitySnapshot(catalog)
-  }
-  const ids = await provider.getUnavailableToolIds?.(catalog) ?? new Set()
-  const checkedAt = Date.now()
-  return new Map(
-    [...ids].map((id) => [
-      id,
-      {
-        status: 'unavailable' as const,
-        reasonCode: 'runtime_dependency_unavailable',
-        checkedAt,
-        expiresAt: checkedAt,
-        dependencyRevision: 'legacy'
-      }
-    ])
-  )
 }
 
 function applyRuntimeEligibility(

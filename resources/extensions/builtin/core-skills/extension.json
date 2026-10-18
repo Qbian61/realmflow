@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "packageId": "realmflow.builtin.core-skills",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "name": "Core Skills",
   "description": "RealmFlow built-in software delivery Skills.",
   "publisher": {

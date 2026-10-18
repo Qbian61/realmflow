@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.git.list_branches",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "name": "List branches",
   "description": "Read local and remote branch names.",
   "tags": [

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.presentation.delete_slide",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Delete presentation slide",
   "description": "Delete a slide while retaining at least one slide.",
   "tags": [

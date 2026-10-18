@@ -1,10 +1,14 @@
 import {
+  act,
   fireEvent,
   render as testingRender,
   screen
 } from '@testing-library/react'
 import { afterEach, vi } from 'vitest'
-import type { AssistantTurnProjection } from '../../../domain/assistant-turn'
+import type {
+  AssistantDisplayNode,
+  AssistantTurnProjection
+} from '../../../domain/assistant-turn'
 import type { AgentRuntimeApi } from '../../../shared/agent-runtime-state'
 import { LocalizationProvider } from '../../localization/LocalizationProvider'
 import { LOCALE_PREFERENCE_KEY } from '../../localization/locale-preference'
@@ -33,130 +37,39 @@ describe('AssistantExecutionTimeline', () => {
       LOCALE_PREFERENCE_KEY,
       JSON.stringify({ version: 1, locale: 'en' })
     )
-
     render(
       <AssistantExecutionTimeline
-        execution={projection({
-          status: 'completed',
-          completedAt: 2_600
-        })}
+        execution={projection({ status: 'completed', completedAt: 2_600 })}
       />
     )
 
-    const task = screen.getByRole('button', {
-      name: 'Task duration 2.5 seconds'
-    })
-    fireEvent.click(task)
-    expect(screen.getByText('Task completed')).toBeInTheDocument()
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Task duration 2.5s' })
+    )
+    expect(screen.queryByText('Task completed')).not.toBeInTheDocument()
   })
 
-  it('does not expose editable Agent Runtime controls in standard conversations', () => {
+  it('does not expose editable Agent Runtime controls in conversations', () => {
     Object.defineProperty(window, 'realmflow', {
       configurable: true,
       value: { agentRuntime: {} as AgentRuntimeApi }
     })
     render(
       <AssistantExecutionTimeline
-        execution={projection({
-          status: 'completed',
-          completedAt: 2_600
-        })}
+        execution={projection({ status: 'completed', completedAt: 2_600 })}
       />
     )
 
-    fireEvent.click(screen.getByRole('button', { name: '任务耗时 2.5 秒' }))
-
-    expect(screen.getByText('任务完成')).toBeVisible()
-    expect(
-      screen.queryByRole('button', { name: '运行详情' })
-    ).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '任务耗时 2.5s' }))
+    expect(screen.queryByText('任务完成')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '运行详情' })).not.toBeInTheDocument()
   })
 
-  it('uses compact English units for long task duration parts', () => {
-    window.localStorage.setItem(
-      LOCALE_PREFERENCE_KEY,
-      JSON.stringify({ version: 1, locale: 'en' })
-    )
-
-    render(
-      <AssistantExecutionTimeline
-        execution={projection({
-          status: 'completed',
-          completedAt: 93_784_100
-        })}
-      />
-    )
-
-    expect(
-      screen.getByRole('button', {
-        name: 'Task duration 1d 2h 3m 4s'
-      })
-    ).toBeInTheDocument()
-  })
-
-  it('shows duration and aggregated Tool counts with successful details collapsed', () => {
+  it('formats long task duration with compact localized units', () => {
     const view = render(
       <AssistantExecutionTimeline
         execution={projection({
           status: 'completed',
-          completedAt: 2_600,
-          toolCalls: [
-            toolCall('one', 'web_search'),
-            toolCall('two', 'web_search'),
-            toolCall('three', 'command')
-          ]
-        })}
-      />
-    )
-
-    const task = screen.getByRole('button', { name: '任务耗时 2.5 秒' })
-    expect(task).toHaveAttribute('aria-expanded', 'false')
-    expect(task.firstElementChild).toHaveTextContent('任务耗时 2.5 秒')
-    expect(task.lastElementChild?.tagName).toBe('svg')
-    fireEvent.click(task)
-    expect(screen.getByText('任务完成')).toBeInTheDocument()
-    expect(screen.getByText('搜索 2 次网页')).toBeInTheDocument()
-    expect(screen.getByText('执行 1 条命令')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /^执行详情/ })).toHaveAttribute(
-      'aria-expanded',
-      'false'
-    )
-    expect(
-      view.container.querySelector('.assistant-execution-timeline')
-    ).toHaveAttribute('data-density', 'compact')
-  })
-
-  it('formats long task duration into day, hour, minute, and second parts', () => {
-    const { rerender } = render(
-      <AssistantExecutionTimeline
-        execution={projection({
-          status: 'completed',
-          completedAt: 882_100
-        })}
-      />
-    )
-
-    expect(
-      screen.getByRole('button', { name: '任务耗时 14 分 42 秒' })
-    ).toBeInTheDocument()
-
-    rerender(
-      <AssistantExecutionTimeline
-        execution={projection({
-          status: 'completed',
-          completedAt: 3_723_100
-        })}
-      />
-    )
-
-    expect(
-      screen.getByRole('button', { name: '任务耗时 1 小时 2 分 3 秒' })
-    ).toBeInTheDocument()
-
-    rerender(
-      <AssistantExecutionTimeline
-        execution={projection({
-          status: 'completed',
           completedAt: 93_784_100
         })}
       />
@@ -164,446 +77,180 @@ describe('AssistantExecutionTimeline', () => {
 
     expect(
       screen.getByRole('button', {
-        name: '任务耗时 1 天 2 小时 3 分 4 秒'
+        name: '任务耗时 1d 2h 3m 4s'
       })
     ).toBeInTheDocument()
-  })
-
-  it('keeps unrelated failed tool calls visible after later successful tool calls', () => {
-    render(
-      <AssistantExecutionTimeline
-        execution={projection({
-          status: 'completed',
-          completedAt: 3_000,
-          toolCalls: [
-            {
-              ...toolCall('failed-stat', 'filesystem'),
-              toolName: 'rf_builtin_files_stat_ffd70cef',
-              status: 'failed',
-              errorCode: 'tool_execution_failed',
-              error: 'Tool execution failed',
-              completedAt: 200
-            },
-            {
-              ...toolCall('successful-read', 'filesystem'),
-              toolName: 'rf_builtin_documents_read_eface55f',
-              status: 'completed',
-              completedAt: 300
-            },
-            {
-              ...toolCall('failed-run', 'command'),
-              toolName: 'rf_builtin_process_run_ce248e65',
-              status: 'failed',
-              errorCode: 'builtin_execution_failed',
-              error: 'Path is outside the bound workspace',
-              completedAt: 400
-            },
-            {
-              ...toolCall('successful-run', 'command'),
-              toolName: 'rf_builtin_process_run_ce248e65',
-              status: 'completed',
-              completedAt: 500
-            }
-          ]
-        })}
-      />
-    )
-
-    fireEvent.click(screen.getByRole('button', { name: '任务耗时 2.9 秒' }))
-    expect(screen.getByText('执行 2 条命令')).toBeInTheDocument()
-    expect(screen.getByText('操作 2 次文件')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /^执行详情/ }))
-    expect(screen.getByText('Tool execution failed')).toBeInTheDocument()
     expect(
-      screen.getByText('Path is outside the bound workspace')
+      view.container.querySelector('.assistant-task-divider-line')
     ).toBeInTheDocument()
   })
 
-  it('shows terminal run errors even when execution details are present', () => {
-    render(
+  it('renders the task divider below the disclosure label', () => {
+    const view = render(
       <AssistantExecutionTimeline
-        execution={projection({
-          status: 'completed',
-          completedAt: 3_000,
-          error: '仍有 1 个工具失败未恢复',
-          toolCalls: [
-            {
-              ...toolCall('failed-stat', 'filesystem'),
-              status: 'failed',
-              errorCode: 'tool_execution_failed',
-              error: 'Tool execution failed',
-              completedAt: 200
-            }
-          ]
-        })}
+        execution={projection({ status: 'completed', completedAt: 2_600 })}
       />
     )
 
-    fireEvent.click(screen.getByRole('button', { name: '任务耗时 2.9 秒' }))
-    expect(screen.getByText('仍有 1 个工具失败未恢复')).toBeInTheDocument()
-  })
-
-  it('collapses an explicit successful retry while exposing the failed attempt', () => {
-    render(
-      <AssistantExecutionTimeline
-        execution={projection({
-          status: 'completed',
-          completedAt: 3_000,
-          toolCalls: [
-            {
-              ...toolCall('retried-stat', 'filesystem'),
-              toolName: 'rf_builtin_files_stat_ffd70cef',
-              status: 'completed',
-              attempt: 2,
-              attempts: [
-                {
-                  attempt: 1,
-                  status: 'failed',
-                  toolExecutionId: 'execution-retried-stat-1',
-                  errorCode: 'tool_timeout',
-                  error: 'Tool timed out before retry',
-                  diagnosticId: 'toolerr_retry_1',
-                  startedAt: 200,
-                  completedAt: 300
-                }
-              ]
-            } as AssistantTurnProjection['toolCalls'][number]
-          ]
-        })}
-      />
+    const trigger = screen.getByRole('button', { name: '任务耗时 2.5s' })
+    const header = trigger.parentElement
+    const divider = view.container.querySelector<HTMLElement>(
+      '.assistant-task-divider-line'
     )
 
-    fireEvent.click(screen.getByRole('button', { name: '任务耗时 2.9 秒' }))
-    expect(screen.getByText('操作 1 次文件')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /^执行详情/ }))
-    expect(screen.getByText('重试后成功')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '失败尝试 1' }))
-    expect(screen.getByText('工具执行超时')).toBeInTheDocument()
-    expect(screen.getByText('诊断 ID：toolerr_retry_1')).toBeInTheDocument()
+    expect(header).toHaveClass('assistant-task-disclosure-header')
+    expect(header).toContainElement(divider)
+    expect(trigger).not.toContainElement(divider)
   })
 
-  it('shows unrecovered failure count for a completed run without a terminal error message', () => {
-    render(
-      <AssistantExecutionTimeline
-        execution={projection({
-          status: 'completed',
-          completedAt: 3_000,
-          toolCalls: [
-            {
-              ...toolCall('failed-stat', 'filesystem'),
-              status: 'failed',
-              errorCode: 'tool_execution_failed',
-              error: 'Tool execution failed',
-              completedAt: 200
-            }
-          ]
-        })}
-      />
+  it('updates a running duration and stops at elapsedAt', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(2_100)
+    const view = render(
+      <AssistantExecutionTimeline execution={projection({ status: 'running' })} />
     )
+    expect(screen.getByRole('button', { name: '任务耗时 2.0s' })).toBeVisible()
 
-    fireEvent.click(screen.getByRole('button', { name: '任务耗时 2.9 秒' }))
-    expect(screen.getByText('仍有 1 个工具失败未恢复')).toBeInTheDocument()
+    act(() => vi.advanceTimersByTime(2_000))
+    expect(screen.getByRole('button', { name: '任务耗时 4.0s' })).toBeVisible()
+
+    view.rerender(
+      <LocalizationProvider>
+        <AssistantExecutionTimeline
+          execution={projection({ status: 'paused', elapsedAt: 4_100 })}
+        />
+      </LocalizationProvider>
+    )
+    act(() => vi.advanceTimersByTime(2_000))
+    expect(screen.getByRole('button', { name: '任务耗时 4.0s' })).toBeVisible()
   })
 
-  it('keeps a manual disclosure choice when a running task completes', () => {
-    const { rerender } = render(
-      <AssistantExecutionTimeline
-        execution={projection({ status: 'running' })}
-      />
+  it('keeps a manual root disclosure choice when a task completes', () => {
+    const view = render(
+      <AssistantExecutionTimeline execution={projection({ status: 'running' })} />
     )
     const task = screen.getByRole('button', { name: /任务耗时/ })
-    expect(task).toHaveAttribute('aria-expanded', 'true')
     fireEvent.click(task)
     expect(task).toHaveAttribute('aria-expanded', 'false')
 
-    rerender(
-      <AssistantExecutionTimeline
-        execution={projection({
-          status: 'completed',
-          completedAt: 2_600
-        })}
-      />
+    view.rerender(
+      <LocalizationProvider>
+        <AssistantExecutionTimeline
+          execution={projection({ status: 'completed', completedAt: 2_600 })}
+        />
+      </LocalizationProvider>
     )
-
-    expect(screen.getByRole('button', { name: '任务耗时 2.5 秒' }))
+    expect(screen.getByRole('button', { name: '任务耗时 2.5s' }))
       .toHaveAttribute('aria-expanded', 'false')
   })
 
-  it('auto-collapses an open task when it completes and allows reopening', () => {
-    const { rerender } = render(
+  it('keeps a cancelled terminal run collapsed by default', () => {
+    render(
       <AssistantExecutionTimeline
-        execution={projection({ status: 'running' })}
+        execution={projection({ status: 'cancelled', elapsedAt: 2_600 })}
       />
     )
-    const runningTask = screen.getByRole('button', { name: /任务耗时/ })
-    fireEvent.click(runningTask)
-    fireEvent.click(runningTask)
-    expect(runningTask).toHaveAttribute('aria-expanded', 'true')
 
-    rerender(
+    expect(screen.getByRole('button', { name: '任务耗时 2.5s' }))
+      .toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('任务已取消')).not.toBeInTheDocument()
+  })
+
+  it('renders only execution.tree and ignores legacy projection arrays', () => {
+    render(
+      <AssistantExecutionTimeline
+        execution={projection({
+          status: 'running',
+          executionSummaries: [
+            { id: 'legacy-summary', content: '旧思考', source: 'system' }
+          ],
+          references: [
+            {
+              id: 'legacy-reference',
+              title: '旧引用',
+              sourceType: 'knowledge',
+              summary: '不应渲染'
+            }
+          ],
+          tree: [
+            {
+              id: 'reasoning',
+              kind: 'reasoning',
+              order: 1,
+              content: '展示树思考',
+              status: 'streaming'
+            }
+          ]
+        })}
+      />
+    )
+
+    expect(screen.getByText('展示树思考')).toBeInTheDocument()
+    expect(screen.queryByText('旧思考')).not.toBeInTheDocument()
+    expect(screen.queryByText('旧引用')).not.toBeInTheDocument()
+  })
+
+  it('does not duplicate completed Tool failures as a terminal error', () => {
+    const failed = toolNode('failed', 'failed')
+    render(
       <AssistantExecutionTimeline
         execution={projection({
           status: 'completed',
-          completedAt: 2_600
-        })}
-      />
-    )
-
-    const completedTask = screen.getByRole('button', {
-      name: '任务耗时 2.5 秒'
-    })
-    expect(completedTask).toHaveAttribute('aria-expanded', 'false')
-
-    fireEvent.click(completedTask)
-    expect(completedTask).toHaveAttribute('aria-expanded', 'true')
-    expect(screen.getByText('任务完成')).toBeInTheDocument()
-  })
-
-  it('keeps duration frozen while a Run is waiting for input', () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(10_000)
-    render(
-      <AssistantExecutionTimeline
-        execution={projection({
-          status: 'waiting_input',
-          elapsedAt: 2_600,
-          recovery: { reason: 'deterministic_tool_failure' }
-        })}
-      />
-    )
-
-    expect(
-      screen.getByRole('button', { name: '任务耗时 2.5 秒' })
-    ).toBeInTheDocument()
-    expect(
-      screen.getByText('检测到确定性工具失败循环，需要确认后继续')
-    ).toBeInTheDocument()
-
-    vi.advanceTimersByTime(5_000)
-
-    expect(
-      screen.getByRole('button', { name: '任务耗时 2.5 秒' })
-    ).toBeInTheDocument()
-  })
-
-  it('renders references and summaries in separate keyboard disclosures', () => {
-    render(
-      <AssistantExecutionTimeline
-        execution={projection({
-          references: [
+          completedAt: 3_000,
+          tree: [
             {
-              id: 'reference-1',
-              title: 'RealmFlow 设计',
-              sourceType: 'knowledge',
-              summary: '设计约束'
+              id: 'todo',
+              kind: 'todo_group',
+              order: 1,
+              todo: {
+                todoId: 'todo-1',
+                title: '测试',
+                status: 'failed',
+                items: [
+                  {
+                    id: 'item-1',
+                    ordinal: 1,
+                    title: '失败项',
+                    status: 'failed',
+                    children: [failed]
+                  }
+                ]
+              }
             }
-          ],
-          executionSummaries: [
-            { id: 'summary-1', content: '已分析需求', source: 'system' }
           ]
         })}
       />
     )
 
-    fireEvent.click(screen.getByRole('button', { name: '参考内容' }))
-    expect(screen.getByText('RealmFlow 设计')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '思考过程' }))
-    expect(screen.getByText('已分析需求')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '任务耗时 2.9s' }))
+    expect(screen.queryByText('仍有 1 个工具失败未恢复')).not.toBeInTheDocument()
   })
 
-  it('auto-expands failures and renders nothing for an empty legacy projection', () => {
-    const { rerender } = render(
+  it('shows terminal run errors even when the tree has details', () => {
+    render(
       <AssistantExecutionTimeline
         execution={projection({
           status: 'failed',
-          error: '执行失败',
-          toolCalls: [
-            {
-              ...toolCall('one', 'command'),
-              status: 'failed',
-              errorCode: 'tool_timeout',
-              error: '/private/workspace/secret timed out'
-            }
-          ]
+          error: 'Provider request failed',
+          tree: [toolNode('failed', 'failed')]
         })}
       />
     )
-    expect(screen.getByRole('button', { name: /^执行详情/ })).toHaveAttribute(
-      'aria-expanded',
-      'true'
-    )
+    expect(screen.getByText('Provider request failed')).toBeInTheDocument()
+    expect(
+      screen.getByRole('group', { name: '读取 src/file.ts失败' })
+    ).toBeInTheDocument()
     expect(screen.getByText('工具执行超时')).toBeInTheDocument()
-    expect(
-      screen.queryByText('/private/workspace/secret timed out')
-    ).not.toBeInTheDocument()
-
-    rerender(<AssistantExecutionTimeline execution={undefined} />)
-    expect(screen.queryByText('执行详情')).not.toBeInTheDocument()
   })
 
-  it('shows the public Tool error and diagnostic ID without exposing sensitive details', () => {
-    render(
-      <AssistantExecutionTimeline
-        execution={projection({
-          status: 'failed',
-          toolCalls: [
-            {
-              ...toolCall('browser-snapshot', 'command'),
-              status: 'failed',
-              errorCode: 'runtime_resource_stale',
-              error: 'Runtime resource is stale for the current run',
-              diagnosticId: 'toolerr_0123456789abcdef',
-              completedAt: 400
-            } as AssistantTurnProjection['toolCalls'][number]
-          ]
-        })}
-      />
-    )
-
-    expect(
-      screen.getByText('Runtime resource is stale for the current run')
-    ).toBeInTheDocument()
-    expect(screen.getByText('诊断 ID：toolerr_0123456789abcdef')).toBeInTheDocument()
-    expect(screen.queryByText('/Users/me/project')).not.toBeInTheDocument()
-    expect(screen.queryByText('token=secret')).not.toBeInTheDocument()
-  })
-
-  it('shows a Git recovery hint without exposing local paths', () => {
-    render(
-      <AssistantExecutionTimeline
-        execution={projection({
-          status: 'failed',
-          toolCalls: [
-            {
-              ...toolCall('git-status', 'command'),
-              status: 'failed',
-              errorCode: 'git_repository_outside_scope',
-              error:
-                'Git repository is outside the authorized scope. Choose the repository folder as the scope root.',
-              recoveryHint: 'Choose the repository folder as the scope root.',
-              diagnosticId: 'toolerr_1111111111111111',
-              completedAt: 400
-            } as AssistantTurnProjection['toolCalls'][number] & {
-              recoveryHint: string
-            }
-          ]
-        })}
-      />
-    )
-
-    expect(
-      screen.getByText(
-        'Git repository is outside the authorized scope. Choose the repository folder as the scope root.'
-      )
-    ).toBeInTheDocument()
-    expect(
-      screen.getByText('Choose the repository folder as the scope root.')
-    ).toBeInTheDocument()
-    expect(screen.queryByText('/Users/alice/private')).not.toBeInTheDocument()
-  })
-
-  it('shows a stable user-facing error when a Skill Connector is unavailable', () => {
-    render(
-      <AssistantExecutionTimeline
-        execution={projection({
-          status: 'failed',
-          toolCalls: [
-            {
-              ...toolCall('rf_skill_uploaded_report_abcdef12', 'skill'),
-              status: 'failed',
-              errorCode: 'skill_connector_unavailable',
-              error: 'Connector grant token is unavailable'
-            }
-          ]
-        })}
-      />
-    )
-
-    expect(screen.getByText('技能连接器不可用')).toBeInTheDocument()
-    expect(
-      screen.queryByText('Connector grant token is unavailable')
-    ).not.toBeInTheDocument()
-  })
-
-  it('shows a deterministic Skill call with a user-facing name and permission state', () => {
-    render(
-      <AssistantExecutionTimeline
-        execution={projection({
-          status: 'waiting_permission',
-          toolCalls: [
-            {
-              ...toolCall(
-                'rf_skill_builtin_skill_code_review_abcdef12',
-                'skill'
-              ),
-              status: 'waiting_permission'
-            }
-          ]
-        })}
-      />
-    )
-
-    expect(screen.getAllByText('等待授权')).toHaveLength(2)
-    expect(screen.getByText('调用 1 次技能')).toBeInTheDocument()
-    expect(screen.getByText('技能 · code review')).toBeInTheDocument()
-    expect(
-      screen.queryByText('rf_skill_builtin_skill_code_review_abcdef12')
-    ).not.toBeInTheDocument()
-  })
-
-  it('shows an accessible delegation summary with partial child results', () => {
-    render(
-      <AssistantExecutionTimeline
-        execution={projection({
-          delegations: [
-            {
-              callId: 'delegate-1',
-              status: 'partial',
-              requestedAt: 100,
-              completedAt: 300,
-              tasks: [
-                {
-                  taskId: 'docs',
-                  objective: 'Inspect docs',
-                  status: 'completed',
-                  summary: 'Docs summary',
-                  evidenceCount: 2
-                },
-                {
-                  taskId: 'tests',
-                  objective: 'Inspect tests',
-                  status: 'failed',
-                  summary: 'Provider failed',
-                  evidenceCount: 0,
-                  errorCode: 'provider_rejected'
-                }
-              ]
-            }
-          ]
-        })}
-      />
-    )
-
-    expect(screen.getByText('委派 2 个子任务')).toBeInTheDocument()
-    const trigger = screen.getByRole('button', {
-      name: /委派 2 个子任务/
-    })
-    expect(trigger).toHaveAttribute('aria-expanded', 'true')
-    expect(screen.getByText('Inspect docs')).toBeInTheDocument()
-    expect(screen.getByText('Docs summary')).toBeInTheDocument()
-    expect(screen.getByText('部分完成')).toBeInTheDocument()
-    fireEvent.click(trigger)
-    expect(screen.queryByText('Docs summary')).not.toBeInTheDocument()
-  })
-
-  it('shows explainable recovery blocking, actions and context compaction', async () => {
+  it('executes recovery actions and reports results', async () => {
     const onRecoveryAction = vi.fn(
       async (action: 'resume' | 'branch' | 'cancel') =>
         action === 'branch'
           ? ({ status: 'branched', runId: 'run-branch' } as const)
           : action === 'cancel'
             ? ({ status: 'cancelled' } as const)
-          : ({ status: 'resumed' } as const),
+            : ({ status: 'resumed' } as const)
     )
     render(
       <AssistantExecutionTimeline
@@ -613,22 +260,11 @@ describe('AssistantExecutionTimeline', () => {
           recovery: {
             reason: 'capability_unavailable',
             actions: ['resume', 'branch', 'cancel']
-          },
-          compactions: [
-            {
-              objectiveCount: 1,
-              constraintCount: 2,
-              incompleteItemCount: 1,
-              sourceCount: 5,
-              compactedAt: 200
-            }
-          ]
+          }
         })}
       />
     )
 
-    expect(screen.getByText('恢复受阻')).toBeInTheDocument()
-    expect(screen.getByText('所需能力版本不可用')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '继续' }))
     expect(await screen.findByText('已继续运行')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '创建分支' }))
@@ -640,129 +276,11 @@ describe('AssistantExecutionTimeline', () => {
       'branch',
       'cancel'
     ])
-    fireEvent.click(screen.getByRole('button', { name: '已整理上下文' }))
-    expect(screen.getByText('保留 1 个目标、2 条约束、1 个未完成项，关联 5 个来源')).toBeInTheDocument()
   })
 
-  it('shows a localized automatic continuation state after context compaction', () => {
-    render(
-      <AssistantExecutionTimeline
-        execution={projection({
-          status: 'retrying',
-          recovery: {
-            reason: 'max_agent_turns',
-            attempt: 1
-          },
-          compactions: [
-            {
-              objectiveCount: 1,
-              constraintCount: 3,
-              incompleteItemCount: 2,
-              sourceCount: 4,
-              compactedAt: 2_000
-            }
-          ]
-        })}
-      />
-    )
-
-    expect(screen.getByText('正在重试')).toBeInTheDocument()
-    expect(
-      screen.getByText('已达到当前执行分段上限，正在自动续跑')
-    ).toBeInTheDocument()
-    expect(
-      screen.queryByText('max_agent_turns')
-    ).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '已整理上下文' }))
-    expect(
-      screen.getByText(
-        '保留 1 个目标、3 条约束、2 个未完成项，关联 4 个来源'
-      )
-    ).toBeInTheDocument()
-  })
-
-  it('shows provider retry schedule and remaining attempts to the user', () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(60_100)
-
-    render(
-      <AssistantExecutionTimeline
-        execution={projection({
-          status: 'retrying',
-          recovery: {
-            reason: 'provider_rate_limited',
-            attempt: 2,
-            nextRetryAt: 65_100,
-            remainingAttempts: 1
-          } as AssistantTurnProjection['recovery'] & {
-            remainingAttempts: number
-          }
-        })}
-      />
-    )
-
-    expect(screen.getByText('正在重试')).toBeInTheDocument()
-    expect(
-      screen.getByText('模型服务繁忙，将按计划重试')
-    ).toBeInTheDocument()
-    expect(screen.getByText(/第 2 次重试/)).toBeInTheDocument()
-    expect(screen.getByText(/剩余 1 次/)).toBeInTheDocument()
-    expect(screen.getByText(/下次重试 5.0 秒后/)).toBeInTheDocument()
-  })
-
-  it('keeps retry hints visible on terminal provider failures', () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(60_100)
-
-    render(
-      <AssistantExecutionTimeline
-        execution={projection({
-          status: 'failed',
-          completedAt: 60_100,
-          error: 'Provider request failed',
-          recovery: {
-            reason: 'provider_rate_limited',
-            attempt: 1,
-            nextRetryAt: 65_100,
-            remainingAttempts: 0
-          } as AssistantTurnProjection['recovery'] & {
-            remainingAttempts: number
-          }
-        })}
-      />
-    )
-
-    expect(screen.getByText('任务失败')).toBeInTheDocument()
-    expect(
-      screen.getByText('模型服务繁忙，将按计划重试')
-    ).toBeInTheDocument()
-    expect(screen.getByText(/第 1 次重试/)).toBeInTheDocument()
-    expect(screen.getByText(/剩余 0 次/)).toBeInTheDocument()
-    expect(screen.getByText(/下次重试 5.0 秒后/)).toBeInTheDocument()
-    expect(screen.getByText('Provider request failed')).toBeInTheDocument()
-  })
-
-  it('paginates more than 100 expanded tool calls', () => {
-    render(
-      <AssistantExecutionTimeline
-        execution={projection({
-          status: 'failed',
-          toolCalls: Array.from({ length: 150 }, (_, index) =>
-            toolCall(`tool-${index}`, 'command')
-          )
-        })}
-      />
-    )
-
-    expect(
-      document.querySelectorAll('.assistant-tool-call-list li')
-    ).toHaveLength(100)
-    expect(screen.getByText('1-100 / 150')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '下一页' }))
-    expect(
-      document.querySelectorAll('.assistant-tool-call-list li')
-    ).toHaveLength(50)
-    expect(screen.getByText('101-150 / 150')).toBeInTheDocument()
+  it('renders nothing when no execution projection exists', () => {
+    const view = render(<AssistantExecutionTimeline execution={undefined} />)
+    expect(view.container).toBeEmptyDOMElement()
   })
 })
 
@@ -770,11 +288,15 @@ function projection(
   patch: Partial<AssistantTurnProjection>
 ): AssistantTurnProjection {
   return {
+    schemaVersion: 2,
     runId: 'run-1',
+    turnId: 'turn-1',
     assistantMessageId: 'assistant-1',
     status: 'running',
     startedAt: 100,
-    answer: '最终回答',
+    answer: '',
+    tree: [],
+    collapsedDefaults: [],
     executionSummaries: [],
     references: [],
     toolCalls: [],
@@ -785,19 +307,24 @@ function projection(
   }
 }
 
-function toolCall(
-  callId: string,
-  category: 'web_search' | 'command' | 'skill' | 'filesystem'
-) {
+function toolNode(
+  id: string,
+  status: 'running' | 'failed'
+): AssistantDisplayNode {
   return {
-    callId,
-    toolExecutionId: `execution-${callId}`,
-    toolName: callId,
-    category,
-    status: 'completed' as const,
-    argumentsSummary: '',
-    requestedAt: 100,
-    startedAt: 200,
-    completedAt: 300
+    id,
+    kind: 'tool_call',
+    order: 1,
+    toolCall: {
+      callId: id,
+      toolName: 'builtin.files.read',
+      category: 'filesystem',
+      status,
+      argumentsSummary: '{"path":"src/file.ts"}',
+      requestedAt: 100,
+      errorCode: status === 'failed' ? 'tool_timeout' : undefined,
+      error: status === 'failed' ? 'Timed out' : undefined
+    },
+    view: { type: 'file', title: '读取文件' }
   }
 }

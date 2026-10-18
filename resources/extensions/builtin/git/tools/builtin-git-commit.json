@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.git.commit",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "name": "Create commit",
   "description": "Create a new commit from explicitly selected files.",
   "tags": [

@@ -10,7 +10,7 @@ export type ExtensionPackageDefinitionEntry = {
   path: string
 }
 
-export type LegacyExtensionPackageManifest = {
+export type ExtensionPackageManifestV1 = {
   schemaVersion: 1
   packageId: string
   version: string
@@ -31,7 +31,7 @@ export type LegacyExtensionPackageManifest = {
 }
 
 export type ExtensionPackageManifest =
-  | LegacyExtensionPackageManifest
+  | ExtensionPackageManifestV1
   | PluginPackageManifest
 
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/
@@ -117,7 +117,7 @@ export function calculateExtensionPackageDigest(
 
 function normalizePublisher(
   value: unknown
-): LegacyExtensionPackageManifest['publisher'] {
+): ExtensionPackageManifestV1['publisher'] {
   const publisher = requireObject(value, 'publisher')
   requireExactKeys(
     publisher,
@@ -137,7 +137,7 @@ function normalizePublisher(
 
 function normalizeCompatibility(
   value: unknown
-): LegacyExtensionPackageManifest['compatibility'] {
+): ExtensionPackageManifestV1['compatibility'] {
   const compatibility = requireObject(value, 'compatibility')
   requireExactKeys(
     compatibility,

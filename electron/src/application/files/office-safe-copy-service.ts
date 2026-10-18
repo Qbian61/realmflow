@@ -5,7 +5,7 @@ import type {
   OfficeSafeCopyFormat,
   OfficeSafeCopyInput,
   OfficeSafeCopyResult as SidecarOfficeSafeCopyResult
-} from '../../sidecar/client'
+} from './private-python-worker-client'
 import type {
   LocalPresentationSessionService,
   PresentationSessionSummary

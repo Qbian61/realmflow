@@ -2,7 +2,12 @@ import { Boxes, Plus } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Navigate, useParams, useSearchParams } from "react-router-dom";
 import type { RealmFlowApi } from "../../shared/types";
-import type { BusinessApi } from "../../shared/business";
+import type {
+  BusinessApi,
+  ConversationCapabilitySelection,
+} from "../../shared/business";
+import type { ReasoningPreference } from "../../domain/reasoning-router";
+import type { ConversationAttachmentSubmission } from "../../shared/conversation-attachments";
 import type { SpaceResource } from "../domain/space-resource";
 import type { RequirementStageId } from "../domain/requirement";
 import type { WorkspaceRequirement, WorkspaceSpace } from "../domain/workspace";
@@ -45,6 +50,10 @@ type SpaceDetailPageProps = {
     spacePath: string,
     prompt: string,
     modelProfileId?: string,
+    reasoningMode?: ReasoningPreference,
+    attachments?: ConversationAttachmentSubmission,
+    approvalProfileId?: import("../../domain/approval-profile").ApprovalProfileId,
+    capabilities?: ConversationCapabilitySelection,
   ) => void | Promise<void>;
 };
 

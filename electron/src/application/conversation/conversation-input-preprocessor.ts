@@ -74,11 +74,10 @@ export class ConversationInputPreprocessor {
         continue
       }
       try {
-        const bytes = await readFile(
-          this.resolveManagedPath(
-            await this.repository.resolveBlobPath(attachmentId)
-          )
+        const managedPath = this.resolveManagedPath(
+          await this.repository.resolveBlobPath(attachmentId)
         )
+        const bytes = await readFile(managedPath)
         const prepared =
           descriptor.mediaKind === 'image' &&
           input.modelSupportsVision &&
@@ -94,7 +93,11 @@ export class ConversationInputPreprocessor {
                 bytes,
                 contextSections
               )
-        attachments.push(prepared)
+        attachments.push(
+          descriptor.mediaKind === 'document'
+            ? { ...prepared, path: managedPath }
+            : prepared
+        )
         await this.repository.updateStatus({
           id: attachmentId,
           status: 'ready'
@@ -153,6 +156,7 @@ export class ConversationInputPreprocessor {
       mimeType: descriptor.mimeType,
       kind: 'image',
       status: 'ready',
+      digest: descriptor.checksumSha256,
       extraction: 'vision'
     }
   }

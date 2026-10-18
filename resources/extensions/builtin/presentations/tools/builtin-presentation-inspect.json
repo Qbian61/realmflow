@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.presentation.inspect",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Inspect presentation",
   "description": "Open and inspect an authorized PPTX file.",
   "tags": [

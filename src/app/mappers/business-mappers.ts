@@ -66,9 +66,9 @@ export function mapConversation(
     spacePath: conversation.workspaceId
       ? `/spaces/${conversation.workspaceId}`
       : '',
+    turns: conversation.turns,
     messages: conversation.messages.map((message) => ({
-      ...message,
-      role: message.role
+      ...message
     })),
     sortOrder: conversation.sortOrder,
     revision: conversation.revision,

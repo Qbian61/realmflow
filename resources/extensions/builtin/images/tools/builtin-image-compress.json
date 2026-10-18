@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.image.compress",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Compress image",
   "description": "Re-encode an image with an explicit format and quality.",
   "tags": [

@@ -6,4 +6,10 @@ describe('renderer security policy', () => {
   it('allows only the controlled artifact protocol in preview frames', () => {
     expect(indexHtml).toContain("frame-src realmflow-artifact:")
   })
+
+  it('allows images from the controlled artifact protocol', () => {
+    expect(indexHtml).toContain(
+      "img-src 'self' data: realmflow-artifact:"
+    )
+  })
 })

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "packageId": "realmflow.builtin.images",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Images",
   "description": "Revision-safe local image inspection, OCR, and deterministic editing.",
   "publisher": {

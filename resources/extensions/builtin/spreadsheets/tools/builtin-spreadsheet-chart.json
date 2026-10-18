@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.spreadsheet.chart",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Add spreadsheet chart",
   "description": "Add a basic chart from explicit data and category ranges.",
   "tags": [

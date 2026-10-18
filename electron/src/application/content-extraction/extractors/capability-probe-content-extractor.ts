@@ -6,7 +6,7 @@ import {
 import type {
   OptionalOfficeFormat,
   OptionalOfficeOutputFormat
-} from '../../../sidecar/client'
+} from '../../files/private-python-worker-client'
 import type {
   ContentExtractionInput,
   LocalContentExtractor

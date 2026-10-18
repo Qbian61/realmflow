@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.document.comment_delete",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "name": "Delete document comment",
   "description": "Delete a Word comment by its stable ID.",
   "tags": [

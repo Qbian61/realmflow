@@ -583,7 +583,9 @@ describe('business IPC', () => {
     const query = {
       kind: 'general',
       folderPath: '/tmp/project',
-      updatedAfter: 100
+      updatedAfter: 100,
+      cursor: 'opaque-cursor',
+      limit: 50
     }
 
     await registered.get(IPC_INVOKE_CHANNELS.conversationListRecent)?.(
@@ -617,6 +619,9 @@ describe('business IPC', () => {
       { folderPath: '' },
       { updatedAfter: -1 },
       { updatedAfter: 1.5 },
+      { cursor: '' },
+      { limit: 0 },
+      { limit: 101 },
       { workspaceId: 'space-1', folderPath: '/tmp/project' },
       { kind: 'general', workspaceId: 'space-1' },
       { kind: 'space', folderPath: '/tmp/project' }
@@ -628,6 +633,39 @@ describe('business IPC', () => {
       )
     }
     expect(handlers.listRecentConversations.execute).not.toHaveBeenCalled()
+  })
+
+  it('validates and forwards a Turn cursor page query', async () => {
+    const handlers = createHandlers()
+    const registered = new Map<string, (...args: unknown[]) => unknown>()
+    registerBusinessIpc({
+      handlers,
+      ipcMain: {
+        handle: (channel: string, handler: (...args: unknown[]) => unknown) => {
+          registered.set(channel, handler)
+        }
+      } as never
+    })
+    const query = {
+      sessionId: 'conversation-1',
+      cursor: 'opaque-cursor',
+      limit: 40
+    }
+
+    await registered.get(IPC_INVOKE_CHANNELS.conversationListTurns)?.(
+      {},
+      query
+    )
+
+    expect(handlers.listConversationTurns.execute).toHaveBeenCalledWith(query)
+    expect(() =>
+      registered.get(IPC_INVOKE_CHANNELS.conversationListTurns)?.(
+        {},
+        { ...query, limit: 101 }
+      )
+    ).toThrow(
+      `Invalid IPC payload for ${IPC_INVOKE_CHANNELS.conversationListTurns}`
+    )
   })
 
   it('validates and forwards conversation rename and delete commands', async () => {
@@ -702,7 +740,7 @@ describe('business IPC', () => {
     expect(handlers.deleteConversation.execute).not.toHaveBeenCalled()
   })
 
-  it('accepts explicit model API protocols and rejects the legacy provider type', async () => {
+  it('accepts explicit model API protocols and rejects unsupported provider types', async () => {
     const handlers = createHandlers()
     const registered = new Map<string, (...args: unknown[]) => unknown>()
     registerBusinessIpc({
@@ -748,9 +786,9 @@ describe('business IPC', () => {
       save?.(
         {},
         {
-          id: 'provider-legacy',
+          id: 'provider-unsupported',
           type: 'openai_compatible',
-          name: 'Legacy',
+          name: 'Unsupported',
           baseUrl: 'https://api.example.com/v1',
           enabled: true,
           expectedRevision: 0
@@ -2634,6 +2672,7 @@ describe('business IPC', () => {
       knowledgeScope: { kind: 'none' as const },
       title: 'General chat',
       sortOrder: 1,
+      turns: [],
       messages: [],
       revision: 4,
       createdAt: 1,
@@ -2802,6 +2841,7 @@ describe('business IPC', () => {
         knowledgeScope: { kind: 'none' as const },
         title: 'General chat',
         sortOrder: 1,
+        turns: [],
         messages: [],
         revision: 1,
         createdAt: 1,
@@ -4138,6 +4178,7 @@ function createHandlers(): BusinessHandlers {
     listRecentConversations: handler(),
     listWorkspaceConversations: handler(),
     getConversation: handler(),
+    listConversationTurns: handler(),
     getConversationContextDiagnostics: handler(),
     searchConversationTranscript: handler(),
     renameConversation: handler(),

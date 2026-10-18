@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.browser.create",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Create browser",
   "description": "Create a visible isolated local Chromium profile. Returns sessionId and profileId.",
   "tags": [

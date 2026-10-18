@@ -57,9 +57,7 @@ describe('RuntimeFilteredToolProjectionStore', () => {
                 dependencyRevision: 'libreoffice:missing'
               }
             ]
-          ]),
-        getUnavailableToolIds: async () =>
-          new Set(['builtin.office.import_legacy'])
+          ])
       }
     })
 
@@ -122,9 +120,7 @@ describe('RuntimeFilteredToolProjectionStore', () => {
                     dependencyRevision: 'libreoffice:missing'
                   }
             ]
-          ]),
-        getUnavailableToolIds: async () =>
-          ready ? new Set() : new Set(['builtin.office.import_legacy'])
+          ])
       },
       audit: {
         recordEligibilityChange: async (event) => {
@@ -197,7 +193,7 @@ describe('RuntimeFilteredToolProjectionStore', () => {
     ]
     const filtered = new RuntimeFilteredToolProjectionStore({
       source: projectionStore(catalog),
-      availability: { getUnavailableToolIds: async () => new Set() }
+      availability: { getEligibilitySnapshot: async () => new Map() }
     })
 
     const result = await filtered.getCatalog()
@@ -276,7 +272,7 @@ describe('RuntimeFilteredToolProjectionStore', () => {
     ]
     const filtered = new RuntimeFilteredToolProjectionStore({
       source: projectionStore(catalog),
-      availability: { getUnavailableToolIds: async () => new Set() }
+      availability: { getEligibilitySnapshot: async () => new Map() }
     })
 
     const result = await filtered.getCatalog()
@@ -292,50 +288,55 @@ describe('RuntimeFilteredToolProjectionStore', () => {
   it('passes the current Catalog to runtime availability before annotating provider-backed Tools', async () => {
     const catalog = await catalogFixture()
     const source = projectionStore(catalog)
-    const getUnavailableToolIds = vi.fn(async (currentCatalog?: typeof catalog) =>
+    const getEligibilitySnapshot = vi.fn(async (currentCatalog?: typeof catalog) =>
       currentCatalog?.tools.some(({ id }) => id === 'builtin.web.search')
-        ? new Set(['builtin.web.search'])
-        : new Set<string>()
+        ? new Map([
+            [
+              'builtin.web.search',
+              {
+                status: 'unavailable' as const,
+                reasonCode: 'web_search_disabled',
+                checkedAt: 1_000,
+                expiresAt: 31_000,
+                dependencyRevision: 'web-provider:1'
+              }
+            ]
+          ])
+        : new Map()
     )
     const filtered = new RuntimeFilteredToolProjectionStore({
       source,
-      availability: { getUnavailableToolIds }
+      availability: { getEligibilitySnapshot }
     })
 
     const result = await filtered.getCatalog()
 
-    expect(getUnavailableToolIds).toHaveBeenCalledWith(catalog)
+    expect(getEligibilitySnapshot).toHaveBeenCalledWith(catalog)
     expect(result.tools.find(({ id }) => id === 'builtin.web.search'))
       .toMatchObject({
         status: 'unavailable',
         runtimeEligibility: {
           status: 'unavailable',
-          reasonCode: 'runtime_dependency_unavailable',
-          dependencyRevision: 'legacy'
+          reasonCode: 'web_search_disabled',
+          dependencyRevision: 'web-provider:1'
         }
       })
     expect(result.tools.some(({ id }) => id === 'builtin.web.fetch'))
       .toBe(true)
   })
 
-  it('delegates projection writes and execution reads unchanged', async () => {
+  it('delegates catalog projection writes unchanged', async () => {
     const source = projectionStore(await catalogFixture())
     const filtered = new RuntimeFilteredToolProjectionStore({
       source,
-      availability: { getUnavailableToolIds: async () => new Set() }
+      availability: { getEligibilitySnapshot: async () => new Map() }
     })
-    const batch = { states: [], globalPosition: 2, at: 3 }
-
-    await filtered.commitExecutionBatch(batch)
-    await filtered.replaceExecutionProjection(batch)
     await filtered.commitCatalogProjection({
       state: await source.getCatalog(),
       globalPosition: 4,
       at: 5
     })
 
-    expect(source.commitExecutionBatch).toHaveBeenCalledWith(batch)
-    expect(source.replaceExecutionProjection).toHaveBeenCalledWith(batch)
     expect(source.commitCatalogProjection).toHaveBeenCalledOnce()
   })
 })
@@ -380,14 +381,6 @@ async function catalogFixture(): Promise<ToolCatalogState> {
 function projectionStore(catalog: ToolCatalogState): ToolProjectionStore {
   return {
     getCatalog: vi.fn(async () => catalog),
-    getExecution: vi.fn(),
-    getPermission: vi.fn(),
-    listPendingPermissions: vi.fn().mockResolvedValue([]),
-    getCheckpoint: vi.fn(),
-    commitExecutionBatch: vi.fn(),
-    replaceExecutionProjection: vi.fn(),
-    commitPermissionBatch: vi.fn(),
-    replacePermissionProjection: vi.fn(),
     commitCatalogProjection: vi.fn(),
     replaceCatalogProjection: vi.fn()
   }

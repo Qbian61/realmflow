@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.image.ocr",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Recognize image text",
   "description": "Run local OCR or an explicitly authorized model vision fallback.",
   "tags": [

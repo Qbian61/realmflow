@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.spreadsheet.insert_rows",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Insert spreadsheet rows",
   "description": "Insert structural rows without overwriting existing cells.",
   "tags": [

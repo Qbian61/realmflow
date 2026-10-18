@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type {
   LegacyOfficeConversionInput,
   LegacyOfficeConversionResult
-} from '../../sidecar/client'
+} from './private-python-worker-client'
 import {
   LegacyOfficeImportError,
   LegacyOfficeImportService,

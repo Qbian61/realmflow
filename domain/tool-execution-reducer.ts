@@ -9,7 +9,6 @@ import {
   type JsonObject
 } from './tool-protocol-validation'
 import type { ToolDomainEvent } from './tool-domain-event'
-import { upcastToolDomainEvent } from './tool-event-upcaster'
 
 export type ToolExecutionStatus =
   | 'requested'
@@ -95,10 +94,11 @@ export function replayToolExecution(
   }
   let state: ToolExecutionState | undefined
   for (const rawEvent of events) {
-    const event = upcastToolDomainEvent(rawEvent)
-    if (event.streamType !== 'tool_execution') {
+    if (rawEvent.streamType !== 'tool_execution') {
       throw new Error('Tool execution stream type is invalid')
     }
+    assertCurrentEventSchemaVersion(rawEvent)
+    const event = rawEvent
     if (event.sequence !== (state?.revision ?? 0) + 1) {
       throw new Error('Tool execution event sequence is not continuous')
     }
@@ -108,6 +108,14 @@ export function replayToolExecution(
     state = reduceToolExecutionEvent(state, event)
   }
   return state!
+}
+
+function assertCurrentEventSchemaVersion(event: ToolDomainEvent): void {
+  const currentVersion =
+    event.eventType === 'tool.progress_reported' ? 2 : 1
+  if (event.eventSchemaVersion !== currentVersion) {
+    throw new Error('Tool execution event schema version is not current')
+  }
 }
 
 export function reduceToolExecutionEvent(

@@ -48,6 +48,7 @@ import {
   type EffectiveModelCandidate,
   type EffectiveModelSelection
 } from '../../../domain/model-selection'
+import type { JsonObject } from '../../../domain/tool-protocol-validation'
 import type {
   ModelAvailabilityCheckRepository,
   ModelAvailabilityProbe,
@@ -649,17 +650,11 @@ export class ModelService {
         const restoredProfiles: RevisionedModelProfile[] = []
         const restoredProfileIds = new Set<string>()
         for (const profile of profiles) {
-          const deletedProfile =
-            deletedProfiles.find(
-              (candidate) =>
-                candidate.id === profile.id &&
-                !restoredProfileIds.has(candidate.id)
-            ) ??
-            deletedProfiles.find(
-              (candidate) =>
-                candidate.modelId === profile.modelId &&
-                !restoredProfileIds.has(candidate.id)
-            )
+          const deletedProfile = deletedProfiles.find(
+            (candidate) =>
+              candidate.id === profile.id &&
+              !restoredProfileIds.has(candidate.id)
+          )
           if (deletedProfile) restoredProfileIds.add(deletedProfile.id)
           const profileResult = deletedProfile
             ? await this.dependencies.modelPool.restoreProfile(
@@ -842,11 +837,15 @@ export class ModelService {
         const currentProfiles = (
           await this.dependencies.modelPool.listProfiles()
         ).filter((profile) => profile.providerId === providerId)
-        const currentByModelId = new Map(
-          currentProfiles.map((profile) => [
-            profile.catalogModelId ?? profile.modelId,
-            profile
-          ])
+        const currentByCatalogModelId = new Map(
+          currentProfiles
+            .filter(
+              (profile) =>
+                profile.source === 'catalog' &&
+                profile.catalogProviderId === definition.id &&
+                profile.catalogModelId
+            )
+            .map((profile) => [profile.catalogModelId!, profile])
         )
         const activeModelIds = new Set(
           definition.models.map((model) => model.id)
@@ -860,7 +859,7 @@ export class ModelService {
           const target = normalizeProfile(
             createCatalogModelProfile(definition, model)
           )
-          const current = currentByModelId.get(model.id)
+          const current = currentByCatalogModelId.get(model.id)
           if (!current) {
             const result =
               await this.dependencies.modelPool.saveProfile(target, 0)
@@ -1021,35 +1020,28 @@ export class ModelService {
             this.dependencies.modelPool.getProfileReferences(profile.id)
           )
         )
-        if (
-          referenceSummaries.some((references) =>
-            [
-              references.workflowCount,
-              references.runCount,
-              references.conversationCount
-            ].some((count) => count > 0)
-          )
-        ) {
+        const references = referenceSummaries.reduce(
+          (total, references) => ({
+            workflowCount:
+              total.workflowCount + references.workflowCount,
+            runCount: total.runCount + references.runCount,
+            conversationCount:
+              total.conversationCount + references.conversationCount,
+            metricCount: total.metricCount + references.metricCount
+          }),
+          {
+            workflowCount: 0,
+            runCount: 0,
+            conversationCount: 0,
+            metricCount: 0
+          }
+        )
+        if (references.workflowCount > 0 || references.runCount > 0) {
           return {
             outcome: 'referenced',
             provider: current,
             profileCount,
-            references: referenceSummaries.reduce(
-              (total, references) => ({
-                workflowCount:
-                  total.workflowCount + references.workflowCount,
-                runCount: total.runCount + references.runCount,
-                conversationCount:
-                  total.conversationCount + references.conversationCount,
-                metricCount: total.metricCount + references.metricCount
-              }),
-              {
-                workflowCount: 0,
-                runCount: 0,
-                conversationCount: 0,
-                metricCount: 0
-              }
-            )
+            references
           }
         }
       }
@@ -1067,6 +1059,10 @@ export class ModelService {
           ? { outcome: 'conflict', provider: latest }
           : { outcome: 'not_found', providerId }
       }
+      await this.dependencies.modelPool.clearConversationModelProfileReferences(
+        profiles.map((profile) => profile.id),
+        deletedAt
+      )
       await this.dependencies.credentials.deleteByProvider(providerId)
       for (const profile of profiles) {
         await this.appendProfileEvent(
@@ -1601,6 +1597,23 @@ export class ModelService {
     }
   }
 
+  async resolveProviderCredentialMaterial(
+    providerId: string
+  ): Promise<JsonObject> {
+    const providers = await this.dependencies.modelPool.listProviders()
+    const provider = providers.find((candidate) => candidate.id === providerId)
+    if (!provider?.enabled) {
+      throw new Error(`Enabled model provider not found: ${providerId}`)
+    }
+    const secrets = await this.resolveProviderSecrets(provider)
+    return {
+      ...(secrets.apiKey ? { apiKey: secrets.apiKey } : {}),
+      ...(Object.keys(secrets.customHeaders).length > 0
+        ? { customHeaders: secrets.customHeaders }
+        : {})
+    }
+  }
+
   async recordCall(input: RecordModelCallInput): Promise<ModelCallMetric> {
     validateModelCallAttribution(input)
     const profiles = await this.dependencies.modelPool.listProfiles()
@@ -1642,9 +1655,6 @@ function validateModelCallAttribution(input: RecordModelCallInput): void {
     }
   }
   switch (input.source) {
-    case 'workflow_stage':
-      requireDimension(input.requirementId, 'Requirement ID')
-      break
     case 'workflow_node':
       requireDimension(input.requirementId, 'Requirement ID')
       requireDimension(input.nodeId, 'Node ID')

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.presentation.update_size",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Update presentation size",
   "description": "Update presentation page dimensions.",
   "tags": [

@@ -5,6 +5,10 @@ import type {
   WorkflowNodeConfiguration
 } from '../../../../domain/workflow'
 import {
+  isRequirementStageId,
+  type RequirementStageId
+} from '../../../../domain/requirement'
+import {
   ModelRoutingError,
   type ModelRouteRequest,
   type ModelRouteResult
@@ -22,6 +26,7 @@ type Dependencies = {
   generate: {
     execute: (input: {
       requirementId: string
+      stageId: RequirementStageId
       nodeId: string
       nodeRunId: string
       executor: AiGenerateExecutorConfig
@@ -94,6 +99,7 @@ export class ExecuteWorkflowNodeUseCase {
     try {
       generated = await this.dependencies.generate.execute({
         requirementId: input.requirementId,
+        stageId: stageIdForNode(node),
         nodeId: input.nodeId,
         nodeRunId: input.nodeRunId,
         executor,
@@ -237,6 +243,16 @@ export function isWorkflowNodeExecutable(
         node.executor
       )
   )
+}
+
+function stageIdForNode(node: RequirementNode): RequirementStageId {
+  const idCandidate = node.id.slice(node.id.lastIndexOf(':') + 1)
+  if (isRequirementStageId(idCandidate)) return idCandidate
+  const artifactPath =
+    node.executor?.artifact.relativePath ?? node.configuration?.artifact.relativePath
+  const artifactCandidate = artifactPath?.match(/^artifacts\/([^/.]+)/)?.[1]
+  if (isRequirementStageId(artifactCandidate)) return artifactCandidate
+  return 'implementation'
 }
 
 function routeRequest(

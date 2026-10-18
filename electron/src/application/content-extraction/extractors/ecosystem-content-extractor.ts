@@ -10,13 +10,15 @@ import {
   classifyExtractableContent,
   createEmailAttachmentUnitKey,
   createEpubSpineUnitKey,
+  createSheetUnitKey,
+  createSlideUnitKey,
   type ExtractedContentBundle,
   type ExtractedContentUnit
 } from '../../../../../domain/content-extraction'
 import type {
   LegacyOfficeFormat,
   ModernOfficeFormat
-} from '../../../sidecar/client'
+} from '../../files/private-python-worker-client'
 import type {
   ContentExtractionInput,
   LocalContentExtractionService,
@@ -41,7 +43,7 @@ export class EcosystemContentExtractor implements LocalContentExtractor {
   readonly formats = [
     'odt', 'ods', 'odp', 'rtf', 'eml', 'mbox', 'msg', 'mhtml', 'mht', 'epub'
   ] as const
-  readonly version = 'ecosystem-content-v1'
+  readonly version = 'ecosystem-content-v2'
   private readonly parseMsg: (bytes: Uint8Array) => Promise<ParsedMessage>
 
   constructor(
@@ -66,7 +68,7 @@ export class EcosystemContentExtractor implements LocalContentExtractor {
   ): Promise<ExtractedContentBundle> {
     const format = extension(input.fileName)
     if (format === 'odt' || format === 'ods' || format === 'odp' || format === 'rtf') {
-      return this.extractConverted(input, format)
+      return this.extractNativeFirst(input, format)
     }
     if (format === 'epub') return extractEpub(input, this.version)
     if (format === 'msg') {
@@ -77,6 +79,21 @@ export class EcosystemContentExtractor implements LocalContentExtractor {
         ? await Promise.all(splitMbox(input.bytes).map(parseMimeMessage))
         : [await parseMimeMessage(input.bytes)]
     return this.extractMessages(input, messages)
+  }
+
+  private async extractNativeFirst(
+    input: ContentExtractionInput,
+    sourceFormat: 'odt' | 'ods' | 'odp' | 'rtf'
+  ): Promise<ExtractedContentBundle> {
+    try {
+      return sourceFormat === 'rtf'
+        ? extractRtf(input, this.version)
+        : await extractOpenDocument(input, sourceFormat, this.version)
+    } catch (error) {
+      if (!shouldFallbackToConversion(error)) throw error
+      if (!input.policy.allowLocalConversion) throw error
+      return this.extractConverted(input, sourceFormat)
+    }
   }
 
   private async extractConverted(
@@ -367,6 +384,348 @@ function messageText(message: ParsedMessage): string {
     .join('\n')
 }
 
+async function extractOpenDocument(
+  input: ContentExtractionInput,
+  format: 'odt' | 'ods' | 'odp',
+  version: string
+): Promise<ExtractedContentBundle> {
+  try {
+    const archive = await JSZip.loadAsync(input.bytes, {
+      checkCRC32: true,
+      createFolders: false
+    })
+    const xmlText = await requireZipText(archive, 'content.xml')
+    const xml = new XMLParser({
+      ignoreAttributes: false,
+      attributeNamePrefix: '@_',
+      preserveOrder: true,
+      removeNSPrefix: false,
+      trimValues: false
+    })
+    const root = xml.parse(xmlText) as unknown[]
+    const units =
+      format === 'ods'
+        ? extractOpenDocumentSheets(root, format)
+        : format === 'odp'
+          ? extractOpenDocumentSlides(root, format)
+          : [
+              unit({
+                key: 'content',
+                title: baseTitle(input.fileName),
+                text: extractXmlText(root),
+                format,
+                extraction: 'opendocument_native'
+              })
+            ]
+    const readable = units.filter((item) => item.text.trim())
+    if (readable.length === 0) throw empty()
+    return {
+      sourceChecksum: input.sourceChecksum,
+      format,
+      extractorVersion: version,
+      units: readable
+    }
+  } catch (error) {
+    if (error instanceof ContentExtractionError) throw error
+    throw new ContentExtractionError(
+      'extraction_invalid',
+      'OpenDocument content could not be parsed'
+    )
+  }
+}
+
+function extractOpenDocumentSheets(
+  root: unknown[],
+  format: 'ods'
+): ExtractedContentUnit[] {
+  const usedKeys = new Set<string>()
+  return findElements(root, 'table')
+    .map((table, index) => {
+      const sheet = attribute(table, 'table:name') || `Sheet ${index + 1}`
+      const rows = childElements(table, 'table-row')
+        .map((row) =>
+          childElements(row, 'table-cell')
+            .map((cell) => extractXmlText(cell.children))
+            .map(escapeCell)
+            .join('\t')
+            .replace(/\t+$/g, '')
+        )
+        .filter((row) => row.trim())
+      if (rows.length === 0) return undefined
+      let key = createSheetUnitKey(sheet)
+      if (usedKeys.has(key)) key = `${key}-${index + 1}`
+      usedKeys.add(key)
+      return unit({
+        key,
+        title: sheet,
+        text: rows.join('\n'),
+        format,
+        extraction: 'opendocument_native',
+        sheet
+      })
+    })
+    .filter((item): item is ExtractedContentUnit => item !== undefined)
+}
+
+function extractOpenDocumentSlides(
+  root: unknown[],
+  format: 'odp'
+): ExtractedContentUnit[] {
+  return findElements(root, 'page')
+    .map((page, index) => {
+      const slide = index + 1
+      const text = extractXmlText(page.children)
+      if (!text.trim()) return undefined
+      return unit({
+        key: createSlideUnitKey(slide),
+        title: attribute(page, 'draw:name') || `Slide ${slide}`,
+        text,
+        format,
+        extraction: 'opendocument_native',
+        slide
+      })
+    })
+    .filter((item): item is ExtractedContentUnit => item !== undefined)
+}
+
+function extractRtf(
+  input: ContentExtractionInput,
+  version: string
+): ExtractedContentBundle {
+  const text = parseRtfText(Buffer.from(input.bytes).toString('latin1'))
+  if (!text.trim()) throw empty()
+  return {
+    sourceChecksum: input.sourceChecksum,
+    format: 'rtf',
+    extractorVersion: version,
+    units: [
+      unit({
+        key: 'content',
+        title: baseTitle(input.fileName),
+        text,
+        format: 'rtf',
+        extraction: 'rtf_native'
+      })
+    ]
+  }
+}
+
+type XmlElement = {
+  name: string
+  children: unknown[]
+  attributes: Record<string, unknown>
+}
+
+function findElements(nodes: unknown[], localName: string): XmlElement[] {
+  const result: XmlElement[] = []
+  const visit = (value: unknown): void => {
+    const element = xmlElement(value)
+    if (!element) return
+    if (xmlLocalName(element.name) === localName) result.push(element)
+    for (const child of element.children) visit(child)
+  }
+  for (const node of nodes) visit(node)
+  return result
+}
+
+function childElements(parent: XmlElement, localName: string): XmlElement[] {
+  return parent.children
+    .map(xmlElement)
+    .filter(
+      (child): child is XmlElement =>
+        child !== undefined && xmlLocalName(child.name) === localName
+    )
+}
+
+function extractXmlText(nodes: unknown[]): string {
+  const chunks: string[] = []
+  const visit = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      value.forEach(visit)
+      return
+    }
+    const recordValue = record(value)
+    if (!recordValue) return
+    const text = recordValue['#text']
+    if (typeof text === 'string') chunks.push(text)
+    const element = xmlElement(value)
+    if (!element) return
+    const localName = xmlLocalName(element.name)
+    if (localName === 'line-break') chunks.push('\n')
+    if (localName === 'tab') chunks.push('\t')
+    for (const child of element.children) visit(child)
+    if (
+      localName === 'p' ||
+      localName === 'h' ||
+      localName === 'list-item' ||
+      localName === 'table-row' ||
+      localName === 'page'
+    ) {
+      chunks.push('\n')
+    }
+  }
+  nodes.forEach(visit)
+  return normalizePlainText(chunks.join(''))
+}
+
+function xmlElement(value: unknown): XmlElement | undefined {
+  const object = record(value)
+  if (!object) return undefined
+  const name = Object.keys(object).find(
+    (key) => key !== ':@' && key !== '#text'
+  )
+  if (!name) return undefined
+  const children = object[name]
+  return {
+    name,
+    children: Array.isArray(children) ? children : [],
+    attributes: record(object[':@']) ?? {}
+  }
+}
+
+function attribute(element: XmlElement, name: string): string {
+  const direct = element.attributes[`@_${name}`]
+  if (typeof direct === 'string') return direct.trim()
+  const suffix = name.split(':').at(-1)
+  const value = Object.entries(element.attributes).find(([key]) =>
+    suffix ? key.endsWith(`:${suffix}`) || key.endsWith(`_${suffix}`) : false
+  )?.[1]
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function xmlLocalName(name: string): string {
+  return name.split(':').at(-1) ?? name
+}
+
+function parseRtfText(source: string): string {
+  type RtfState = { ignorable: boolean; ucSkip: number }
+  let state: RtfState = { ignorable: false, ucSkip: 1 }
+  const stack: RtfState[] = []
+  let output = ''
+  let skipFallback = 0
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index]
+    if (char === '{') {
+      stack.push({ ...state })
+      continue
+    }
+    if (char === '}') {
+      state = stack.pop() ?? state
+      continue
+    }
+    if (char !== '\\') {
+      if (skipFallback > 0) {
+        skipFallback -= 1
+        continue
+      }
+      if (!state.ignorable) output += char
+      continue
+    }
+    const next = source[index + 1]
+    if (next === '\\' || next === '{' || next === '}') {
+      if (!state.ignorable) output += next
+      index += 1
+      continue
+    }
+    if (next === '\'') {
+      const hex = source.slice(index + 2, index + 4)
+      if (/^[0-9a-f]{2}$/i.test(hex) && !state.ignorable) {
+        output += String.fromCharCode(Number.parseInt(hex, 16))
+      }
+      index += 3
+      continue
+    }
+    if (next === '*') {
+      state = { ...state, ignorable: true }
+      index += 1
+      continue
+    }
+    const match = /^([a-zA-Z]+)(-?\d+)? ?/.exec(source.slice(index + 1))
+    if (!match) {
+      index += 1
+      continue
+    }
+    const word = match[1]!
+    const parameter =
+      match[2] === undefined ? undefined : Number.parseInt(match[2], 10)
+    handleRtfControl(word, parameter, {
+      state,
+      setState: (nextState) => {
+        state = nextState
+      },
+      append: (value) => {
+        if (!state.ignorable) output += value
+      },
+      setSkipFallback: (value) => {
+        skipFallback = value
+      }
+    })
+    index += match[0].length
+  }
+  return normalizePlainText(output)
+}
+
+function handleRtfControl(
+  word: string,
+  parameter: number | undefined,
+  actions: {
+    state: { ignorable: boolean; ucSkip: number }
+    setState(value: { ignorable: boolean; ucSkip: number }): void
+    append(value: string): void
+    setSkipFallback(value: number): void
+  }
+): void {
+  if (IGNORED_RTF_DESTINATIONS.has(word)) {
+    actions.setState({ ...actions.state, ignorable: true })
+    return
+  }
+  if (word === 'uc' && parameter !== undefined) {
+    actions.setState({
+      ...actions.state,
+      ucSkip: Math.max(0, parameter)
+    })
+    return
+  }
+  if (word === 'u' && parameter !== undefined) {
+    const code = parameter < 0 ? parameter + 65536 : parameter
+    actions.append(String.fromCharCode(code))
+    actions.setSkipFallback(actions.state.ucSkip)
+    return
+  }
+  if (word === 'par' || word === 'line') actions.append('\n')
+  else if (word === 'tab') actions.append('\t')
+  else if (word === 'emdash') actions.append('-')
+  else if (word === 'endash') actions.append('-')
+  else if (word === 'bullet') actions.append('*')
+}
+
+const IGNORED_RTF_DESTINATIONS = new Set([
+  'annotation',
+  'colortbl',
+  'datafield',
+  'datastore',
+  'field',
+  'fldinst',
+  'fonttbl',
+  'footer',
+  'footerf',
+  'footerl',
+  'footerr',
+  'footnote',
+  'generator',
+  'header',
+  'headerf',
+  'headerl',
+  'headerr',
+  'info',
+  'listoverridetable',
+  'listtable',
+  'object',
+  'pict',
+  'stylesheet',
+  'themedata'
+])
+
 type HtmlNode = {
   nodeName?: string
   tagName?: string
@@ -428,6 +787,8 @@ function unit(input: {
   text: string
   format: string
   extraction: string
+  sheet?: string
+  slide?: number
 }): ExtractedContentUnit {
   const bytes = new TextEncoder().encode(input.text)
   return {
@@ -438,9 +799,33 @@ function unit(input: {
     byteSize: bytes.byteLength,
     metadata: {
       format: input.format,
-      extraction: input.extraction
+      extraction: input.extraction,
+      ...(input.sheet ? { sheet: input.sheet } : {}),
+      ...(input.slide ? { slide: input.slide } : {})
     }
   }
+}
+
+function escapeCell(value: string): string {
+  return value
+    .replace(/\r\n?/g, '\n')
+    .replace(/\n/g, '\\n')
+    .replace(/\t/g, '\\t')
+}
+
+function normalizePlainText(value: string): string {
+  return value
+    .replace(/\r\n?/g, '\n')
+    .replace(/\u00a0/g, ' ')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n[ \t]+/g, '\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+function baseTitle(fileName: string): string {
+  return fileName.split(/[/\\]/).at(-1) || fileName
 }
 
 function extension(fileName: string): string {
@@ -479,6 +864,13 @@ function conversionError(
   return new ContentExtractionError(
     'extraction_invalid',
     'Ecosystem conversion failed'
+  )
+}
+
+function shouldFallbackToConversion(error: unknown): boolean {
+  return (
+    error instanceof ContentExtractionError &&
+    (error.code === 'extraction_invalid' || error.code === 'extraction_empty')
   )
 }
 

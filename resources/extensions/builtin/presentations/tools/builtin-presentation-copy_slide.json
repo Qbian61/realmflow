@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.presentation.copy_slide",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Copy presentation slide",
   "description": "Copy a slide and its local relationships.",
   "tags": [

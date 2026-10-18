@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.pdf.merge",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "name": "Merge PDF",
   "description": "Append pages from authorized PDF files.",
   "tags": [

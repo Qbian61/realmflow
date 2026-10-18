@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.skill.technical_design",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "name": "Technical design",
   "description": "Design architecture, protocols, data models, migration, and priorities.",
   "instructionsPath": "instructions/technical_design.md",

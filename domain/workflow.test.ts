@@ -185,12 +185,12 @@ describe('requirement workflow', () => {
           },
           executor: {
             kind: 'ai_generate' as const,
-            prompt: 'Legacy prompt',
+            prompt: 'Initial prompt',
             artifact: {
-              relativePath: 'legacy.md',
+              relativePath: 'initial.md',
               kind: 'markdown'
             },
-            context: { attachments: ['legacy.txt'] }
+            context: { attachments: ['initial.txt'] }
           },
           completionGate: {
             requireApproval: true,
@@ -221,7 +221,7 @@ describe('requirement workflow', () => {
       todos: [{ title: 'Review sources' }]
     })
     expect(instance.nodes[0].executor?.context?.attachments).toEqual([
-      'legacy.txt'
+      'initial.txt'
     ])
     expect(instance.nodes[0].completionGate?.customGateId).toBe('gate-1')
     expect(instance.edges).toEqual([])

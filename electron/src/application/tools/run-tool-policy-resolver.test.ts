@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { createAgentRunSnapshot } from '../../../../domain/agent-runtime'
 import { ToolPolicyEngine } from './tool-policy-engine'
 import { RunToolPolicyResolver } from './run-tool-policy-resolver'
-import type { ToolExecutionCommand } from './tool-execution-application-service'
+import type { ToolExecutionCommand } from './tool-execution-contract'
 
 const policy = new ToolPolicyEngine().resolve([], { providerId: 'provider', layers: [{ allow: [] }] })
 const snapshotInput = {

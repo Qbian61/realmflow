@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.image.resize",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Resize image",
   "description": "Resize an image to bounded dimensions.",
   "tags": [

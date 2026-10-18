@@ -94,6 +94,58 @@ describe('authorizeToolEffects', () => {
     })
   })
 
+  it('requests folder-scoped process approval for local folder conversations', () => {
+    expect(
+      authorizeToolEffects({
+        effects: [
+          {
+            kind: 'process.execute',
+            executableDigest: 'a'.repeat(64),
+            executableDisplayName: 'python3',
+            argsFingerprint: 'b'.repeat(64),
+            workingDirectory: '/workspace'
+          }
+        ],
+        risk: 'high',
+        context: {
+          sessionId: 'conversation-folder',
+          folderSessionId: 'conversation-folder'
+        },
+        appSessionId: 'conversation-folder',
+        boundScopes: [
+          {
+            ...activeScope,
+            source: {
+              kind: 'folder',
+              folderSessionId: 'conversation-folder'
+            }
+          }
+        ],
+        explicitGrants: [],
+        approvalProfile: 'protected'
+      })
+    ).toMatchObject({
+      outcome: 'ask',
+      reason: 'process',
+      requests: [
+        {
+          capability: 'process.execute',
+          resource: {
+            kind: 'process',
+            workingDirectoryScope: {
+              kind: 'folder',
+              folderSessionId: 'conversation-folder'
+            }
+          },
+          context: {
+            sessionId: 'conversation-folder',
+            folderSessionId: 'conversation-folder'
+          }
+        }
+      ]
+    })
+  })
+
   it('authorizes owner-scoped managed process inspection without a bound file root', () => {
     expect(
       authorizeToolEffects({

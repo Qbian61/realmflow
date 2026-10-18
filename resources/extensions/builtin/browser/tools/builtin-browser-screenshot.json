@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.browser.screenshot",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Screenshot browser",
   "description": "Save a PNG from the current Run browser in authorized roots without overwrite; mask sensitive fields and embedded frames. Also writes a .realmflow-browser.json provenance sidecar.",
   "tags": [

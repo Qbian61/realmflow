@@ -3,20 +3,23 @@ import { vi } from 'vitest'
 import type {
   BusinessApi,
   ConversationDto,
+  RecentConversationDto,
   RecentConversationListDto
 } from '../../../shared/business'
 import type {
   ChatSessionRepository,
   WorkspaceNavigationRepository
 } from '../../application/ports/repositories'
-import type { ChatSession } from '../../domain/chat-session'
 import type { RecentConversationFilters } from '../../features/sessions/recent-conversation-filters'
 import { useWorkspaceController } from './use-workspace-controller'
 
 type RecentControllerView = {
-  recentSessions: ChatSession[]
+  recentSessions: RecentConversationDto[]
   recentFolderPaths: string[]
   recentFilters: RecentConversationFilters
+  recentTotalCount: number
+  recentSessionsHasMore: boolean
+  loadMoreRecentSessions: () => Promise<void>
   updateRecentFilters: (patch: Partial<RecentConversationFilters>) => void
 }
 
@@ -44,9 +47,50 @@ describe('useWorkspaceController recent conversations', () => {
       expect(business.listRecentConversations).toHaveBeenCalledWith({
         kind: 'general',
         folderPath: '/work/tasks',
-        updatedAfter: expect.any(Number)
+        updatedAfter: expect.any(Number),
+        limit: 50
       })
     )
+  })
+
+  it('appends one cursor page at a time and preserves the total count', async () => {
+    const nextPage = deferred<RecentConversationListDto>()
+    const business = createBusiness()
+    business.listRecentConversations = vi
+      .fn()
+      .mockResolvedValueOnce(
+        recentResult(
+          [conversation('recent-1', 'Recent 1')],
+          [],
+          { totalCount: 2, nextCursor: 'cursor-1' }
+        )
+      )
+      .mockImplementationOnce(() => nextPage.promise)
+
+    render(<RecentHarness business={business} />)
+    expect(await screen.findByTestId('recent')).toHaveTextContent('Recent 1')
+    expect(screen.getByTestId('recent-total')).toHaveTextContent('2|more')
+
+    fireEvent.click(screen.getByRole('button', { name: '加载更多' }))
+    fireEvent.click(screen.getByRole('button', { name: '加载更多' }))
+
+    await waitFor(() =>
+      expect(business.listRecentConversations).toHaveBeenCalledTimes(2)
+    )
+    expect(business.listRecentConversations).toHaveBeenLastCalledWith({
+      cursor: 'cursor-1',
+      limit: 50
+    })
+
+    nextPage.resolve(
+      recentResult([conversation('recent-2', 'Recent 2')], [], {
+        totalCount: 2
+      })
+    )
+    expect(await screen.findByTestId('recent')).toHaveTextContent(
+      'Recent 1,Recent 2'
+    )
+    expect(screen.getByTestId('recent-total')).toHaveTextContent('2|done')
   })
 
   it('keeps only the latest result when filter requests finish out of order', async () => {
@@ -98,13 +142,15 @@ describe('useWorkspaceController recent conversations', () => {
   })
 
   it('does not remove cached conversation details when a filter excludes them', async () => {
+    const initial = conversation('initial', 'Initial')
     const business = createBusiness()
+    business.getConversation = vi.fn(async () => fullConversation(initial))
     business.listRecentConversations = vi
       .fn()
-      .mockResolvedValueOnce(recentResult([conversation('initial', 'Initial')]))
+      .mockResolvedValueOnce(recentResult([initial]))
       .mockResolvedValueOnce(recentResult([]))
 
-    render(<RecentHarness business={business} />)
+    render(<RecentHarness business={business} activeSessionId={initial.id} />)
     expect(await screen.findByTestId('details')).toHaveTextContent('Initial')
 
     fireEvent.click(screen.getByRole('button', { name: '筛选空间' }))
@@ -126,7 +172,7 @@ describe('useWorkspaceController recent conversations', () => {
     )
     const created = conversation('created', 'Committed chat')
     const business = createBusiness()
-    business.createConversation = vi.fn(async () => created)
+    business.createConversation = vi.fn(async () => fullConversation(created))
     business.listRecentConversations = vi
       .fn()
       .mockResolvedValueOnce(recentResult([]))
@@ -142,7 +188,8 @@ describe('useWorkspaceController recent conversations', () => {
       'Committed chat'
     )
     expect(business.listRecentConversations).toHaveBeenLastCalledWith({
-      kind: 'general'
+      kind: 'general',
+      limit: 50
     })
   })
 
@@ -150,7 +197,7 @@ describe('useWorkspaceController recent conversations', () => {
     const original = conversation('conversation-1', 'Original')
     const renamed = { ...original, title: 'Renamed', revision: 2, updatedAt: 2 }
     const business = createBusiness()
-    business.renameConversation = vi.fn(async () => renamed)
+    business.renameConversation = vi.fn(async () => fullConversation(renamed))
     business.listRecentConversations = vi
       .fn()
       .mockResolvedValueOnce(recentResult([original]))
@@ -199,9 +246,11 @@ describe('useWorkspaceController recent conversations', () => {
 
 function RecentHarness({
   business,
+  activeSessionId,
   onOperationNotice
 }: {
   business: BusinessApi
+  activeSessionId?: string
   onOperationNotice?: Parameters<
     typeof useWorkspaceController
   >[0]['onOperationNotice']
@@ -210,6 +259,7 @@ function RecentHarness({
     navigationRepository,
     sessionRepository,
     business,
+    activeSessionId,
     onOperationNotice
   })
   const recent = controller as typeof controller & RecentControllerView
@@ -220,6 +270,10 @@ function RecentHarness({
       </div>
       <div data-testid="details">
         {controller.sessions.map((session) => session.title).join(',')}
+      </div>
+      <div data-testid="recent-total">
+        {recent.recentTotalCount}|
+        {recent.recentSessionsHasMore ? 'more' : 'done'}
       </div>
       <button
         type="button"
@@ -261,6 +315,12 @@ function RecentHarness({
       >
         删除会话
       </button>
+      <button
+        type="button"
+        onClick={() => void recent.loadMoreRecentSessions?.()}
+      >
+        加载更多
+      </button>
       {controller.persistenceIssues.length > 0 ? (
         <div role="status">{controller.persistenceIssues.join(',')}</div>
       ) : null}
@@ -277,22 +337,52 @@ function createBusiness(): BusinessApi {
 }
 
 function recentResult(
-  conversations: ConversationDto[],
-  folderPaths: string[] = []
+  conversations: RecentConversationDto[],
+  folderPaths: string[] = [],
+  page: { totalCount?: number; nextCursor?: string } = {}
 ): RecentConversationListDto {
-  return { conversations, folderPaths }
+  return {
+    conversations,
+    folderPaths,
+    totalCount: page.totalCount ?? conversations.length,
+    ...(page.nextCursor ? { nextCursor: page.nextCursor } : {})
+  }
 }
 
-function conversation(id: string, title: string): ConversationDto {
+function conversation(id: string, title: string): RecentConversationDto {
   return {
     id,
+    approvalProfileId: 'protected',
     kind: 'general',
     title,
     sortOrder: 0,
-    messages: [],
     revision: 1,
+    turnCount: 0,
     createdAt: 1,
     updatedAt: 1
+  }
+}
+
+function fullConversation(
+  conversation: RecentConversationDto
+): ConversationDto {
+  return {
+    id: conversation.id,
+    approvalProfileId: conversation.approvalProfileId,
+    kind: conversation.kind,
+    ...(conversation.workspaceId
+      ? { workspaceId: conversation.workspaceId }
+      : {}),
+    ...(conversation.folderPath
+      ? { folderPath: conversation.folderPath }
+      : {}),
+    title: conversation.title,
+    sortOrder: conversation.sortOrder,
+    turns: [],
+    messages: [],
+    revision: conversation.revision,
+    createdAt: conversation.createdAt,
+    updatedAt: conversation.updatedAt
   }
 }
 

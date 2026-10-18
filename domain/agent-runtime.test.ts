@@ -1,8 +1,10 @@
 import {
   DEFAULT_AGENT_EXECUTION_POLICY,
   AGENT_RUN_HARD_LIMITS,
+  AGENT_RUN_LIFECYCLE_STATUSES,
   AGENT_RUN_SCENARIO_IDS,
   createAgentRunSnapshot,
+  mapDshSessionLifecycleToAgentRunLifecycle,
   resolveAgentRunScenario,
   resolveAgentRunScope,
   transitionAgentRunLifecycle,
@@ -28,6 +30,28 @@ describe('Agent runtime', () => {
       'sensitive',
       'management'
     ])
+  })
+
+  it('preserves product lifecycle names while hiding DSH-only closing state', () => {
+    expect(AGENT_RUN_LIFECYCLE_STATUSES).toEqual([
+      'preparing',
+      'running',
+      'waiting_permission',
+      'waiting_input',
+      'retrying',
+      'paused',
+      'recovery_blocked',
+      'completed',
+      'failed',
+      'cancelled'
+    ])
+    expect(mapDshSessionLifecycleToAgentRunLifecycle('active')).toBe('running')
+    expect(mapDshSessionLifecycleToAgentRunLifecycle('closing')).toBe('running')
+    expect(mapDshSessionLifecycleToAgentRunLifecycle('closed')).toBe('paused')
+    expect(mapDshSessionLifecycleToAgentRunLifecycle('paused')).toBe('paused')
+    expect(mapDshSessionLifecycleToAgentRunLifecycle('cancelled')).toBe('cancelled')
+    expect(mapDshSessionLifecycleToAgentRunLifecycle('failed')).toBe('failed')
+    expect(mapDshSessionLifecycleToAgentRunLifecycle('reset')).toBe('recovery_blocked')
   })
 
   it.each([
@@ -190,6 +214,29 @@ describe('Agent runtime', () => {
     expect(
       Object.isFrozen(snapshot.budgetLedger.deterministicFailureFingerprints)
     ).toBe(true)
+  })
+
+  it('captures selected Connector and MCP references in the immutable run snapshot', () => {
+    const snapshot = createAgentRunSnapshot(
+      {
+        conversationId: 'conversation-connectors',
+        messages: [],
+        connectorBindings: [
+          { service: 'http', connectorId: 'connector.tc-p1-local' }
+        ],
+        mcpServerIds: ['mcp.tc-p1-local']
+      },
+      snapshotInput('connector-run')
+    )
+
+    expect(snapshot).toMatchObject({
+      connectorBindings: [
+        { service: 'http', connectorId: 'connector.tc-p1-local' }
+      ],
+      mcpServerIds: ['mcp.tc-p1-local']
+    })
+    expect(Object.isFrozen(snapshot.connectorBindings)).toBe(true)
+    expect(Object.isFrozen(snapshot.mcpServerIds)).toBe(true)
   })
 
   it('fixes root and child delegation lineage in immutable snapshots', () => {

@@ -29,7 +29,7 @@ const DEFAULT_OPTIONS: ErrorEnvelopeOptions = {
 
 const DIAGNOSTIC_ID = /^toolerr_[a-f0-9]{16}$/
 const SAFE_ERROR_CODE =
-  /^(?:tool|file|image|archive|artifact|document|fixed_layout|office|legacy_office|word|spreadsheet|presentation|pdf|process|web|browser|git|runtime|skill|connector|mcp|sandbox|permission|directory|direct|definition|arguments|binding|output)_[a-z0-9_]+$/
+  /^(?:tool|file|image|archive|artifact|document|fixed_layout|office|legacy_office|word|spreadsheet|presentation|pdf|process|web|browser|computer|git|runtime|skill|connector|mcp|sandbox|permission|directory|direct|definition|arguments|binding|output)_[a-z0-9_]+$/
 const ABSOLUTE_PATH = /(?:\/Users|\/home|\/tmp|[A-Za-z]:\\)[^\s"',}]*/g
 const URL = /\bhttps?:\/\/[^\s"',}]+/gi
 const INLINE_SECRET =
@@ -157,6 +157,27 @@ function descriptorFor(code: string, rawMessage: string): ErrorDescriptor {
       publicMessage: 'Web configuration changed; request authorization again',
       category: 'conflict',
       recoveryHint: 'Request authorization again with the current web provider settings.',
+      retryable: false
+    }
+  }
+  if (code === 'computer_accessibility_permission_required') {
+    return {
+      publicMessage: 'Computer Use Accessibility permission is required',
+      category: 'unavailable',
+      retryable: false
+    }
+  }
+  if (code === 'computer_screen_recording_permission_required') {
+    return {
+      publicMessage: 'Computer Use Screen Recording permission is required',
+      category: 'unavailable',
+      retryable: false
+    }
+  }
+  if (code === 'computer_application_not_authorized') {
+    return {
+      publicMessage: 'Target application is not authorized for Computer Use',
+      category: 'scope',
       retryable: false
     }
   }

@@ -8,6 +8,7 @@ const session = {
   kind: "general" as const,
   title: "产品讨论",
   spacePath: "",
+  turns: [],
   messages: [],
   createdAt: 1,
   updatedAt: 2,

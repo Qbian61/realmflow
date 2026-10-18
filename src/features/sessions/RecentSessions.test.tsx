@@ -8,7 +8,7 @@ import {
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, vi } from "vitest";
-import type { ChatSession } from "../../domain/chat-session";
+import type { RecentConversationDto } from "../../../shared/business";
 import type { WorkspaceSpace } from "../../domain/workspace";
 import { LocalizationProvider } from "../../localization/LocalizationProvider";
 import type { RecentConversationFilters } from "./recent-conversation-filters";
@@ -24,14 +24,16 @@ const spaces: WorkspaceSpace[] = [
   },
 ];
 
-const sessions: ChatSession[] = [
+const sessions: RecentConversationDto[] = [
   {
     id: "conversation-1",
+    approvalProfileId: "protected",
     kind: "space",
     workspaceId: "space-1",
     title: "产品讨论",
-    spacePath: "/spaces/space-1",
-    messages: [],
+    sortOrder: 0,
+    revision: 1,
+    turnCount: 0,
     createdAt: 1,
     updatedAt: 2,
   },
@@ -91,7 +93,10 @@ describe("RecentSessions", () => {
             filters={{ ...defaultFilters, kind: "general" }}
             open
             loading={false}
+            totalCount={sessions.length}
+            hasMore={false}
             onToggle={vi.fn()}
+            onLoadMore={vi.fn()}
             onFilterChange={onFilterChange}
             onRename={vi.fn()}
             onDelete={vi.fn()}
@@ -144,7 +149,10 @@ describe("RecentSessions", () => {
             filters={{ ...defaultFilters, timeRange: "day" }}
             open
             loading={false}
+            totalCount={0}
+            hasMore={false}
             onToggle={vi.fn()}
+            onLoadMore={vi.fn()}
             onFilterChange={vi.fn()}
             onRename={vi.fn()}
             onDelete={vi.fn()}
@@ -254,20 +262,35 @@ describe("RecentSessions", () => {
     expect(within(preview).queryByText("RealmFlow 产品")).toBeNull();
   });
 
-  it("paginates recent sessions before creating link DOM", () => {
+  it("loads the next cursor page near the scroll bottom without pagination controls", async () => {
+    const onLoadMore = vi.fn().mockResolvedValue(undefined);
     renderRecentSessions({
-      sessions: Array.from({ length: 150 }, (_, index) => ({
+      sessions: Array.from({ length: 50 }, (_, index) => ({
         ...sessions[0],
         id: `conversation-${index}`,
         title: `Conversation ${index + 1}`,
       })),
+      ...({
+        totalCount: 150,
+        hasMore: true,
+        onLoadMore,
+      } as Partial<React.ComponentProps<typeof RecentSessions>>),
     });
 
-    expect(screen.getAllByRole("link")).toHaveLength(100);
-    expect(screen.getByText("1-100 / 150")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "下一页" }));
     expect(screen.getAllByRole("link")).toHaveLength(50);
-    expect(screen.getByText("101-150 / 150")).toBeInTheDocument();
+    expect(screen.getByText("最近 (150)")).toBeInTheDocument();
+    expect(screen.queryByLabelText("分页导航")).not.toBeInTheDocument();
+
+    const list = screen.getByRole("navigation", { name: "最近对话列表" });
+    Object.defineProperties(list, {
+      clientHeight: { configurable: true, value: 320 },
+      scrollHeight: { configurable: true, value: 1_000 },
+      scrollTop: { configurable: true, value: 640, writable: true },
+    });
+    fireEvent.scroll(list);
+    fireEvent.scroll(list);
+
+    await waitFor(() => expect(onLoadMore).toHaveBeenCalledOnce());
   });
 
   it("opens conversation actions without activating the conversation link", () => {
@@ -334,14 +357,18 @@ describe("RecentSessions", () => {
 function renderRecentSessions(
   overrides: Partial<React.ComponentProps<typeof RecentSessions>> = {},
 ) {
+  const selectedSessions = overrides.sessions ?? sessions;
   const props: React.ComponentProps<typeof RecentSessions> = {
-    sessions,
+    sessions: selectedSessions,
     spaces,
     folderPaths: [],
     filters: defaultFilters,
     open: true,
     loading: false,
+    totalCount: overrides.totalCount ?? selectedSessions.length,
+    hasMore: false,
     onToggle: vi.fn(),
+    onLoadMore: vi.fn(),
     onFilterChange: vi.fn(),
     onRename: vi.fn(),
     onDelete: vi.fn(),

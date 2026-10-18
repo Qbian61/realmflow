@@ -38,17 +38,18 @@ export class RecoverInterruptedRunsUseCase {
         !this.models ||
         !updated.workspaceId ||
         !updated.modelProfileId ||
+        !updated.nodeId ||
         updated.startedAt === undefined
       ) {
         continue
       }
       await this.models
         .recordCall({
-          source: updated.nodeId ? 'workflow_node' : 'workflow_stage',
+          source: 'workflow_node',
           modelProfileId: updated.modelProfileId,
           workspaceId: updated.workspaceId,
           requirementId: updated.requirementId,
-          ...(updated.nodeId ? { nodeId: updated.nodeId } : {}),
+          nodeId: updated.nodeId,
           aiRunId: updated.id,
           ...(updated.contextSnapshotId
             ? { contextSnapshotId: updated.contextSnapshotId }

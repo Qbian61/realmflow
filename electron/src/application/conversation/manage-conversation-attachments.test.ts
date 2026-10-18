@@ -33,7 +33,8 @@ describe('ManageConversationAttachments', () => {
     const service = new ManageConversationAttachments({
       picker: { showOpenDialog },
       registry: { registerFiles },
-      repository: { softDelete: vi.fn() }
+      repository: { softDelete: vi.fn() },
+      workspace: { openSessionFiles: vi.fn() }
     })
 
     const result = await service.pick({
@@ -81,7 +82,8 @@ describe('ManageConversationAttachments', () => {
         showOpenDialog: vi.fn()
       },
       registry: { registerFiles: vi.fn() },
-      repository: { softDelete }
+      repository: { softDelete },
+      workspace: { openSessionFiles: vi.fn() }
     })
 
     await service.remove({
@@ -91,5 +93,153 @@ describe('ManageConversationAttachments', () => {
     })
 
     expect(softDelete).toHaveBeenCalledWith('attachment-1', 'draft-1')
+  })
+
+  it('reads only a managed image as a data URL for message previews', async () => {
+    const resolveManagedPath = vi
+      .fn()
+      .mockResolvedValue('/managed/attachment.png')
+    const readFile = vi.fn().mockResolvedValue(Buffer.from('png'))
+    const get = vi.fn(async (id: string) =>
+      id === 'image-1'
+        ? {
+            id,
+            ownerId: 'message-1',
+            fileName: 'attachment.png',
+            mimeType: 'image/png',
+            mediaKind: 'image' as const,
+            sizeBytes: 3,
+            checksumSha256: 'a'.repeat(64),
+            source: 'picker' as const,
+            status: 'ready' as const,
+            createdAt: 1
+          }
+        : {
+            id,
+            ownerId: 'message-1',
+            fileName: 'notes.txt',
+            mimeType: 'text/plain',
+            mediaKind: 'document' as const,
+            sizeBytes: 3,
+            checksumSha256: 'b'.repeat(64),
+            source: 'picker' as const,
+            status: 'ready' as const,
+            createdAt: 2
+          }
+    )
+    const service = new ManageConversationAttachments({
+      picker: { showOpenDialog: vi.fn() },
+      registry: {
+        registerFiles: vi.fn(),
+        resolveManagedPath
+      },
+      repository: {
+        softDelete: vi.fn(),
+        get,
+        resolveBlobPath: vi.fn()
+      },
+      readFile
+    } as never)
+    const previewService = service as unknown as {
+      readImage(attachmentId: string): Promise<string>
+    }
+
+    await expect(previewService.readImage('image-1')).resolves.toBe(
+      'data:image/png;base64,cG5n'
+    )
+    await expect(previewService.readImage('document-1')).rejects.toThrow(
+      'Conversation image attachment is unavailable'
+    )
+    expect(resolveManagedPath).toHaveBeenCalledOnce()
+    expect(readFile).toHaveBeenCalledWith('/managed/attachment.png')
+  })
+
+  it('opens only a ready managed attachment in an isolated workspace selection', async () => {
+    const resolveManagedPath = vi
+      .fn()
+      .mockResolvedValue('/managed/blobs/attachment-digest')
+    const openSessionFiles = vi.fn().mockResolvedValue({
+      binding: {
+        requirementId: 'session-1',
+        rootName: 'blobs',
+        rootPath: '/managed/blobs'
+      },
+      files: [
+        {
+          name: 'attachment-digest',
+          path: 'attachment-digest',
+          content: '',
+          kind: 'binary',
+          language: 'binary',
+          size: 2_048,
+          modifiedAt: 1,
+          version: '1:2048'
+        }
+      ]
+    })
+    const get = vi.fn(async (id: string) =>
+      id === 'document-1'
+        ? {
+            id,
+            ownerId: 'message-1',
+            fileName: 'requirements.pdf',
+            mimeType: 'application/pdf',
+            mediaKind: 'document' as const,
+            sizeBytes: 2_048,
+            checksumSha256: 'a'.repeat(64),
+            source: 'picker' as const,
+            status: 'ready' as const,
+            createdAt: 1
+          }
+        : {
+            id,
+            ownerId: 'message-1',
+            fileName: 'failed.png',
+            mimeType: 'image/png',
+            mediaKind: 'image' as const,
+            sizeBytes: 512,
+            checksumSha256: 'b'.repeat(64),
+            source: 'picker' as const,
+            status: 'failed' as const,
+            errorCode: 'parse_failed',
+            errorMessage: 'Image OCR failed',
+            createdAt: 2
+          }
+    )
+    const service = new ManageConversationAttachments({
+      picker: { showOpenDialog: vi.fn() },
+      registry: {
+        registerFiles: vi.fn(),
+        resolveManagedPath
+      },
+      repository: {
+        softDelete: vi.fn(),
+        get,
+        resolveBlobPath: vi.fn()
+      },
+      workspace: { openSessionFiles }
+    } as never)
+
+    await expect(service.open('document-1')).resolves.toEqual({
+      binding: {
+        requirementId: 'session-1',
+        rootName: 'requirements.pdf',
+        rootPath: '/managed/blobs'
+      },
+      files: [
+        expect.objectContaining({
+          name: 'requirements.pdf',
+          path: 'attachment-digest'
+        })
+      ]
+    })
+    await expect(service.open('failed-1')).rejects.toThrow(
+      'Conversation attachment is unavailable'
+    )
+    expect(resolveManagedPath).toHaveBeenCalledOnce()
+    expect(openSessionFiles).toHaveBeenCalledWith(
+      ['/managed/blobs/attachment-digest'],
+      ['requirements.pdf']
+    )
   })
 })

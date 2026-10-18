@@ -4,9 +4,11 @@ import {
   Ellipsis,
   FolderPlus,
 } from "lucide-react";
-import type { BusinessApi } from "../../../shared/business";
+import type {
+  BusinessApi,
+  RecentConversationDto,
+} from "../../../shared/business";
 import { Menu, MenuContent, MenuItem } from "../../components/ui";
-import type { ChatSession } from "../../domain/chat-session";
 import type { WorkspaceNavigation } from "../../domain/workspace";
 import { useLocalization } from "../../localization/LocalizationProvider";
 import { RecentSessions } from "../sessions/RecentSessions";
@@ -30,12 +32,15 @@ const SPACE_ITEM_MENU_HEIGHT = 161, REQUIREMENT_MENU_HEIGHT = 86;
 
 export type WorkspaceSidebarProps = WorkspaceNavigation & {
   visible: boolean;
-  recentSessions: ChatSession[];
+  recentSessions: RecentConversationDto[];
   recentFolderPaths: string[];
   recentFilters: RecentConversationFilters;
+  recentTotalCount: number;
+  recentSessionsHasMore: boolean;
   recentSessionsLoading: boolean;
   business?: BusinessApi;
   onRecentFilterChange: (patch: Partial<RecentConversationFilters>) => void;
+  onLoadMoreRecentSessions: () => void | Promise<void>;
   onRenameConversation: (
     sessionId: string,
     title: string,
@@ -71,9 +76,12 @@ export function WorkspaceSidebar({
   recentSessions,
   recentFolderPaths,
   recentFilters,
+  recentTotalCount,
+  recentSessionsHasMore,
   recentSessionsLoading,
   business,
   onRecentFilterChange,
+  onLoadMoreRecentSessions,
   onRenameConversation,
   onDeleteConversation,
   onCreateSpace,
@@ -252,11 +260,7 @@ export function WorkspaceSidebar({
       {visible && (
         <aside className="sidebar">
           <div className="drag-region" />
-          <div className="brand">
-            <strong>RealmFlow</strong>
-          </div>
-
-<WorkspacePrimaryNavigation />
+          <WorkspacePrimaryNavigation />
 
           <div
             className={[
@@ -419,7 +423,10 @@ export function WorkspaceSidebar({
               filters={recentFilters}
               open={recentOpen}
               loading={recentSessionsLoading}
+              totalCount={recentTotalCount}
+              hasMore={recentSessionsHasMore}
               onToggle={() => setRecentOpen((open) => !open)}
+              onLoadMore={onLoadMoreRecentSessions}
               onFilterChange={onRecentFilterChange}
               onRename={onRenameConversation}
               onDelete={onDeleteConversation}

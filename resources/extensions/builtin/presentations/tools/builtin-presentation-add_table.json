@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.presentation.add_table",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Add presentation table",
   "description": "Add a structured table to a slide.",
   "tags": [

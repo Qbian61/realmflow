@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.document.update_style",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "name": "Update document style",
   "description": "Update a paragraph style using its stable block ID.",
   "tags": [

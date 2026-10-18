@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.realmflow.node.answer_question",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "name": "Answer node question",
   "description": "Answer an open NodeRun question.",
   "tags": [

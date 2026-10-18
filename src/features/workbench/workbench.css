@@ -13,9 +13,9 @@
 
 .global-workbench-layout.open {
   grid-template-columns:
-    minmax(548px, 1fr)
+    minmax(540px, 1fr)
     4px
-    minmax(448px, var(--global-workbench-width));
+    minmax(440px, var(--global-workbench-width));
 }
 
 .global-workbench-layout.open .app-content {
@@ -26,25 +26,25 @@
   grid-template-columns: minmax(0, 1fr);
 }
 
+.global-workbench-layout.open.maximized .app-content {
+  margin-right: 0;
+}
+
 .global-workbench-layout.open.maximized .global-workbench-resizer {
   display: none;
 }
 
 .global-workbench-layout.open.maximized .global-workbench {
   position: absolute;
-  inset: 0;
+  inset: 0 0 0 var(--global-workbench-maximized-left);
   z-index: 30;
-  width: calc(100% - 16px);
-  margin: 8px;
+  width: auto;
+  min-width: 0;
+  margin: 0;
 }
 
-.global-workbench-layout.maximized .sidebar-edge-toggle,
 .global-workbench-layout.maximized .global-workbench-tools {
   display: none;
-}
-
-.global-workbench-layout.maximized .global-workbench-header {
-  padding-left: 76px;
 }
 
 .global-workbench-layout.maximized .global-workbench-header-actions {
@@ -61,8 +61,8 @@
 
 .global-workbench-tools {
   position: absolute;
-  top: 9px;
-  right: 21px;
+  top: 0;
+  right: 13px;
   z-index: 40;
   display: flex;
   height: var(--workspace-header-height);
@@ -84,7 +84,7 @@
   z-index: 22;
   width: 4px;
   cursor: col-resize;
-  background: transparent;
+  background: var(--sidebar);
 }
 
 .global-workbench-resizer::after {
@@ -120,15 +120,16 @@ body.resizing-global-workbench {
   position: relative;
   z-index: 20;
   display: grid;
-  width: calc(100% - 8px);
+  width: 100%;
   min-width: 440px;
   min-height: 0;
   grid-template-rows: var(--workspace-header-height) minmax(0, 1fr);
-  margin: 8px 8px 8px 0;
+  margin: 0;
   overflow: hidden;
   background: var(--color-surface);
-  border: 1px solid var(--tone-e1e1e1);
-  border-radius: 12px;
+  border: 0;
+  border-left: 1px solid var(--tone-e1e1e1);
+  border-radius: 0;
   box-shadow: none;
 }
 
@@ -482,11 +483,11 @@ body.resizing-global-workbench {
   }
 
   .global-workbench-layout.open .app-content {
-    margin-right: 8px;
+    margin-right: 0;
   }
 
   .global-workbench-layout.open .global-workbench-tools {
-    right: 21px;
+    right: 13px;
   }
 
   .global-workbench {

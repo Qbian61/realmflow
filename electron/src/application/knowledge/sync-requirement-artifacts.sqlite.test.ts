@@ -56,6 +56,7 @@ describe('artifact knowledge enqueue SQLite integration', () => {
           {
             id: 'artifact-1',
             requirementId: 'requirement-1',
+            nodeId: 'node-design',
             relativePath: 'artifacts/design.md',
             checksum: digest(content),
             version: 1,

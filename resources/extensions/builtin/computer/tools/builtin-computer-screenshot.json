@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.computer.screenshot",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Take screenshot",
   "description": "Create a short-lived screenshot artifact.",
   "tags": [

@@ -30,7 +30,21 @@ import {
 import { ApprovalProfileSelector } from "../features/conversation/ApprovalProfileSelector";
 import { useLocalization } from "../localization/LocalizationProvider";
 import type { ConversationAttachmentDescriptor } from "../../domain/conversation-input";
+import type { ToolDefinitionReference } from "../../domain/tool-definition";
+import type {
+  ConversationCapabilitySelection,
+  ConnectorDto,
+} from "../../shared/business";
+import type {
+  McpServerDto,
+  ToolCatalogSkillDto,
+} from "../../shared/tool-catalog";
 import {
+  Button,
+  Dialog,
+  DialogBody,
+  DialogFooter,
+  DialogHeader,
   IconButton,
   Menu,
   MenuContent,
@@ -54,6 +68,48 @@ type ComposerInsertions = {
   skill: string;
   connector: string;
 };
+
+export type ComposerSkillSelection = {
+  reference: ToolDefinitionReference;
+  name: string;
+  description?: string;
+};
+
+export type ComposerConnectorSelection =
+  | {
+      kind: "connector";
+      connectorId: string;
+      service: string;
+      name: string;
+    }
+  | {
+      kind: "mcp";
+      mcpServerId: string;
+      name: string;
+    };
+
+export function toConversationCapabilitySelection(
+  skill?: ComposerSkillSelection,
+  connector?: ComposerConnectorSelection,
+): ConversationCapabilitySelection | undefined {
+  if (!skill && !connector) return undefined;
+  return {
+    ...(skill ? { skill: skill.reference } : {}),
+    ...(connector?.kind === "connector"
+      ? {
+          connectorBindings: [
+            {
+              service: connector.service,
+              connectorId: connector.connectorId,
+            },
+          ],
+        }
+      : {}),
+    ...(connector?.kind === "mcp"
+      ? { mcpServerIds: [connector.mcpServerId] }
+      : {}),
+  };
+}
 
 type ComposerProps = {
   approvalProfileId?: import("../../domain/approval-profile").ApprovalProfileId;
@@ -80,7 +136,8 @@ type ComposerProps = {
   attachments?: ConversationAttachmentDescriptor[];
   attachmentErrors?: Array<{ fileName: string; message: string }>;
   attachmentBusy?: boolean;
-  allowImageEgress?: boolean;
+  selectedSkill?: ComposerSkillSelection;
+  selectedConnector?: ComposerConnectorSelection;
   textareaRef?: RefObject<HTMLTextAreaElement>;
   onChange: (value: string) => void;
   onWorkspaceChange?: (value: string) => void;
@@ -89,7 +146,8 @@ type ComposerProps = {
   onConfigureModels?: () => void;
   onPickAttachments?: () => void;
   onRemoveAttachment?: (attachmentId: string) => void;
-  onImageEgressChange?: (allowed: boolean) => void;
+  onSkillChange?: (selection?: ComposerSkillSelection) => void;
+  onConnectorChange?: (selection?: ComposerConnectorSelection) => void;
   onSubmit: () => void;
   onCancel?: () => void;
 };
@@ -119,7 +177,8 @@ export function Composer({
   attachments = [],
   attachmentErrors = [],
   attachmentBusy = false,
-  allowImageEgress = false,
+  selectedSkill,
+  selectedConnector,
   textareaRef,
   onChange,
   onWorkspaceChange,
@@ -128,12 +187,23 @@ export function Composer({
   onConfigureModels,
   onPickAttachments,
   onRemoveAttachment,
-  onImageEgressChange,
+  onSkillChange,
+  onConnectorChange,
   onSubmit,
   onCancel,
 }: ComposerProps): JSX.Element {
-  const { t } = useLocalization();
+  const { locale, t } = useLocalization();
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
+  const [skillPickerOpen, setSkillPickerOpen] = useState(false);
+  const [skillLoading, setSkillLoading] = useState(false);
+  const [skillLoadFailed, setSkillLoadFailed] = useState(false);
+  const [skillOptions, setSkillOptions] = useState<ToolCatalogSkillDto[]>([]);
+  const [connectorPickerOpen, setConnectorPickerOpen] = useState(false);
+  const [connectorLoading, setConnectorLoading] = useState(false);
+  const [connectorLoadFailed, setConnectorLoadFailed] = useState(false);
+  const [connectorOptions, setConnectorOptions] = useState<
+    ComposerConnectorSelection[]
+  >([]);
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const [workspacePlacement, setWorkspacePlacement] = useState<"up" | "down">(
     "up",
@@ -257,8 +327,105 @@ export function Composer({
   };
 
   const fillPrompt = (nextValue: string): void => {
-    onChange(nextValue);
+    const currentValue = value.trimEnd();
+    onChange(currentValue ? `${currentValue}\n\n${nextValue}` : nextValue);
     setAttachmentMenuOpen(false);
+    resolvedTextareaRef.current?.focus();
+  };
+
+  const openSkillPicker = (): void => {
+    setAttachmentMenuOpen(false);
+    setSkillPickerOpen(true);
+    setSkillLoading(true);
+    setSkillLoadFailed(false);
+    const catalog = window.realmflow?.toolCatalog;
+    if (!catalog) {
+      setSkillOptions([]);
+      setSkillLoading(false);
+      return;
+    }
+    void catalog
+      .list({ locale })
+      .then((result) => {
+        setSkillOptions(
+          result.skills.filter((skill) => skill.status === "enabled"),
+        );
+      })
+      .catch(() => {
+        setSkillOptions([]);
+        setSkillLoadFailed(true);
+      })
+      .finally(() => setSkillLoading(false));
+  };
+
+  const chooseSkill = (skill: ToolCatalogSkillDto): void => {
+    const name = skill.display?.name ?? skill.definition.name;
+    const description =
+      skill.display?.description ?? skill.definition.description;
+    onSkillChange?.({
+      reference: {
+        kind: "skill",
+        id: skill.id,
+        version: skill.version,
+        digest: skill.definitionDigest,
+      },
+      name,
+      ...(description ? { description } : {}),
+    });
+    setSkillPickerOpen(false);
+    resolvedTextareaRef.current?.focus();
+  };
+
+  const openConnectorPicker = (): void => {
+    setAttachmentMenuOpen(false);
+    setConnectorPickerOpen(true);
+    setConnectorLoading(true);
+    setConnectorLoadFailed(false);
+    const business = window.realmflow?.business;
+    const catalog = window.realmflow?.toolCatalog;
+    void Promise.all([
+      business?.listConnectors() ?? Promise.resolve([] as ConnectorDto[]),
+      catalog?.listMcpServers() ?? Promise.resolve([] as McpServerDto[]),
+    ])
+      .then(([connectors, mcpServers]) => {
+        setConnectorOptions([
+          ...connectors.flatMap(({ connector }) =>
+            connector.enabled
+              ? [
+                  {
+                    kind: "connector" as const,
+                    connectorId: connector.id,
+                    service: connector.type,
+                    name: connector.name,
+                  },
+                ]
+              : [],
+          ),
+          ...mcpServers.flatMap((server) =>
+            server.enabled
+              ? [
+                  {
+                    kind: "mcp" as const,
+                    mcpServerId: server.id,
+                    name: server.name,
+                  },
+                ]
+              : [],
+          ),
+        ]);
+      })
+      .catch(() => {
+        setConnectorOptions([]);
+        setConnectorLoadFailed(true);
+      })
+      .finally(() => setConnectorLoading(false));
+  };
+
+  const chooseConnector = (
+    selection: ComposerConnectorSelection,
+  ): void => {
+    onConnectorChange?.(selection);
+    setConnectorPickerOpen(false);
     resolvedTextareaRef.current?.focus();
   };
 
@@ -325,26 +492,52 @@ export function Composer({
                 {error.fileName}: {error.message}
               </span>
             ))}
-            {attachments.some(
-              (attachment) => attachment.mediaKind === "image",
-            ) ? (
-              <label className="composer-image-egress">
-                <input name="composer-allow-image-egress" autoComplete="off"
-                  type="checkbox"
-                  checked={allowImageEgress}
-                  disabled={disabled || attachmentBusy}
-                  onChange={(event) =>
-                    onImageEgressChange?.(event.target.checked)
-                  }
-                />
-                <span>
-                  {t("conversation.allowImageEgress", {
-                    count: attachments.filter(
-                      (attachment) => attachment.mediaKind === "image",
-                    ).length,
+          </div>
+        ) : null}
+        {selectedSkill || selectedConnector ? (
+          <div
+            className="composer-capability-list"
+            aria-label={
+              selectedSkill
+                ? t("composer.selectedSkill")
+                : t("composer.selectedConnector")
+            }
+          >
+            {selectedSkill ? (
+              <span className="composer-capability-chip">
+                <Blocks size={13} aria-hidden="true" />
+                <span>{selectedSkill.name}</span>
+                <IconButton
+                  aria-label={t("composer.removeSkill", {
+                    name: selectedSkill.name,
                   })}
-                </span>
-              </label>
+                  title={t("composer.removeSkillAction")}
+                  size="compact"
+                  variant="ghost"
+                  disabled={disabled}
+                  onClick={() => onSkillChange?.(undefined)}
+                >
+                  <X size={13} />
+                </IconButton>
+              </span>
+            ) : null}
+            {selectedConnector ? (
+              <span className="composer-capability-chip">
+                <Link2 size={13} aria-hidden="true" />
+                <span>{selectedConnector.name}</span>
+                <IconButton
+                  aria-label={t("composer.removeConnector", {
+                    name: selectedConnector.name,
+                  })}
+                  title={t("composer.removeConnectorAction")}
+                  size="compact"
+                  variant="ghost"
+                  disabled={disabled}
+                  onClick={() => onConnectorChange?.(undefined)}
+                >
+                  <X size={13} />
+                </IconButton>
+              </span>
             ) : null}
           </div>
         ) : null}
@@ -386,7 +579,7 @@ export function Composer({
                   <MenuSeparator />
                   <MenuItem
                     disabled={disabled}
-                    onSelect={() => fillPrompt(insertions.skill)}
+                    onSelect={openSkillPicker}
                   >
                     <Blocks size={20} />
                     <span>{t("composer.skill")}</span>
@@ -394,7 +587,7 @@ export function Composer({
                   </MenuItem>
                   <MenuItem
                     disabled={disabled}
-                    onSelect={() => fillPrompt(insertions.connector)}
+                    onSelect={openConnectorPicker}
                   >
                     <Link2 size={20} />
                     <span>{t("composer.connector")}</span>
@@ -562,6 +755,158 @@ export function Composer({
         </div>
       </div>
     </form>
+    <Dialog
+      open={skillPickerOpen}
+      size="compact"
+      aria-label={t("composer.skillPicker.title")}
+      onOpenChange={setSkillPickerOpen}
+    >
+      <DialogHeader>
+        <div>
+          <h2>{t("composer.skillPicker.title")}</h2>
+        </div>
+        <IconButton
+          aria-label={t("common.close")}
+          title={t("common.close")}
+          variant="ghost"
+          onClick={() => setSkillPickerOpen(false)}
+        >
+          <X size={18} />
+        </IconButton>
+      </DialogHeader>
+      <DialogBody className="composer-skill-picker">
+        {skillLoading ? (
+          <p role="status">{t("composer.skillPicker.loading")}</p>
+        ) : skillLoadFailed ? (
+          <p role="alert">{t("composer.skillPicker.loadFailed")}</p>
+        ) : skillOptions.length === 0 ? (
+          <div className="composer-skill-picker-empty">
+            <p>{t("composer.skillPicker.empty")}</p>
+          </div>
+        ) : (
+          <div className="composer-skill-picker-list">
+            {skillOptions.map((skill) => {
+              const name = skill.display?.name ?? skill.definition.name;
+              const description =
+                skill.display?.description ?? skill.definition.description;
+              return (
+                <button
+                  type="button"
+                  className="composer-skill-picker-option"
+                  aria-label={name}
+                  key={`${skill.id}@${skill.version}`}
+                  onClick={() => chooseSkill(skill)}
+                >
+                  <Blocks size={18} aria-hidden="true" />
+                  <span>
+                    <strong>{name}</strong>
+                    {description ? <small>{description}</small> : null}
+                  </span>
+                  {selectedSkill?.reference.id === skill.id &&
+                  selectedSkill.reference.version === skill.version ? (
+                    <Check size={16} aria-hidden="true" />
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </DialogBody>
+      {!skillLoading && skillOptions.length === 0 ? (
+        <DialogFooter>
+          <Button
+            variant="neutral"
+            onClick={() => {
+              setSkillPickerOpen(false);
+              window.location.hash = "/capabilities?tab=skills";
+            }}
+          >
+            {t("composer.skillPicker.configure")}
+          </Button>
+        </DialogFooter>
+      ) : null}
+    </Dialog>
+    <Dialog
+      open={connectorPickerOpen}
+      size="compact"
+      aria-label={t("composer.connectorPicker.title")}
+      onOpenChange={setConnectorPickerOpen}
+    >
+      <DialogHeader>
+        <div>
+          <h2>{t("composer.connectorPicker.title")}</h2>
+        </div>
+        <IconButton
+          aria-label={t("common.close")}
+          title={t("common.close")}
+          variant="ghost"
+          onClick={() => setConnectorPickerOpen(false)}
+        >
+          <X size={18} />
+        </IconButton>
+      </DialogHeader>
+      <DialogBody className="composer-skill-picker">
+        {connectorLoading ? (
+          <p role="status">{t("composer.connectorPicker.loading")}</p>
+        ) : connectorLoadFailed ? (
+          <p role="alert">{t("composer.connectorPicker.loadFailed")}</p>
+        ) : connectorOptions.length === 0 ? (
+          <div className="composer-skill-picker-empty">
+            <p>{t("composer.connectorPicker.empty")}</p>
+          </div>
+        ) : (
+          <div className="composer-skill-picker-list">
+            {connectorOptions.map((option) => {
+              const id =
+                option.kind === "connector"
+                  ? option.connectorId
+                  : option.mcpServerId;
+              const selected =
+                option.kind === "connector"
+                  ? selectedConnector?.kind === "connector" &&
+                    selectedConnector.connectorId === option.connectorId
+                  : selectedConnector?.kind === "mcp" &&
+                    selectedConnector.mcpServerId === option.mcpServerId;
+              return (
+                <button
+                  type="button"
+                  className="composer-skill-picker-option"
+                  aria-label={option.name}
+                  key={`${option.kind}:${id}`}
+                  onClick={() => chooseConnector(option)}
+                >
+                  <Link2 size={18} aria-hidden="true" />
+                  <span>
+                    <strong>{option.name}</strong>
+                    <small>
+                      {t(
+                        option.kind === "mcp"
+                          ? "composer.connectorPicker.mcp"
+                          : "composer.connectorPicker.http",
+                      )}
+                    </small>
+                  </span>
+                  {selected ? <Check size={16} aria-hidden="true" /> : null}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </DialogBody>
+      {!connectorLoading && connectorOptions.length === 0 ? (
+        <DialogFooter>
+          <Button
+            variant="neutral"
+            onClick={() => {
+              setConnectorPickerOpen(false);
+              window.location.hash = "/capabilities?tab=connectors";
+            }}
+          >
+            {t("composer.connectorPicker.configure")}
+          </Button>
+        </DialogFooter>
+      ) : null}
+    </Dialog>
     </div>
   );
 }

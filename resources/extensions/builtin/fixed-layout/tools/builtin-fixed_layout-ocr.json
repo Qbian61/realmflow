@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.fixed_layout.ocr",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "name": "Recognize OFD page",
   "description": "Render and recognize one scanned OFD page with the bundled local OCR runtime.",
   "tags": [

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.image.redact",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Redact image",
   "description": "Cover explicit image regions with an opaque color.",
   "tags": [

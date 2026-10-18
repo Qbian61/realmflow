@@ -1,4 +1,4 @@
-import { Plus, Sparkles, Square } from "lucide-react";
+import { Plus, Square } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { Navigate, useParams, useSearchParams } from "react-router-dom";
 import { Select, Spinner } from "../components/ui";
@@ -26,7 +26,6 @@ import {
 } from "../features/workflow/RequirementExecutionSnapshot";
 import { WorkflowNodeControls } from "../features/workflow/WorkflowNodeControls";
 import {
-  legacyStageFromNodeId,
   runStatusLabel,
   selectedWorkflowNodeId,
 } from "../features/workflow/workflow-view";
@@ -255,9 +254,6 @@ export default function RequirementDetailPage({
   const selectedStageId = executionView?.selectedNode.id ?? activeStage;
   const selectedNode =
     displayNodes.find((node) => node.id === selectedStageId) ?? displayNodes[0];
-  const selectedLegacyStage = selectedNode
-    ? legacyStageFromNodeId(selectedNode.id)
-    : undefined;
   const activeRun = selectedNode
     ? aiRuns.findRun(requirement.id, selectedNode.id)
     : undefined;
@@ -420,14 +416,6 @@ export default function RequirementDetailPage({
               ) {
                 void loadExecutionView(node.id);
               }
-              const legacyStage = legacyStageFromNodeId(node.id);
-              if (legacyStage) {
-                workbench.openRequirementArtifact(
-                  requirement.id,
-                  legacyStage,
-                  requirement.title,
-                );
-              }
             }}
           />
           <div className="stage-run-panel" aria-live="polite">
@@ -479,27 +467,6 @@ export default function RequirementDetailPage({
                   {activeRun.status === "cancelling"
                     ? t("requirementDetail.cancelling")
                     : t("requirementDetail.cancel")}
-                </button>
-              ) : selectedNode?.type === "ai_generate" &&
-                selectedLegacyStage ? (
-                <button
-                  type="button"
-                  className="stage-run-start"
-                  aria-label={t("requirementDetail.generateAria", {
-                    name: selectedNode?.name ?? "",
-                  })}
-                  onClick={() => {
-                    void aiRuns.start({
-                      requirementId: requirement.id,
-                      stageId: selectedLegacyStage,
-                      ...(models.selectedId
-                        ? { modelProfileId: models.selectedId }
-                        : {}),
-                    });
-                  }}
-                >
-                  <Sparkles size={15} />
-                  {t("requirementDetail.generate")}
                 </button>
               ) : null}
             </div>

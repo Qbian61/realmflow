@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto'
-import type { BrowserRuntimeService } from '../browser/browser-runtime-service'
-import { browserError } from '../browser/browser-runtime-service'
-import type { BrowserAction, BrowserCallContext, BrowserSession } from '../browser/browser-runtime-port'
+import {
+  browserError,
+  type BrowserAction,
+  type BrowserCallContext,
+  type BrowserSession,
+  type BrowserToolRuntimePort
+} from '../browser/browser-runtime-port'
 import type { BuiltinToolHandler, BuiltinToolHandlerInput } from './builtin-tool-adapter'
 import type { JsonObject } from '../../../../domain/tool-protocol-validation'
 
@@ -21,13 +25,7 @@ const SAFE_ERRORS: Record<string, string> = {
 }
 
 export function createBrowserToolHandlers(
-  service?: Pick<
-    BrowserRuntimeService,
-    'createSession' | 'attachSession' | 'closeSession' | 'execute'
-  > &
-    Partial<
-      Pick<BrowserRuntimeService, 'closeCurrent' | 'executeCurrent'>
-    >
+  service?: BrowserToolRuntimePort
 ): BuiltinToolHandler[] {
   return ['create', 'attach', 'close', ...ACTIONS].map((action) => ({
     name: `browser.${action}`, version: '1.0.0',

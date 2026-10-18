@@ -204,15 +204,40 @@ export class SqliteFollowUpSuggestionRepository
         )
         .pluck()
         .get(input.sessionId) as number
+      const turnIndex = this.database
+        .prepare(
+          `SELECT COALESCE(MAX(turn_index), -1) + 1
+           FROM conversation_turns WHERE session_id = ?`
+        )
+        .pluck()
+        .get(input.sessionId) as number
+      const turnId = `${input.userMessageId}:turn`
+      this.database
+        .prepare(
+          `INSERT INTO conversation_turns (
+             id, session_id, turn_index, user_message_id,
+             assistant_message_id, status, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          turnId,
+          input.sessionId,
+          turnIndex,
+          input.userMessageId,
+          input.assistantMessageId,
+          'pending',
+          input.createdAt
+        )
       const insertMessage = this.database.prepare(
         `INSERT INTO chat_messages (
-           id, session_id, role, status, content, model_name, processing_json,
-           source_json, sort_order, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           id, session_id, turn_id, role, status, content, model_name,
+           processing_json, source_json, sort_order, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       insertMessage.run(
         input.userMessageId,
         input.sessionId,
+        turnId,
         'user',
         'completed',
         suggestion.prompt,
@@ -230,6 +255,7 @@ export class SqliteFollowUpSuggestionRepository
       insertMessage.run(
         input.assistantMessageId,
         input.sessionId,
+        turnId,
         'assistant',
         'pending',
         '',

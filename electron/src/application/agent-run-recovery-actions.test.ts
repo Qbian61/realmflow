@@ -1,198 +1,225 @@
 import { vi } from 'vitest'
-import { createRunCheckpoint } from '../../../domain/agent-run-recovery'
+import { createDshRunManifest } from '../../../dsh-plugins/realmflow-runtime/src/test-manifest-fixture'
 import {
   createInitialRunBudgetLedger,
   DEFAULT_AGENT_EXECUTION_POLICY,
   type AgentRuntimeRun
 } from '../../../domain/agent-runtime'
-import type {
-  AgentRunCheckpointRepository,
-  AgentRuntimeRunRepository
-} from '../ai-run/application/ports'
+import type { DshRunManifest } from '../../../domain/dsh-run-manifest'
+import {
+  createDshSessionBinding,
+  dshRunOwnerKey,
+  type DshSessionBinding
+} from '../../../domain/dsh-session-binding'
+import type { AgentRuntimeRunRepository } from '../ai-run/application/ports'
 import { AgentRunRecoveryActions } from './agent-run-recovery-actions'
+import type { RecoveredRunActivation } from './recover-agent-runtime-runs'
 
 describe('AgentRunRecoveryActions', () => {
-  it('cancels the delegation tree even when no provider attempt is attached', async () => {
+  it('resumes through DSH history sync and starts the session after the running transition', async () => {
     const harness = createHarness()
-    delete harness.run.providerRunId
-    await harness.actions.execute({ runId: harness.run.id, action: 'cancel' })
-    expect(harness.cancelDelegations).toHaveBeenCalledWith(harness.run.id)
-    expect(harness.cancelProvider).not.toHaveBeenCalled()
-  })
+    const start = vi.fn(() => {
+      harness.order.push('start')
+      expect(harness.transition).toHaveBeenCalledWith(
+        harness.run.id,
+        'running',
+        500
+      )
+    })
+    harness.historySync.mockImplementation(async () => {
+      harness.order.push('history')
+      return syncedHistory()
+    })
+    harness.resumeSession.mockImplementation(async () => {
+      harness.order.push('resume')
+      return { start }
+    })
 
-  it('activates explicit recovery after the durable running transition', async () => {
-    const harness = createHarness()
-    const start = vi.fn(() => expect(harness.transition).toHaveBeenCalledWith(harness.run.id, 'running', 500))
-    harness.resume.mockResolvedValue({ start })
-    await harness.actions.execute({ runId: harness.run.id, action: 'resume' })
-    expect(start).toHaveBeenCalledOnce()
-  })
-
-  it('resumes only after current configuration and pending calls are safe', async () => {
-    const harness = createHarness()
-    harness.reconcile.mockResolvedValue([
-      { callId: 'call-1', outcome: 'unknown' }
-    ])
-
-    await expect(
-      harness.actions.execute({ runId: harness.run.id, action: 'resume' })
-    ).resolves.toEqual({ status: 'blocked' })
-    expect(harness.resume).not.toHaveBeenCalled()
-
-    harness.reconcile.mockResolvedValue([
-      { callId: 'call-1', outcome: 'completed' }
-    ])
     await expect(
       harness.actions.execute({ runId: harness.run.id, action: 'resume' })
     ).resolves.toEqual({ status: 'resumed' })
-    expect(harness.resume).toHaveBeenCalledWith(
+
+    expect(harness.order).toEqual([
+      'history',
+      'retrying',
+      'resume',
+      'running',
+      'start'
+    ])
+    expect(harness.historySync).toHaveBeenCalledWith({
+      runtimeInstanceId: 'runtime-1',
+      manifest: harness.manifest
+    })
+    expect(harness.resumeSession).toHaveBeenCalledWith(
       harness.run,
-      harness.checkpoint
+      harness.manifest,
+      harness.binding
     )
+  })
+
+  it('blocks resume when Product Command history cannot be reconciled', async () => {
+    const harness = createHarness()
+    harness.historySync.mockRejectedValue(new Error('idempotency conflict'))
+
+    await expect(
+      harness.actions.execute({ runId: harness.run.id, action: 'resume' })
+    ).resolves.toEqual({ status: 'blocked' })
+
+    expect(harness.resumeSession).not.toHaveBeenCalled()
     expect(harness.transition).toHaveBeenCalledWith(
       harness.run.id,
-      'running',
-      500
+      'recovery_blocked',
+      500,
+      'recovery_blocked:history_sync_failed'
     )
-  })
-
-  it('creates a new-config branch only after pending side effects are reconciled', async () => {
-    const harness = createHarness()
-    harness.reconcile.mockResolvedValue([
-      { callId: 'call-1', outcome: 'unknown' }
-    ])
-
-    await expect(
-      harness.actions.execute({ runId: harness.run.id, action: 'branch' })
-    ).resolves.toEqual({ status: 'blocked' })
-    expect(harness.branch).not.toHaveBeenCalled()
-    expect(harness.validateConfiguration).not.toHaveBeenCalled()
-
-    harness.reconcile.mockResolvedValue([
-      { callId: 'call-1', outcome: 'completed' }
-    ])
-    await expect(
-      harness.actions.execute({ runId: harness.run.id, action: 'branch' })
-    ).resolves.toEqual({ status: 'branched', runId: 'run-branch' })
-    expect(harness.branch).toHaveBeenCalledWith(
+    expect(harness.projectRecoveryEvent).toHaveBeenCalledWith(
       harness.run,
-      harness.checkpoint
+      expect.objectContaining({
+        type: 'run.recovery_blocked',
+        data: expect.objectContaining({
+          recoveryReason: 'history_sync_failed',
+          recoveryActions: ['resume', 'cancel']
+        })
+      })
     )
-    expect(harness.transition).not.toHaveBeenCalled()
   })
 
-  it('cancels provider work before terminalizing the Runtime Run', async () => {
+  it('cancels the DSH session and delegation tree before terminalizing the run', async () => {
     const harness = createHarness()
 
     await expect(
       harness.actions.execute({ runId: harness.run.id, action: 'cancel' })
     ).resolves.toEqual({ status: 'cancelled' })
-    expect(harness.cancelProvider).toHaveBeenCalledWith('provider-run-1')
+
+    expect(harness.cancelDelegations).toHaveBeenCalledWith(harness.run.id)
+    expect(harness.cancelSession).toHaveBeenCalledWith(
+      harness.run,
+      harness.manifest,
+      harness.binding
+    )
     expect(harness.transition).toHaveBeenCalledWith(
       harness.run.id,
       'cancelled',
       500
     )
   })
+
+  it('does not branch without a legacy checkpoint recovery model', async () => {
+    const harness = createHarness()
+
+    await expect(
+      harness.actions.execute({ runId: harness.run.id, action: 'branch' })
+    ).resolves.toEqual({ status: 'blocked' })
+
+    expect(harness.historySync).not.toHaveBeenCalled()
+    expect(harness.resumeSession).not.toHaveBeenCalled()
+    expect(harness.transition).not.toHaveBeenCalled()
+  })
 })
 
 function createHarness() {
   const run = runtimeRun()
-  const checkpoint = createRunCheckpoint({
+  const manifest = createDshRunManifest({
+    manifestId: 'manifest-run-1',
     runId: run.id,
-    ordinal: 3,
-    reason: 'tool_completed',
-    snapshotDigest: 'a'.repeat(64),
-    configurationDigests: {
-      agentProfile: run.snapshot.agentProfileDigest,
-      prompt: run.snapshot.promptDigest,
-      policy: run.snapshot.policyDigest,
-      capabilityCatalog: run.snapshot.capabilityCatalogDigest,
-      capabilityBinding: run.snapshot.capabilityBindingDigest
-    },
-    messageWindow: [{ id: 'message-1', role: 'user', content: 'Continue' }],
-    pendingCalls: [
-      {
-        callId: 'call-1',
-        executionId: 'execution-1',
-        effect: 'external_write',
-        idempotency: 'supported',
-        status: 'running'
-      }
-    ],
-    remainingBudgets: {
-      toolCalls: 4,
-      subagents: 0,
-      retries: 1,
-      timeoutMs: 100_000,
-      tokens: 2_048
-    },
-    projectionCursor: 8,
+    sessionId: 'dsh-session-1',
+    owner: { workspaceId: 'workspace-1' }
+  })
+  const binding = createDshSessionBinding({
+    owner: manifest.owner,
+    dshSessionId: manifest.sessionId,
+    runManifestDigest: manifest.digest,
+    runtimeBuildDigest: 'b'.repeat(64),
+    lifecycleStatus: 'active',
     createdAt: 100
   })
-  const transition = vi.fn().mockResolvedValue(undefined)
+  const transition = vi.fn(async (_id: string, status: string) => {
+    if (status === 'retrying') order.push('retrying')
+    if (status === 'running') order.push('running')
+  })
+  const order: string[] = []
   const runs: AgentRuntimeRunRepository = {
+    getById: vi.fn(async () => run),
     create: vi.fn(),
     bindProviderRun: vi.fn(),
     transition,
-    getByProviderRunId: vi.fn(),
     listByRootRunId: vi.fn(),
     listByParentRunId: vi.fn(),
     listUnfinished: vi.fn().mockResolvedValue([run])
   }
-  const checkpoints: AgentRunCheckpointRepository = {
-    save: vi.fn(),
-    getLatest: vi.fn().mockResolvedValue(checkpoint),
-    list: vi.fn()
+  const manifests = {
+    getByRunId: vi.fn(async (runId: string) =>
+      runId === run.id ? manifest : undefined
+    )
   }
-  const reconcile = vi.fn().mockResolvedValue([
-    { callId: 'call-1', outcome: 'completed' }
-  ])
-  const resume = vi.fn().mockResolvedValue(undefined)
-  const branch = vi.fn().mockResolvedValue({ runId: 'run-branch' })
-  const cancelProvider = vi.fn().mockResolvedValue(undefined)
+  const sessions = {
+    getByOwner: vi.fn(async (owner: DshRunManifest['owner']) =>
+      dshRunOwnerKey(owner) === binding.ownerKey ? binding : undefined
+    )
+  }
+  const historySync = vi.fn(async () => syncedHistory())
+  const resumeSession = vi.fn<
+    (
+      run: AgentRuntimeRun,
+      manifest: DshRunManifest,
+      binding: DshSessionBinding
+    ) => Promise<void | RecoveredRunActivation>
+  >(async () => undefined)
+  const cancelSession = vi.fn(async () => undefined)
   const cancelDelegations = vi.fn()
-  const validateConfiguration = vi.fn().mockResolvedValue({
-    profileAvailable: true,
-    capabilitiesAvailable: true,
-    modelAvailable: true,
-    permissionValid: true,
-    credentialAvailable: true
-  })
+  const projectRecoveryEvent = vi.fn(async () => undefined)
   return {
     run,
-    checkpoint,
+    manifest,
+    binding,
     transition,
-    reconcile,
-    resume,
-    branch,
-    cancelProvider,
+    historySync,
+    resumeSession,
+    cancelSession,
     cancelDelegations,
-    validateConfiguration,
+    projectRecoveryEvent,
+    order,
     actions: new AgentRunRecoveryActions(
       {
+        runtimeInstanceId: 'runtime-1',
         runs,
-        checkpoints,
-        validateConfiguration,
-        reconcilePendingCalls: reconcile,
-        resume,
-        branch,
-        cancelProvider,
-        cancelDelegations
+        manifests,
+        sessions,
+        historySync: { syncRun: historySync },
+        resumeSession,
+        cancelSession,
+        cancelDelegations,
+        projectRecoveryEvent
       },
       () => 500
     )
   }
 }
 
+function syncedHistory() {
+  return {
+    status: 'synced' as const,
+    dshSessionId: 'dsh-session-1',
+    fromSequence: 0,
+    toSequence: 0,
+    projectedEvents: 0,
+    productCommandResultsReconciled: 0,
+    hasMore: false
+  }
+}
+
 function runtimeRun(): AgentRuntimeRun {
   return {
     id: 'run-1',
-    providerRunId: 'provider-run-1',
     status: 'recovery_blocked',
     snapshot: {
       schemaVersion: 1,
-      approvalProfile: { schemaVersion: 1, id: 'protected', policyVersion: '1.0.0', digest: 'a'.repeat(64) },
+      approvalProfile: {
+        schemaVersion: 1,
+        id: 'protected',
+        policyVersion: '1.0.0',
+        digest: 'a'.repeat(64)
+      },
       runId: 'run-1',
       rootRunId: 'run-1',
       delegationDepth: 0,
@@ -207,7 +234,7 @@ function runtimeRun(): AgentRuntimeRun {
       capabilityCatalogDigest: 'e'.repeat(64),
       capabilityBindingDigest: 'f'.repeat(64),
       permissionSnapshotDigest: '1'.repeat(64),
-      scope: { kind: 'global' },
+      scope: { kind: 'workspace', workspaceId: 'workspace-1' },
       executionPolicy: { ...DEFAULT_AGENT_EXECUTION_POLICY },
       budgetLedger: createInitialRunBudgetLedger(
         DEFAULT_AGENT_EXECUTION_POLICY

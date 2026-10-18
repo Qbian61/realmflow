@@ -21,7 +21,7 @@ afterEach(async () => {
 })
 
 describe('SqliteToolEventStore', () => {
-  it('atomically appends events, command result, and outbox messages', async () => {
+  it('atomically appends events and command results', async () => {
     const result = await store.append({
       streamId: 'execution-1',
       streamType: 'tool_execution',
@@ -32,16 +32,7 @@ describe('SqliteToolEventStore', () => {
         result: { executionId: 'execution-1', accepted: true }
       },
       events: [invocationEvent('event-1')],
-      outbox: [
-        {
-          id: 'outbox-1',
-          topic: 'tool.dispatch',
-          messageKey: 'execution-1',
-          payload: { executionId: 'execution-1' },
-          headers: { correlationId: 'correlation-1' },
-          availableAt: 100
-        }
-      ]
+      outbox: []
     })
 
     expect(result).toMatchObject({
@@ -61,7 +52,6 @@ describe('SqliteToolEventStore', () => {
       result.status === 'appended' ? result.events : []
     )
     expect(tableCount('tool_commands')).toBe(1)
-    expect(tableCount('tool_outbox')).toBe(1)
   })
 
   it('allows only one append for the same expected sequence', async () => {
@@ -98,24 +88,6 @@ describe('SqliteToolEventStore', () => {
       events: []
     })
     expect(conflict).toEqual({ status: 'idempotency_conflict' })
-    expect(tableCount('tool_events')).toBe(1)
-    expect(tableCount('tool_commands')).toBe(1)
-  })
-
-  it('rolls back stream, events, and command when outbox insertion fails', async () => {
-    await store.append({
-      ...command('command-1', 'event-1', 0),
-      outbox: [outbox('outbox-shared')]
-    })
-
-    await expect(
-      store.append({
-        ...command('command-2', 'event-2', 0, 'execution-2'),
-        outbox: [outbox('outbox-shared')]
-      })
-    ).rejects.toThrow()
-
-    expect(tableCount('tool_event_streams')).toBe(1)
     expect(tableCount('tool_events')).toBe(1)
     expect(tableCount('tool_commands')).toBe(1)
   })
@@ -198,17 +170,6 @@ function invocationEvent(eventId: string) {
       actorId: 'realmflow',
       occurredAt: 100
     }
-  }
-}
-
-function outbox(id: string) {
-  return {
-    id,
-    topic: 'tool.dispatch',
-    messageKey: 'execution-1',
-    payload: { executionId: 'execution-1' },
-    headers: {},
-    availableAt: 100
   }
 }
 

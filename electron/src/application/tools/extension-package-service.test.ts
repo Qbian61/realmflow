@@ -80,85 +80,14 @@ describe('ExtensionPackageService', () => {
     await prepared.pending.rollback()
   })
 
-  it('maps a legacy Python skill.json to a sandbox Tool and Skill', async () => {
+  it('rejects packages that only provide the retired skill.json manifest', async () => {
     await rm(sourcePath, { recursive: true })
-    await writeLegacyPythonSkill(sourcePath)
+    await writeRetiredPythonSkill(sourcePath)
     const service = createService()
 
-    const prepared = await service.prepare(sourcePath)
-
-    expect(prepared.manifest).toMatchObject({
-      packageId: 'com.example.legacy-python',
-      name: 'Legacy Python',
-    })
-    expect(prepared.tools).toMatchObject([
-      {
-        id: 'com.example.legacy-python.execute',
-        executor: {
-          kind: 'sandbox',
-          runtime: 'python',
-          entryPath: 'main.py',
-        },
-        capabilities: ['filesystem.read', 'process.execute'],
-      },
-    ])
-    expect(prepared.skills).toMatchObject([
-      {
-        id: 'com.example.legacy-python',
-        requiredTools: [
-          {
-            toolId: 'com.example.legacy-python.execute',
-            versionRange: '1.0.0',
-            required: true,
-          },
-        ],
-      },
-    ])
-    await prepared.pending.rollback()
-  })
-
-  it('enriches legacy Skill input schemas before applying the upload contract gate', async () => {
-    await rm(sourcePath, { recursive: true })
-    await writeLegacyPythonSkill(sourcePath, {
-      inputSchema: {
-        type: 'object',
-        required: ['topic'],
-        properties: {
-          topic: { type: 'string' },
-          mode: {
-            type: 'string',
-            enum: ['summary', 'detail'],
-          },
-        },
-      },
-    })
-    const service = createService()
-
-    const prepared = await service.prepare(sourcePath)
-
-    expect(prepared.tools[0].inputSchema).toMatchObject({
-      examples: [{ topic: 'example' }],
-      properties: {
-        topic: {
-          description: expect.stringMatching(/Required/i),
-        },
-        mode: {
-          description: expect.stringMatching(/Optional/i),
-        },
-      },
-    })
-    expect(prepared.skills[0].inputSchema).toMatchObject({
-      examples: [{ topic: 'example' }],
-      properties: {
-        topic: {
-          description: expect.stringMatching(/Required/i),
-        },
-        mode: {
-          description: expect.stringMatching(/Optional/i),
-        },
-      },
-    })
-    await prepared.pending.rollback()
+    await expect(service.prepare(sourcePath)).rejects.toThrow(
+      'Extension package manifest is missing',
+    )
   })
 
   it('rejects unsafe manifests and removes the staging directory', async () => {
@@ -390,7 +319,7 @@ function skillDefinitionSource() {
   }
 }
 
-async function writeLegacyPythonSkill(
+async function writeRetiredPythonSkill(
   path: string,
   overrides: Record<string, unknown> = {},
 ): Promise<void> {
@@ -399,10 +328,10 @@ async function writeLegacyPythonSkill(
     join(path, 'skill.json'),
     JSON.stringify({
       schemaVersion: 1,
-      id: 'com.example.legacy-python',
+      id: 'com.example.retired-python',
       version: '1.0.0',
-      name: 'Legacy Python',
-      description: 'Run a legacy Python skill.',
+      name: 'Retired Python',
+      description: 'Run a retired Python skill.',
       entry: { kind: 'python', path: 'main.py' },
       inputSchema: { type: 'object' },
       outputSchema: { type: 'object' },
@@ -416,5 +345,5 @@ async function writeLegacyPythonSkill(
       ...overrides,
     }),
   )
-  await writeFile(join(path, 'main.py'), 'print("legacy")\n')
+  await writeFile(join(path, 'main.py'), 'print("retired")\n')
 }

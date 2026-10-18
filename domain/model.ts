@@ -447,7 +447,6 @@ export type ModelUsage = {
 }
 
 export type ModelCallSource =
-  | 'workflow_stage'
   | 'workflow_node'
   | 'follow_up_suggestion'
   | 'general_conversation'
@@ -470,6 +469,7 @@ export type ModelCallErrorCode =
   | 'request_cancelled'
   | 'protocol_error'
   | 'stream_error'
+  | 'manifest_root_violation'
   | 'interrupted'
 
 export type ModelCallMetric = ModelUsage & {

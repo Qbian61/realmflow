@@ -23,6 +23,10 @@ const permissionCardStyles = readFileSync(
   resolve(process.cwd(), "src/features/permissions/ToolPermissionCard.css"),
   "utf8",
 );
+const conversationParityStyles = readFileSync(
+  resolve(process.cwd(), "src/features/conversation/conversation-parity.css"),
+  "utf8",
+);
 const electronMainSource = readFileSync(
   resolve(process.cwd(), "electron/src/main.ts"),
   "utf8",
@@ -382,10 +386,11 @@ describe("Root viewport styles", () => {
     );
   });
 
-  it("keeps workbench tab drag handles borderless", () => {
+  it("lets workbench tab names use the leading row space without drag icons", () => {
     expect(styles).toMatch(
-      /\.workbench-hub-settings-dialog[^}]*button\.workbench-hub-module-drag\s*\{[^}]*border:\s*0;/s,
+      /\.workbench-hub-settings-dialog > div > div\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto;/s,
     );
+    expect(styles).not.toContain(".workbench-hub-module-drag");
   });
 
   it("lets workspace names use full width until hover actions overlay them", () => {
@@ -415,10 +420,11 @@ describe("Root viewport styles", () => {
     );
   });
 
-  it("keeps the sidebar toggle above portal header content", () => {
+  it("keeps the sidebar edge actions above portal header content", () => {
     expect(styles).toMatch(
-      /\.sidebar-edge-toggle\s*\{[^}]*position:\s*relative;[^}]*z-index:\s*2;/s,
+      /\.sidebar-edge-actions\s*\{[^}]*position:\s*absolute;[^}]*z-index:\s*var\(--ui-layer-chrome\);/s,
     );
+    expect(uiStyles).toContain("--ui-layer-chrome: 40;");
   });
 
   it("keeps workbench hub tabs readable and split pages intact at 920px", () => {
@@ -1781,6 +1787,20 @@ describe("Composer focus styles", () => {
     );
   });
 
+  it("uses a subtle shimmer for assistant planning status", () => {
+    const statusRule =
+      styles.match(/\.assistant-planning-status\s*\{([^}]*)\}/)?.[1] ?? "";
+    const shineRule =
+      styles.match(/\.assistant-planning-shine\s*\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(statusRule).toContain("overflow: hidden;");
+    expect(shineRule).toContain("animation: assistant-planning-shimmer");
+    expect(styles).toContain("@keyframes assistant-planning-shimmer");
+    expect(styles).toMatch(
+      /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.assistant-planning-shine\s*\{[^}]*animation: none;/,
+    );
+  });
+
   it("keeps assistant execution details compact in long timelines", () => {
     const triggerRule =
       styles.match(/\.assistant-task-disclosure-trigger\s*\{([^}]*)\}/)?.[1] ??
@@ -1883,6 +1903,13 @@ describe("Composer focus styles", () => {
     expect(footerRule).toContain("margin-top: 6px;");
     expect(assistantBodyRule).toContain("gap: 12px;");
     expect(bodyFooterRule).toContain("margin-top: 0;");
+    expect(bodyFooterRule).toContain("box-sizing: border-box;");
+    expect(bodyFooterRule).toContain("width: var(--assistant-row-width);");
+    expect(bodyFooterRule).toContain("justify-self: end;");
+    expect(bodyFooterRule).toContain(
+      "padding-left: var(--conversation-agent-padding-inline-start);",
+    );
+    expect(bodyFooterRule).toContain("margin-left: 0;");
     expect(assistantFooterRule).toContain("justify-content: flex-start;");
     expect(assistantFooterRule).toContain("gap: 4px;");
     expect(assistantMetaRule).toContain("opacity: 0;");
@@ -2106,7 +2133,7 @@ describe("Composer focus styles", () => {
 
     expect(spacesHeadingRule).toContain("height: 32px;");
     expect(recentHeadingRule).toContain("height: 32px;");
-    expect(recentHeadingRule).toContain("padding: 0 8px;");
+    expect(recentHeadingRule).toContain("padding: 0 0 0 8px;");
     expect(recentHeadingRule).toContain("color: var(--tone-8a8a8a);");
     expect(recentHeadingRule).toContain("font-size: 12px;");
     expect(recentHeadingRule).toContain("font-weight: 400;");
@@ -2152,7 +2179,9 @@ describe("Composer focus styles", () => {
 
   it("keeps sidebar section spacing compact without divider lines", () => {
     const navigationRule =
-      styles.match(/\.sidebar > nav\s*\{([^}]*)\}/)?.[1] ?? "";
+      styles.match(
+        /\.sidebar > \.sidebar-primary-navigation\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
     const sectionRule =
       styles.match(/\.spaces-section,\s*\.recent-section\s*\{([^}]*)\}/)?.[1] ??
       "";
@@ -2161,9 +2190,9 @@ describe("Composer focus styles", () => {
         .map((match) => match[1])
         .find((rule) => rule.includes("flex:")) ?? "";
 
-    expect(navigationRule).toContain("padding: 0 16px;");
-    expect(sectionRule).toContain("padding: 0 16px;");
-    expect(recentSectionRule).toContain("padding-right: 0;");
+    expect(navigationRule).toContain("padding: 0 8px 16px 12px;");
+    expect(sectionRule).toContain("padding: 0 8px 0 16px;");
+    expect(recentSectionRule).not.toContain("padding-right:");
     expect(sectionRule).not.toContain("border-top:");
     expect(styles).toMatch(/\.space-list\s*\{[^}]*margin-top:\s*0;/s);
   });
@@ -2228,14 +2257,38 @@ describe("Composer focus styles", () => {
     );
   });
 
-  it("keeps primary navigation rows compact", () => {
+  it("presents new chat as a full-width primary sidebar button", () => {
+    const sidebarRule =
+      styles.match(/(?:^|\n)\.sidebar\s*\{([^}]*)\}/)?.[1] ?? "";
     const navigationRule =
-      styles.match(/\.sidebar > nav\s*\{([^}]*)\}/)?.[1] ?? "";
-    const itemRule =
-      styles.match(/(?:^|\n)\.nav-item\s*\{([^}]*)\}/)?.[1] ?? "";
+      styles.match(
+        /\.sidebar > \.sidebar-primary-navigation\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    const actionRule =
+      styles.match(
+        /\.sidebar-primary-navigation \.sidebar-new-chat\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    const activeActionRule =
+      styles.match(
+        /\.sidebar-primary-navigation \.sidebar-new-chat\.active\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    const sharedButtonRule =
+      uiStyles.match(/(?:^|\n)\.ui-button\s*\{([^}]*)\}/)?.[1] ?? "";
+    const comfortableRule =
+      uiStyles.match(/\.ui-button--comfortable\s*\{([^}]*)\}/)?.[1] ?? "";
 
-    expect(navigationRule).toContain("gap: 1px;");
-    expect(itemRule).toContain("min-height: 34px;");
+    expect(sidebarRule).toContain("padding: 64px 0 0;");
+    expect(navigationRule).toContain("padding: 0 8px 16px 12px;");
+    expect(actionRule).toContain("width: 100%;");
+    expect(actionRule).toContain("background: var(--color-surface);");
+    expect(actionRule).toContain("border: 0;");
+    expect(actionRule).toContain("border-radius: var(--ui-radius-large);");
+    expect(activeActionRule).toContain("background: var(--color-surface);");
+    expect(sharedButtonRule).toContain("justify-content: center;");
+    expect(sharedButtonRule).toContain("border: 1px solid var(--color-border);");
+    expect(comfortableRule).toContain(
+      "min-height: var(--ui-control-comfortable);",
+    );
   });
 
   it("uses a compact borderless account footer with a scroll fade", () => {
@@ -2250,7 +2303,7 @@ describe("Composer focus styles", () => {
     const fadeRule =
       styles.match(/\.user-area::before\s*\{([^}]*)\}/)?.[1] ?? "";
 
-    expect(userAreaRule).toContain("padding: 8px 12px 10px;");
+    expect(userAreaRule).toContain("padding: 8px 8px 10px 12px;");
     expect(userAreaRule).toContain("background: var(--sidebar);");
     expect(userAreaRule).not.toContain("border-top:");
     expect(userTriggerRule).toContain("min-height: 44px;");
@@ -2301,8 +2354,8 @@ describe("Composer focus styles", () => {
     expect(styles).toMatch(
       /\.space-requirements\s+li:has\(\.requirement-row-actions :focus-visible\)\s+\.requirement-row-actions/,
     );
-    expect(styles).toContain(
-      ".recent-session-actions-trigger:focus-visible",
+    expect(styles).toMatch(
+      /\.recent-session:has\(\.recent-session-row-actions :focus-visible\)\s+\.recent-session-row-actions/,
     );
   });
 
@@ -2312,8 +2365,7 @@ describe("Composer focus styles", () => {
     const requirementActionsRule =
       styles.match(/\.requirement-row-actions\s*\{([^}]*)\}/)?.[1] ?? "";
     const recentActionsRule =
-      styles.match(/\.recent-session-actions-trigger\s*\{([^}]*)\}/)?.[1] ??
-      "";
+      styles.match(/\.recent-session-row-actions\s*\{([^}]*)\}/)?.[1] ?? "";
 
     for (const rule of [
       spaceActionsRule,
@@ -2330,7 +2382,7 @@ describe("Composer focus styles", () => {
       /\.space-requirements li:hover \.requirement-row-actions,[\s\S]*?\.requirement-row-actions\s*\{[^}]*transform: translateX\(0\);/,
     );
     expect(styles).toMatch(
-      /\.recent-session:hover \.recent-session-actions-trigger,[\s\S]*?\.recent-session-actions-trigger\s*\{[^}]*transform: translateX\(0\);/,
+      /\.recent-session:hover \.recent-session-row-actions,[\s\S]*?\.recent-session-row-actions\s*\{[^}]*transform: translateX\(0\);/,
     );
   });
 
@@ -2400,6 +2452,29 @@ describe("Composer focus styles", () => {
         )?.[1] ?? "";
       expect(rule).toContain("min-width: 0;");
     }
+  });
+
+  it("uses the body text color for sidebar names and matching icons", () => {
+    const spaceRule =
+      styles.match(/(?:^|\n)\.space-item\s*\{([^}]*)\}/)?.[1] ?? "";
+    const spaceIconRule =
+      styles.match(/(?:^|\n)\.space-icon\s*\{([^}]*)\}/)?.[1] ?? "";
+    const requirementRule =
+      styles.match(/\.space-requirements li a\s*\{([^}]*)\}/)?.[1] ?? "";
+    const recentConversationRule =
+      styles.match(/\.recent-session\s*\{([^}]*)\}/)?.[1] ?? "";
+    const recentConversationIconRule =
+      styles.match(/\.recent-session-icon\s*\{([^}]*)\}/)?.[1] ?? "";
+
+    for (const rule of [
+      spaceRule,
+      spaceIconRule,
+      requirementRule,
+      recentConversationRule,
+    ]) {
+      expect(rule).toContain("color: var(--color-text);");
+    }
+    expect(recentConversationIconRule).toContain("color: inherit;");
   });
 
   it("reveals space collapse controls only on row interaction", () => {
@@ -2525,11 +2600,14 @@ describe("Composer focus styles", () => {
     expect(fieldTypeLabelRule).toContain("text-overflow: ellipsis;");
   });
 
-  it("aligns the space action with the recent filter right edge", () => {
+  it("aligns sidebar selections and actions to the recent session right edge", () => {
     const spaceActionsRule =
       styles.match(/\.space-actions\s*\{([^}]*)\}/)?.[1] ?? "";
+    const recentHeadingRule =
+      styles.match(/\.recent-heading\s*\{([^}]*)\}/)?.[1] ?? "";
 
-    expect(spaceActionsRule).toContain("margin-right: -12px;");
+    expect(spaceActionsRule).toContain("margin-right: -4px;");
+    expect(recentHeadingRule).toContain("padding: 0 0 0 8px;");
   });
 
   it("lets requirement names use the row width until actions overlay them", () => {
@@ -2537,6 +2615,27 @@ describe("Composer focus styles", () => {
       styles.match(/\.space-requirements li a\s*\{([^}]*)\}/)?.[1] ?? "";
 
     expect(linkRule).toContain("padding: 0 8px;");
+  });
+
+  it("lets recent conversation names use the row width until actions overlay them", () => {
+    const rowRule =
+      styles.match(/\.recent-session\s*\{([^}]*)\}/)?.[1] ?? "";
+    const actionRule =
+      styles.match(/\.recent-session-row-actions\s*\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(rowRule).toContain("position: relative;");
+    expect(rowRule).toContain("grid-template-columns: minmax(0, 1fr);");
+    expect(rowRule).not.toContain("28px");
+    expect(actionRule).toContain("position: absolute;");
+    expect(actionRule).toContain("top: 2px;");
+    expect(actionRule).toContain("right: 0;");
+    expect(actionRule).toContain("background: var(--tone-e7e7e7);");
+    expect(styles).toContain(
+      ".recent-session-link:hover + .recent-session-row-actions",
+    );
+    expect(styles).toMatch(
+      /\.recent-session:has\(\.recent-session-link\.active\) \.recent-session-row-actions\s*\{[^}]*background: var\(--tone-dfdfdf\);/,
+    );
   });
 
   it("reveals requirement actions only when its row is active", () => {
@@ -2594,11 +2693,21 @@ describe("Composer focus styles", () => {
     );
   });
 
-  it("keeps the sidebar toggle inside the independent workspace header", () => {
+  it("places home left and the sidebar toggle right of the sidebar header", () => {
     const headerRule =
       styles.match(/\.app-content-header\s*\{([^}]*)\}/)?.[1] ?? "";
-    const edgeButtonRule =
-      styles.match(/\.sidebar-edge-toggle\s*\{([^}]*)\}/)?.[1] ?? "";
+    const edgeActionsRule =
+      styles.match(/\.sidebar-edge-actions\s*\{([^}]*)\}/)?.[1] ?? "";
+    const edgeActionRule =
+      uiStyles.match(/\.ui-icon-button\s*\{([^}]*)\}/)?.[1] ?? "";
+    const edgeIconRule =
+      styles.match(/\.sidebar-edge-actions svg\s*\{([^}]*)\}/)?.[1] ?? "";
+    const homeActiveRule =
+      styles.match(/\.sidebar-home-link\.active\s*\{([^}]*)\}/)?.[1] ?? "";
+    const closedEdgeActionsRule =
+      styles.match(
+        /\.app-content-header\.sidebar-closed > \.sidebar-edge-actions\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
     const closedHeaderRule =
       styles.match(/\.app-content-header\.sidebar-closed\s*\{([^}]*)\}/)?.[1] ??
       "";
@@ -2606,17 +2715,61 @@ describe("Composer focus styles", () => {
       uiStyles.match(
         /\.app-content-header\.sidebar-closed \.ui-toolbar--workspace-header\s*\{([^}]*)\}/,
       )?.[1] ?? "";
+    const openWorkspaceToolbarRule =
+      uiStyles.match(
+        /\.app-content-header\.sidebar-open \.ui-toolbar--workspace-header\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    const openAnalyticsHeaderRule =
+      styles.match(
+        /\.app-content-header\.sidebar-open \.analytics-page-header\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    const openCapabilitiesHeaderRule =
+      styles.match(
+        /\.app-content-header\.sidebar-open \.capabilities-page-header\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    const closedAnalyticsHeaderRule =
+      styles.match(
+        /\.app-content-header\.sidebar-closed \.analytics-page-header\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    const closedCapabilitiesHeaderRule =
+      styles.match(
+        /\.app-content-header\.sidebar-closed \.capabilities-page-header\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
 
     expect(headerRule).toContain("height: var(--workspace-header-height);");
     expect(headerRule).toContain("padding: 0 12px;");
     expect(closedHeaderRule).toContain("padding-left: 79px;");
-    expect(closedWorkspaceToolbarRule).toContain("padding-left: 125px;");
-    expect(edgeButtonRule).not.toContain("position: absolute;");
-    expect(edgeButtonRule).toContain("position: relative;");
-    expect(edgeButtonRule).toContain("z-index: 2;");
+    expect(openWorkspaceToolbarRule).toContain("padding-left: 18px;");
+    expect(openAnalyticsHeaderRule).toContain("padding-left: 18px;");
+    expect(openCapabilitiesHeaderRule).toContain("padding-left: 18px;");
+    expect(closedWorkspaceToolbarRule).toContain("padding-left: 142px;");
+    expect(closedAnalyticsHeaderRule).toContain("padding-left: 142px;");
+    expect(closedCapabilitiesHeaderRule).toContain("padding-left: 142px;");
+    expect(edgeActionsRule).toContain("position: absolute;");
+    expect(edgeActionsRule).toContain("top: 8px;");
+    expect(edgeActionsRule).toContain("left: 88px;");
+    expect(edgeActionsRule).toContain(
+      "width: calc(var(--sidebar-width) - 96px);",
+    );
+    expect(edgeActionsRule).not.toContain("right:");
+    expect(edgeActionsRule).toContain("z-index: var(--ui-layer-chrome);");
+    expect(edgeActionsRule).toContain("display: flex;");
+    expect(edgeActionsRule).toContain("justify-content: space-between;");
+    expect(edgeActionRule).toContain("width: var(--ui-control-default);");
+    expect(uiStyles).toContain("--ui-control-default: 32px;");
+    expect(uiStyles).toContain("--ui-layer-chrome: 40;");
+    expect(edgeActionsRule).toContain("-webkit-app-region: no-drag;");
+    expect(edgeIconRule).toContain("pointer-events: none;");
+    expect(homeActiveRule).toContain("background: var(--tone-dfdfdf);");
+    expect(closedEdgeActionsRule).toContain("top: 8px;");
+    expect(closedEdgeActionsRule).toContain("left: 97px;");
+    expect(closedEdgeActionsRule).toContain("right: auto;");
+    expect(closedEdgeActionsRule).toContain("width: auto;");
+    expect(closedEdgeActionsRule).toContain("justify-content: flex-start;");
+    expect(closedEdgeActionsRule).toContain("gap: 2px;");
   });
 
-  it("anchors the workbench toggle to the right edge of the main page", () => {
+  it("anchors the workbench toggle to the filled main page edge", () => {
     const toolsRule =
       workbenchStyles.match(
         /(?:^|\n)\.global-workbench-tools\s*\{([^}]*)\}/,
@@ -2629,12 +2782,12 @@ describe("Composer focus styles", () => {
       )?.[1] ?? "";
 
     expect(toolsRule).toContain("position: absolute;");
-    expect(toolsRule).toContain("top: 9px;");
+    expect(toolsRule).toContain("top: 0;");
     expect(toolsRule).toContain("height: var(--workspace-header-height);");
-    expect(toolsRule).toContain("right: 21px;");
+    expect(toolsRule).toContain("right: 13px;");
     expect(openToolsRule).toContain("right: 13px;");
     expect(workbenchStyles).toMatch(
-      /@media \(max-width: 1100px\)\s*\{[\s\S]*?\.global-workbench-layout\.open \.global-workbench-tools\s*\{[^}]*right: 21px;[^}]*\}/,
+      /@media \(max-width: 1100px\)\s*\{[\s\S]*?\.global-workbench-layout\.open \.global-workbench-tools\s*\{[^}]*right: 13px;[^}]*\}/,
     );
     expect(toolsRule).toContain("z-index: 40;");
     expect(toolsRule).toContain("-webkit-app-region: no-drag;");
@@ -2687,6 +2840,15 @@ describe("Composer focus styles", () => {
     );
   });
 
+  it("keeps the chat header search interactive inside the draggable workspace header", () => {
+    const searchRule =
+      conversationParityStyles.match(/\.chat-session-search\s*\{([^}]*)\}/)
+        ?.[1] ?? "";
+
+    expect(searchRule).toContain("-webkit-app-region: no-drag;");
+    expect(searchRule).toContain("pointer-events: auto;");
+  });
+
   it("does not reserve a duplicate header row inside space details", () => {
     const pageRule =
       styles.match(/\.space-detail-page\s*\{([^}]*)\}/)?.[1] ?? "";
@@ -2699,7 +2861,7 @@ describe("Composer focus styles", () => {
     expect(issueRule).toContain("grid-template-rows: auto minmax(0, 1fr);");
   });
 
-  it("styles the workbench as a rounded inset panel with a compact toolbar", () => {
+  it("fills the right workspace to its outer edges with a compact toolbar", () => {
     const panelRule =
       workbenchStyles.match(/(?:^|\n)\.global-workbench\s*\{([^}]*)\}/)?.[1] ??
       "";
@@ -2714,9 +2876,13 @@ describe("Composer focus styles", () => {
       workbenchStyles.match(/\.global-workbench-empty\s*\{([^}]*)\}/)?.[1] ??
       "";
 
-    expect(panelRule).toContain("margin: 8px 8px 8px 0;");
-    expect(panelRule).toContain("border: 1px solid var(--tone-e1e1e1);");
-    expect(panelRule).toContain("border-radius: 12px;");
+    expect(panelRule).toContain("width: 100%;");
+    expect(panelRule).toContain("margin: 0;");
+    expect(panelRule).toContain("border: 0;");
+    expect(panelRule).toContain(
+      "border-left: 1px solid var(--tone-e1e1e1);",
+    );
+    expect(panelRule).toContain("border-radius: 0;");
     expect(panelRule).toContain("box-shadow: none;");
     expect(panelRule).toContain(
       "grid-template-rows: var(--workspace-header-height) minmax(0, 1fr);",
@@ -2759,13 +2925,17 @@ describe("Composer focus styles", () => {
     expect(shellRule).toContain("background: var(--sidebar);");
     expect(sidebarRule).not.toContain("border-right:");
     expect(contentRule).toContain("height: auto;");
-    expect(contentRule).toContain("margin: 8px;");
+    expect(contentRule).toContain("margin: 0;");
     expect(contentRule).toContain("background: var(--color-surface);");
-    expect(contentRule).toContain("border: 1px solid var(--color-border);");
-    expect(contentRule).toContain("border-radius: 12px;");
+    expect(contentRule).toContain("border: 0;");
+    expect(contentRule).toContain(
+      "border-left: 1px solid var(--color-border);",
+    );
+    expect(contentRule).toContain("border-radius: 0;");
     expect(openContentRule).toContain("margin-right: 0;");
     expect(openLayoutRule).toContain("4px");
     expect(resizerRule).toContain("width: 4px;");
+    expect(resizerRule).toContain("background: var(--sidebar);");
     expect(resizerIndicatorRule).toContain("width: 1px;");
     expect(resizerIndicatorRule).toContain("var(--ink) 50%");
     expect(resizerIndicatorRule).toContain("opacity: 0;");
@@ -2787,9 +2957,9 @@ describe("Composer focus styles", () => {
 
     expect(sidebarRule).toContain("min-width: 220px;");
     expect(contentRule).toContain("min-width: 320px;");
-    expect(openLayoutRule).toContain("minmax(548px, 1fr)");
+    expect(openLayoutRule).toContain("minmax(540px, 1fr)");
     expect(openLayoutRule).toContain(
-      "minmax(448px, var(--global-workbench-width))",
+      "minmax(440px, var(--global-workbench-width))",
     );
     expect(panelRule).toContain("min-width: 440px;");
   });
@@ -2858,7 +3028,24 @@ describe("Composer focus styles", () => {
     );
   });
 
-  it("uses matching theme-colored fade handles for both workspace resizers", () => {
+  it("keeps sidebar selections inside the standard right gutter", () => {
+    const primaryNavigationRule =
+      styles.match(
+        /\.sidebar > \.sidebar-primary-navigation\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    const collectionSectionRule =
+      styles.match(
+        /\.spaces-section,\s*\.recent-section\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    const userAreaRule =
+      styles.match(/\.user-area\s*\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(primaryNavigationRule).toContain("padding: 0 8px 16px 12px;");
+    expect(collectionSectionRule).toContain("padding: 0 8px 0 16px;");
+    expect(userAreaRule).toContain("padding: 8px 8px 10px 12px;");
+  });
+
+  it("centers matching theme-colored fade handles on both workspace dividers", () => {
     const sidebarResizerRule =
       styles.match(/\.sidebar-resizer\s*\{([^}]*)\}/)?.[1] ?? "";
     const shellIndicatorRule =
@@ -2873,12 +3060,10 @@ describe("Composer focus styles", () => {
       )?.[1] ?? "";
 
     expect(sidebarResizerRule).toContain(
-      "left: calc(var(--sidebar-width) + 5px);",
+      "left: calc(var(--sidebar-width) - 3px);",
     );
     expect(sidebarResizerRule).toContain("width: 6px;");
-    expect(shellIndicatorRule).toContain(
-      "left: calc(var(--sidebar-width) + 8px);",
-    );
+    expect(shellIndicatorRule).toContain("left: var(--sidebar-width);");
 
     for (const rule of [shellIndicatorRule, workbenchIndicatorRule]) {
       expect(rule).toContain("width: 1px;");
@@ -2890,7 +3075,7 @@ describe("Composer focus styles", () => {
     expect(shellActiveRule).toContain("opacity: 1;");
   });
 
-  it("uses the sidebar color behind every workspace edge", () => {
+  it("uses the sidebar color for the shell and workspace divider", () => {
     const rootRule = styles.match(/:root\s*\{([^}]*)\}/)?.[1] ?? "";
     const viewportRule =
       styles.match(/html,\s*body,\s*#root\s*\{([^}]*)\}/)?.[1] ?? "";
@@ -2902,26 +3087,31 @@ describe("Composer focus styles", () => {
       workbenchStyles.match(
         /(?:^|\n)\.global-workbench-page\s*\{([^}]*)\}/,
       )?.[1] ?? "";
+    const resizerRule =
+      workbenchStyles.match(
+        /(?:^|\n)\.global-workbench-resizer\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
 
     expect(rootRule).toContain("background: var(--color-canvas);");
     expect(viewportRule).toContain("background: var(--sidebar);");
     expect(layoutRule).toContain("background: var(--sidebar);");
     expect(pageRule).toContain("background: var(--sidebar);");
+    expect(resizerRule).toContain("background: var(--sidebar);");
     expect(electronMainSource).toContain("backgroundColor: '#f1f1f1'");
   });
 
-  it("hides page-edge toggles and clears macOS controls when maximized", () => {
+  it("maximizes the right workspace inside the main content area", () => {
     const maximizedPanelRule =
       workbenchStyles.match(
         /\.global-workbench-layout\.open\.maximized \.global-workbench\s*\{([^}]*)\}/,
       )?.[1] ?? "";
-    const maximizedEdgeControlsRule =
+    const maximizedContentRule =
       workbenchStyles.match(
-        /\.global-workbench-layout\.maximized \.sidebar-edge-toggle,\s*\.global-workbench-layout\.maximized \.global-workbench-tools\s*\{([^}]*)\}/,
+        /\.global-workbench-layout\.open\.maximized \.app-content\s*\{([^}]*)\}/,
       )?.[1] ?? "";
-    const maximizedHeaderRule =
+    const maximizedWorkbenchControlRule =
       workbenchStyles.match(
-        /\.global-workbench-layout\.maximized \.global-workbench-header\s*\{([^}]*)\}/,
+        /\.global-workbench-layout\.maximized \.global-workbench-tools\s*\{([^}]*)\}/,
       )?.[1] ?? "";
     const maximizedActionsRule =
       workbenchStyles.match(
@@ -2933,9 +3123,19 @@ describe("Composer focus styles", () => {
       )?.[1] ?? "";
 
     expect(maximizedPanelRule).toContain("position: absolute;");
-    expect(maximizedPanelRule).toContain("inset: 0;");
-    expect(maximizedEdgeControlsRule).toContain("display: none;");
-    expect(maximizedHeaderRule).toContain("padding-left: 76px;");
+    expect(maximizedPanelRule).toContain(
+      "inset: 0 0 0 var(--global-workbench-maximized-left);",
+    );
+    expect(maximizedPanelRule).toContain("width: auto;");
+    expect(maximizedPanelRule).toContain("margin: 0;");
+    expect(maximizedContentRule).toContain("margin-right: 0;");
+    expect(maximizedWorkbenchControlRule).toContain("display: none;");
+    expect(workbenchStyles).not.toContain(
+      ".global-workbench-layout.maximized .sidebar-edge-toggle",
+    );
+    expect(workbenchStyles).not.toMatch(
+      /\.global-workbench-layout\.maximized \.global-workbench-header\s*\{[^}]*padding-left:/,
+    );
     expect(headerRule).toContain("-webkit-app-region: no-drag;");
     expect(maximizedActionsRule).toContain("margin-right: 0;");
   });

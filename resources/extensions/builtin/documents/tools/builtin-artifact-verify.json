@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.artifact.verify",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "name": "Verify artifact",
   "description": "Read back and verify a DOCX or PDF artifact against explicit acceptance criteria.",
   "tags": [

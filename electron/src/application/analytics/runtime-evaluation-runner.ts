@@ -1,10 +1,6 @@
 import { createHash } from 'node:crypto'
 import type Database from 'better-sqlite3'
 import {
-  createRunCheckpoint,
-  decideAgentRunRecovery
-} from '../../../../domain/agent-run-recovery'
-import {
   createAssistantTurnProjection,
   projectAssistantTurn,
   type AssistantRunEvent
@@ -24,6 +20,25 @@ import type {
   RuntimeEvaluationCaseSummary,
   RuntimeEvaluationDimension
 } from '../../../../domain/runtime-governance'
+import {
+  advanceDshSessionProjection,
+  createDshSessionBinding,
+  dshRunOwnerKey,
+  type DshSessionBinding
+} from '../../../../domain/dsh-session-binding'
+import {
+  sealDshRunManifest,
+  type DshRunManifest,
+  type DshRunOwner
+} from '../../../../domain/dsh-run-manifest'
+import {
+  DSH_RUNTIME_EVENT_SCHEMA_VERSION,
+  type DshRuntimeEventEnvelope,
+  type DshRuntimeEventKind
+} from '../../../../shared/dsh-runtime-event-contract'
+import { DshHistorySync } from '../dsh/dsh-history-sync'
+import { DshRuntimeEventIngestor } from '../dsh/dsh-runtime-event-ingestor'
+import { DshRuntimeEventProjector } from '../dsh/dsh-runtime-event-projector'
 
 export type RuntimeEvaluationCase = {
   id: string
@@ -186,6 +201,7 @@ function builtinCases(): RuntimeEvaluationCase[] {
       execute: () => {
         let projection = createAssistantTurnProjection({
           runId: 'evaluation-run',
+          turnId: 'evaluation-turn',
           assistantMessageId: 'evaluation-assistant',
           startedAt: 100
         })
@@ -222,6 +238,7 @@ function builtinCases(): RuntimeEvaluationCase[] {
         const projection = projectAssistantTurn(
           createAssistantTurnProjection({
             runId: 'evaluation-run',
+            turnId: 'evaluation-turn',
             assistantMessageId: 'evaluation-assistant',
             startedAt: 100
           }),
@@ -288,28 +305,42 @@ function builtinCases(): RuntimeEvaluationCase[] {
       }
     },
     {
-      id: 'recovery.unknown-side-effect',
+      id: 'recovery.dsh-history-sync',
       dimension: 'recovery',
-      execute: () =>
-        decideAgentRunRecovery({
-          checkpoint: recoveryCheckpoint(),
-          configuration: availableConfiguration(),
-          pendingCalls: [
-            { callId: 'evaluation-call', outcome: 'unknown' }
-          ]
-        }).action === 'block'
+      execute: async () => {
+        const result = await evaluateDshHistoryRecovery([
+          dshRuntimeEvent(1, 'run.started', { summary: 'Evaluation started' }),
+          dshRuntimeEvent(2, 'runtime.completed', {
+            resultSummary: 'Evaluation completed'
+          })
+        ])
+        return (
+          result.synced.projectedEvents === 2 &&
+          result.synced.toSequence === 2 &&
+          result.binding.lastProjectedSequence === 2
+        )
+      }
     },
     {
-      id: 'recovery.reconciled-side-effect',
+      id: 'recovery.product-command-idempotency',
       dimension: 'recovery',
-      execute: () =>
-        decideAgentRunRecovery({
-          checkpoint: recoveryCheckpoint(),
-          configuration: availableConfiguration(),
-          pendingCalls: [
-            { callId: 'evaluation-call', outcome: 'completed' }
-          ]
-        }).action === 'resume'
+      execute: async () => {
+        const result = await evaluateDshHistoryRecovery([
+          dshRuntimeEvent(1, 'product_command.completed', {
+            commandId: 'command-1',
+            command: 'realmflow.requirements.get',
+            idempotencyKey: 'evaluation-command-1',
+            productVersion: 'requirements-v1',
+            output: { requirementId: 'requirement-1' }
+          })
+        ])
+        return (
+          result.synced.productCommandResultsReconciled === 1 &&
+          result.reconciledCommandKeys.join(',') ===
+            'evaluation-command-1' &&
+          result.binding.lastProjectedSequence === 1
+        )
+      }
     }
   ]
 }
@@ -329,55 +360,225 @@ async function evaluationPipelineSnapshot() {
   })
 }
 
-function recoveryCheckpoint() {
-  return createRunCheckpoint({
-    runId: 'evaluation-run',
-    ordinal: 1,
-    reason: 'tool_completed',
-    snapshotDigest: 'a'.repeat(64),
-    configurationDigests: {
-      agentProfile: 'b'.repeat(64),
-      prompt: 'c'.repeat(64),
-      policy: 'd'.repeat(64),
-      capabilityCatalog: 'e'.repeat(64),
-      capabilityBinding: 'f'.repeat(64)
-    },
-    messageWindow: [
-      {
-        id: 'evaluation-message',
-        role: 'user',
-        content: 'Evaluate recovery'
-      }
-    ],
-    pendingCalls: [
-      {
-        callId: 'evaluation-call',
-        executionId: 'evaluation-execution',
-        effect: 'external_write',
-        idempotency: 'supported',
-        status: 'requested'
-      }
-    ],
-    remainingBudgets: {
-      toolCalls: 1,
-      subagents: 0,
-      retries: 1,
-      timeoutMs: 1_000,
-      tokens: 1_024
-    },
-    projectionCursor: 1,
-    createdAt: 100
-  })
+type EvaluationDshEvent = {
+  sequence: number
+  kind: DshRuntimeEventKind
+  data: DshRuntimeEventEnvelope['data']
 }
 
-function availableConfiguration() {
+const EVALUATION_DSH_RUNTIME_ID = 'runtime-evaluation'
+
+function dshRuntimeEvent(
+  sequence: number,
+  kind: DshRuntimeEventKind,
+  data: DshRuntimeEventEnvelope['data']
+): EvaluationDshEvent {
+  return { sequence, kind, data }
+}
+
+async function evaluateDshHistoryRecovery(events: EvaluationDshEvent[]) {
+  const manifest = evaluationRunManifest()
+  const sessions = new EvaluationDshSessions(
+    createDshSessionBinding({
+      owner: manifest.owner,
+      dshSessionId: manifest.sessionId,
+      runManifestDigest: manifest.digest,
+      runtimeBuildDigest: '9'.repeat(64),
+      createdAt: 100
+    })
+  )
+  const storedEvents = events.map((event) =>
+    materializeDshRuntimeEvent(manifest, event)
+  )
+  const reconciledCommandKeys: string[] = []
+  const ingestor = new DshRuntimeEventIngestor({
+    sessions,
+    projector: new DshRuntimeEventProjector(),
+    now: () => 200
+  })
+  const sync = new DshHistorySync({
+    sessions,
+    ingestor,
+    history: {
+      readRange: (input) => {
+        const rangeEvents = storedEvents.filter(
+          (event) => event.sequence > input.afterSequence
+        )
+        return {
+          session: {
+            runtimeInstanceId: EVALUATION_DSH_RUNTIME_ID,
+            sessionId: manifest.sessionId,
+            runId: manifest.runId,
+            manifestDigest: manifest.digest,
+            owner: manifest.owner
+          },
+          afterSequence: input.afterSequence,
+          nextAfterSequence:
+            rangeEvents.at(-1)?.sequence ?? input.afterSequence,
+          hasMore: false,
+          events: rangeEvents
+        }
+      }
+    },
+    productCommandResults: {
+      reconcileCompletedResult: (result) => {
+        reconciledCommandKeys.push(result.idempotencyKey)
+        return 'recorded'
+      }
+    },
+    defaultLimit: 10
+  })
+  const synced = await sync.syncRun({
+    runtimeInstanceId: EVALUATION_DSH_RUNTIME_ID,
+    manifest,
+    limit: 10
+  })
   return {
-    profileAvailable: true,
-    capabilitiesAvailable: true,
-    modelAvailable: true,
-    permissionValid: true,
-    credentialAvailable: true
+    synced,
+    binding: sessions.binding,
+    reconciledCommandKeys
   }
+}
+
+class EvaluationDshSessions {
+  constructor(public binding: DshSessionBinding) {}
+
+  getByOwner(owner: DshRunOwner): DshSessionBinding | undefined {
+    return dshRunOwnerKey(owner) === this.binding.ownerKey
+      ? this.binding
+      : undefined
+  }
+
+  getByDshSessionId(dshSessionId: string): DshSessionBinding | undefined {
+    return dshSessionId === this.binding.dshSessionId
+      ? this.binding
+      : undefined
+  }
+
+  advanceProjection(
+    dshSessionId: string,
+    sequence: number,
+    updatedAt: number
+  ): DshSessionBinding {
+    if (dshSessionId !== this.binding.dshSessionId) {
+      throw new Error('Evaluation DSH session is unavailable')
+    }
+    this.binding = advanceDshSessionProjection(
+      this.binding,
+      sequence,
+      updatedAt
+    )
+    return this.binding
+  }
+}
+
+function materializeDshRuntimeEvent(
+  manifest: DshRunManifest,
+  event: EvaluationDshEvent
+): DshRuntimeEventEnvelope {
+  return {
+    schemaVersion: DSH_RUNTIME_EVENT_SCHEMA_VERSION,
+    runtimeInstanceId: EVALUATION_DSH_RUNTIME_ID,
+    sessionId: manifest.sessionId,
+    runId: manifest.runId,
+    manifestDigest: manifest.digest,
+    owner: manifest.owner,
+    eventId: `evaluation-event-${event.sequence}`,
+    sequence: event.sequence,
+    kind: event.kind,
+    occurredAt: 100 + event.sequence,
+    data: event.data
+  }
+}
+
+function evaluationRunManifest(): DshRunManifest {
+  return sealDshRunManifest({
+    schemaVersion: 1,
+    manifestId: 'evaluation-manifest',
+    runId: 'evaluation-run',
+    sessionId: 'evaluation-session',
+    owner: {
+      conversationId: 'evaluation-conversation'
+    },
+    model: {
+      kind: 'model',
+      providerId: 'provider-local',
+      providerType: 'local',
+      profileId: 'profile-local',
+      modelId: 'local-evaluation-model',
+      reasoningEffort: 'low',
+      options: {}
+    },
+    tools: [],
+    skills: [],
+    agents: [],
+    mcpServers: [],
+    connectors: [],
+    context: {
+      kind: 'context-access',
+      scope: { kind: 'global' },
+      roots: [],
+      attachments: []
+    },
+    knowledge: {
+      kind: 'knowledge-runtime',
+      enabled: false,
+      scope: { kind: 'none' },
+      snapshotId: 'evaluation-knowledge',
+      workspaceIds: [],
+      generationIds: [],
+      embeddingProfile: {
+        provider: 'local',
+        model: 'Alibaba-NLP/gte-multilingual-base',
+        revision: '2024-08-01',
+        dimensions: 768,
+        normalization: 'L2',
+        distance: 'Cosine',
+        profileDigest: 'a'.repeat(64)
+      },
+      indexLease: {
+        leaseId: 'evaluation-lease',
+        collection: 'evaluation-collection',
+        expiresAt: 1_000
+      },
+      limits: {
+        maxQueries: 0,
+        topKPerQuery: 0,
+        maxReturnedChunks: 0,
+        maxContextCharacters: 0
+      }
+    },
+    policy: {
+      kind: 'runtime-policy',
+      approvalMode: 'protected',
+      defaultDecision: 'deny',
+      allowRuntimeWidening: false,
+      toolPolicyDigest: 'b'.repeat(64),
+      maximumRisk: 'low'
+    },
+    budget: {
+      kind: 'runtime-budget',
+      maxModelRequests: 1,
+      maxToolCalls: 1,
+      maxSubagents: 0,
+      maxRuntimeMs: 1_000,
+      maxRetries: 0,
+      maxInputTokens: 1,
+      maxOutputTokens: 1,
+      maxCostUsd: 0
+    },
+    productCommands: [
+      {
+        kind: 'product-command',
+        grantId: 'evaluation-command-grant',
+        command: 'realmflow.requirements.get',
+        scope: { kind: 'global' },
+        inputSchemaDigest: 'c'.repeat(64),
+        maxInvocations: 1
+      }
+    ],
+    credentialReferences: []
+  })
 }
 
 function candidateDigest(database: Database.Database): string {

@@ -3,7 +3,6 @@ import { createAgentRunSnapshot } from '../../../../domain/agent-runtime'
 import { createRunCheckpoint } from '../../../../domain/agent-run-recovery'
 import { openRealmFlowDatabase, type RealmFlowDatabase } from '../../infrastructure/sqlite/database'
 import { SqliteAgentRuntimeRunRepository } from '../../infrastructure/sqlite/agent-runtime-run-repository'
-import { SqliteAgentRunCheckpointRepository } from '../../infrastructure/sqlite/agent-run-checkpoint-repository'
 import { SqliteAgentDelegationRepository } from '../../infrastructure/sqlite/agent-delegation-repository'
 import { SqliteChatSessionRepository } from '../../infrastructure/sqlite/repositories'
 import * as recoveryModule from './runtime-delegation-recovery'
@@ -17,7 +16,10 @@ const task = { id: 'inspect', objective: 'Inspect', completionCriteria: ['Summar
 async function fixture() {
   database = openRealmFlowDatabase(':memory:')
   const sessions = new SqliteChatSessionRepository(database)
-  await sessions.save({ id: 'session', kind: 'general', title: 'Parent', sortOrder: 0, messages: [], createdAt: 1, updatedAt: 1 }, 0)
+  await sessions.save({
+    id: 'session', kind: 'general', title: 'Parent', sortOrder: 0,
+    turns: [], messages: [], createdAt: 1, updatedAt: 1
+  }, 0)
   const snapshot = createAgentRunSnapshot({ conversationId: 'session' }, {
     runId: 'root', agentProfileId: 'builtin.general', agentProfileVersion: '1.0.0',
     agentProfileDigest: 'a'.repeat(64), promptDigest: 'b'.repeat(64), policyDigest: 'c'.repeat(64),
@@ -27,13 +29,12 @@ async function fixture() {
   const runs = new SqliteAgentRuntimeRunRepository(database)
   await runs.create({ id: 'root', snapshot, status: 'running', createdAt: 1, updatedAt: 1 })
   const store = new SqliteAgentDelegationRepository(database)
-  const checkpoints = new SqliteAgentRunCheckpointRepository(database)
   const [record] = store.prepare('root', 'spawn', { tasks: [task] }, 2)
   const createChild = async (status: 'running' | 'completed' | 'recovery_blocked') => {
     await runs.create({ id: record.runId, snapshot: { ...snapshot, runId: record.runId, conversationId: record.sessionId,
       rootRunId: 'root', parentRunId: 'root', delegationDepth: 1 }, status, createdAt: 3, updatedAt: 3 })
   }
-  return { runs, store, checkpoints, record, createChild, sessions }
+  return { runs, store, record, createChild, sessions }
 }
 
 describe('delegation restart reconciliation', () => {
@@ -84,21 +85,21 @@ describe('delegation restart reconciliation', () => {
     expect(dependencies.store.listUnfinished()).toEqual([])
   })
 
-  it('reconciles an already completed run from its checkpoint into the child conversation', async () => {
+  it('reconciles an already completed run without legacy checkpoint state', async () => {
     const dependencies = await fixture()
     await dependencies.createChild('completed')
-    await dependencies.checkpoints.save(createRunCheckpoint({
-      runId: dependencies.record.runId, ordinal: 1, reason: 'terminal', snapshotDigest: 'a'.repeat(64),
-      configurationDigests: { agentProfile: 'a'.repeat(64), prompt: 'b'.repeat(64),
-        policy: 'c'.repeat(64), capabilityCatalog: 'd'.repeat(64), capabilityBinding: 'e'.repeat(64) },
-      messageWindow: [{ id: 'answer', role: 'assistant', content: 'Durable findings' }],
-      pendingCalls: [], remainingBudgets: { toolCalls: 1, subagents: 0, retries: 0, timeoutMs: 10, tokens: 10 },
-      projectionCursor: 1, createdAt: 4
-    }))
     expect(recoveryModule.ReconcileRuntimeDelegations).toBeTypeOf('function')
     await new recoveryModule.ReconcileRuntimeDelegations(dependencies).execute()
     expect(dependencies.store.get(dependencies.record.runId))
-      .toMatchObject({ status: 'completed', result: { summary: 'Durable findings' } })
+      .toMatchObject({ status: 'completed', result: { summary: 'Task completed. Check the execution details.' } })
+    expect((await dependencies.sessions.get(dependencies.record.sessionId))?.turns)
+      .toEqual([
+        expect.objectContaining({
+          runId: dependencies.record.runId,
+          status: 'completed',
+          completedAt: expect.any(Number)
+        })
+      ])
   })
 
   it('preserves recoverable runs and cancels them if their ancestor has terminated', async () => {
@@ -114,5 +115,7 @@ describe('delegation restart reconciliation', () => {
     await new recoveryModule.ReconcileRuntimeDelegations(dependencies).execute()
     expect(dependencies.store.get(dependencies.record.runId)?.status).toBe('cancelled')
     expect(dependencies.runs.getById(dependencies.record.runId)?.status).toBe('cancelled')
+    expect((await dependencies.sessions.get(dependencies.record.sessionId))?.turns[0])
+      .toMatchObject({ status: 'cancelled', completedAt: expect.any(Number) })
   })
 })

@@ -8,19 +8,42 @@ files:
 extraResources:
   - from: logo.png
     to: logo.png
-  - from: python-service
-    to: python-service
+  - from: resources/dsh/runtime/${platform}-${arch}
+    to: dsh/runtime/${platform}-${arch}
     filter:
       - "**/*"
-      - "!tests/**/*"
+  - from: resources/dsh/profile
+    to: dsh/profile
+    filter:
+      - "**/*"
+  - from: resources/dsh/runtime-manifest.json
+    to: dsh/runtime-manifest.json
+  - from: resources/dsh/runtime-sbom.cyclonedx.json
+    to: dsh/runtime-sbom.cyclonedx.json
+  - from: dsh-plugins/realmflow-runtime/python
+    to: dsh/python-workers/realmflow-runtime
+    filter:
+      - "**/*.py"
+  - from: python-service
+    to: dsh/python-workers/realmflow-runtime
+    filter:
+      - "app/__init__.py"
+      - "app/services/code_chunking.py"
+      - "app/services/document_engine.py"
+      - "app/services/knowledge_chunking.py"
+      - "app/services/legacy_office_converter.py"
+      - "app/services/local_embeddings.py"
+      - "app/services/office_package_sanitizer.py"
+      - "app/services/presentation_compute.py"
+      - "app/services/spreadsheet_compute.py"
+      - "app/services/spreadsheet_recalculation.py"
+      - "app/services/word_compute.py"
+      - "dsh_embedding_worker.py"
+      - "model-assets/**/*"
       - "!.venv/**/*"
       - "!.pytest_cache/**/*"
       - "!**/__pycache__/**/*"
       - "!**/*.pyc"
-  - from: resources/sidecar
-    to: sidecar
-    filter:
-      - "**/*"
   - from: resources/extensions/builtin
     to: builtin-extensions
     filter:

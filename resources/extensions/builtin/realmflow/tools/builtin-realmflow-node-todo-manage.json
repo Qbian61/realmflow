@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.realmflow.node.todo.manage",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "name": "Manage node Todo",
   "description": "Create, complete, or delete a NodeRun Todo.",
   "tags": [

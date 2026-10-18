@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { LocalizationProvider } from "../../localization/LocalizationProvider";
 import { ThemeProvider } from "../../theme/ThemeProvider";
@@ -31,8 +31,11 @@ function renderSidebar() {
     recentSessions: [],
     recentFolderPaths: [],
     recentFilters: DEFAULT_RECENT_CONVERSATION_FILTERS,
+    recentTotalCount: 0,
+    recentSessionsHasMore: false,
     recentSessionsLoading: false,
     onRecentFilterChange: vi.fn(),
+    onLoadMoreRecentSessions: vi.fn(),
     onRenameConversation: vi.fn(),
     onDeleteConversation: vi.fn(),
     onCreateSpace: vi.fn(),
@@ -60,6 +63,38 @@ function renderSidebar() {
 }
 
 describe("WorkspaceSidebar drag handles", () => {
+  it("keeps only new chat in the primary sidebar navigation", () => {
+    renderSidebar();
+
+    const navigation = screen.getByRole("navigation", { name: "主导航" });
+    expect(
+      within(navigation).getAllByRole("link").map((link) => link.textContent),
+    ).toEqual(["新对话"]);
+  });
+
+  it("renders new chat as the primary sidebar button", () => {
+    renderSidebar();
+
+    const navigation = screen.getByRole("navigation", { name: "主导航" });
+    const newChat = within(navigation).getByRole("link", { name: "新对话" });
+
+    expect(navigation).toHaveClass("sidebar-primary-navigation");
+    expect(newChat).toHaveClass(
+      "ui-button",
+      "ui-button--neutral",
+      "ui-button--comfortable",
+      "sidebar-new-chat",
+    );
+  });
+
+  it("does not render the RealmFlow brand inside the sidebar", () => {
+    renderSidebar();
+
+    expect(
+      within(screen.getByRole("complementary")).queryByText("RealmFlow"),
+    ).not.toBeInTheDocument();
+  });
+
   it("keeps schedules out of the primary sidebar navigation", () => {
     renderSidebar();
 

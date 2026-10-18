@@ -54,6 +54,25 @@ describe("WorkbenchDashboardPage", () => {
     expect(screen.queryByText("暂无样本")).not.toBeInTheDocument();
   });
 
+  it("leaves empty dashboard regions blank without no-data labels", async () => {
+    const api = createApi();
+    const emptySnapshot = snapshot();
+    emptySnapshot.spaces = [];
+    emptySnapshot.inProgress = [];
+    emptySnapshot.recentResults = [];
+    emptySnapshot.exceptions = [];
+    vi.mocked(api.getSnapshot).mockResolvedValue(emptySnapshot);
+    renderDashboard(api);
+
+    expect(
+      await screen.findByRole("heading", { name: "空间进展" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "异常中心" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("暂无数据")).not.toBeInTheDocument();
+  });
+
   it("filters exceptions and refreshes when the workspace changes", async () => {
     const api = createApi();
     renderDashboard(api);

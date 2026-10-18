@@ -8,6 +8,7 @@ import {
 } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ConversationTurnView } from "../../domain/conversation-turn";
 import type { RealmFlowApi } from "../../shared/types";
 import type { ChatSession } from "../domain/chat-session";
 import { ToastProvider } from "../features/toast/ToastProvider";
@@ -103,7 +104,7 @@ describe("general conversation pages", () => {
     expect(submit.querySelector("svg")).toHaveClass("lucide-arrow-up");
   });
 
-  it("registers image attachments in Main and requires explicit model egress consent", async () => {
+  it("registers image attachments in Main and sends images without a separate consent toggle", async () => {
     const pick = vi.fn().mockResolvedValue({
       accepted: [
         {
@@ -126,6 +127,8 @@ describe("general conversation pages", () => {
       conversationAttachments: {
         pick,
         remove: vi.fn().mockResolvedValue(undefined),
+        readImage: vi.fn().mockResolvedValue(""),
+        open: vi.fn(),
       },
     } as typeof window.realmflow;
     const onCreateSession = vi.fn().mockResolvedValue(undefined);
@@ -135,11 +138,9 @@ describe("general conversation pages", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "添加文件" }));
 
     expect(await screen.findByText("architecture.png")).toBeVisible();
-    const consent = screen.getByRole("checkbox", {
+    expect(screen.queryByRole("checkbox", {
       name: "允许向模型发送 1 张图片",
-    });
-    expect(consent).not.toBeChecked();
-    fireEvent.click(consent);
+    })).not.toBeInTheDocument();
     fireEvent.change(screen.getByRole("textbox", { name: "对话内容" }), {
       target: { value: "分析这张架构图" },
     });
@@ -157,6 +158,65 @@ describe("general conversation pages", () => {
           draftId: expect.any(String),
         }),
         "protected",
+      ),
+    );
+  });
+
+  it("sends image attachments by default when continuing a conversation", async () => {
+    const pick = vi.fn().mockResolvedValue({
+      accepted: [
+        {
+          id: "attachment-continue",
+          ownerId: "draft-continue",
+          fileName: "diagram.png",
+          mimeType: "image/png",
+          mediaKind: "image",
+          sizeBytes: 256,
+          checksumSha256: "c".repeat(64),
+          source: "picker",
+          status: "registered",
+          createdAt: 1,
+        },
+      ],
+      rejected: [],
+    });
+    window.realmflow = {
+      ...window.realmflow,
+      conversationAttachments: {
+        pick,
+        remove: vi.fn().mockResolvedValue(undefined),
+        readImage: vi.fn().mockResolvedValue(""),
+        open: vi.fn(),
+      },
+    } as typeof window.realmflow;
+    const onAppendMessage = vi.fn().mockResolvedValue(undefined);
+    renderSession([completedMessage()], onAppendMessage);
+
+    fireEvent.click(screen.getByRole("button", { name: "打开添加菜单" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "添加文件" }));
+
+    expect(await screen.findByText("diagram.png")).toBeVisible();
+    expect(screen.queryByRole("checkbox", {
+      name: "允许向模型发送 1 张图片",
+    })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox", { name: "继续对话" }), {
+      target: { value: "继续分析这张图" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送对话消息" }));
+
+    await waitFor(() =>
+      expect(onAppendMessage).toHaveBeenCalledWith(
+        "session-1",
+        "继续分析这张图",
+        undefined,
+        "auto",
+        expect.objectContaining({
+          attachmentIds: ["attachment-continue"],
+          allowImageEgress: true,
+          draftId: expect.any(String),
+        }),
+        "protected",
+        "auto",
       ),
     );
   });
@@ -194,6 +254,7 @@ describe("general conversation pages", () => {
                       kind: "general",
                       title: "General conversation",
                       spacePath: "",
+                      turns: [],
                       messages: [],
                       revision: 2,
                       createdAt: 1,
@@ -215,6 +276,166 @@ describe("general conversation pages", () => {
       screen.getByRole("button", { name: "会話メッセージを送信" }),
     ).toBeInTheDocument();
     expect(screen.queryByLabelText("おすすめの質問")).not.toBeInTheDocument();
+  });
+
+  it("loads the latest 15 Turns first and prepends older cursor pages", async () => {
+    const listConversationTurns = vi
+      .fn()
+      .mockResolvedValueOnce({
+        turns: Array.from({ length: 15 }, (_, index) =>
+          pagedTurnView(index + 5, 20),
+        ),
+        nextCursor: "cursor-older",
+        totalCount: 20,
+      })
+      .mockResolvedValueOnce({
+        turns: Array.from({ length: 5 }, (_, index) =>
+          pagedTurnView(index, 20),
+        ),
+        totalCount: 20,
+      });
+    window.realmflow = {
+      ...window.realmflow,
+      business: {
+        ...window.realmflow?.business,
+        listConversationTurns,
+      },
+    } as typeof window.realmflow;
+
+    const view = renderSession(conversationMessages(20));
+
+    await waitFor(() =>
+      expect(listConversationTurns).toHaveBeenNthCalledWith(1, {
+        sessionId: "session-1",
+        limit: 15,
+      }),
+    );
+    await waitFor(() =>
+      expect(view.container.querySelectorAll(".chat-turn")).toHaveLength(15),
+    );
+    expect(screen.queryByText("Question 1")).toBeNull();
+    expect(screen.getByText("Question 6")).toBeVisible();
+
+    const scroll = view.container.querySelector<HTMLElement>(
+      ".chat-session-scroll",
+    );
+    if (!scroll) throw new Error("Expected the conversation scroll container");
+    Object.defineProperties(scroll, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 1_000 },
+    });
+    scroll.scrollTop = 0;
+    fireEvent.scroll(scroll);
+
+    await waitFor(() =>
+      expect(listConversationTurns).toHaveBeenNthCalledWith(2, {
+        sessionId: "session-1",
+        cursor: "cursor-older",
+        limit: 15,
+      }),
+    );
+    expect(await screen.findByText("Question 1")).toBeVisible();
+    expect(view.container.querySelectorAll(".chat-turn")).toHaveLength(20);
+  });
+
+  it("searches the local transcript and loads the Turn page anchored at the selected result", async () => {
+    const searchConversationTranscript = vi.fn().mockResolvedValue([
+      {
+        messageId: "assistant-history",
+        turnId: "turn-history",
+        role: "assistant",
+        content: "Recovered historical answer",
+        rank: -1,
+      },
+    ]);
+    const listConversationTurns = vi.fn().mockResolvedValue({
+      turns: [
+        {
+          id: "turn-history",
+          index: 3,
+          status: "completed",
+          userMessage: {
+            id: "user-history",
+            sessionId: "session-1",
+            turnId: "turn-history",
+            role: "user",
+            status: "completed",
+            content: "Historical question",
+            createdAt: 3,
+          },
+          assistantMessage: {
+            id: "assistant-history",
+            sessionId: "session-1",
+            turnId: "turn-history",
+            role: "assistant",
+            status: "completed",
+            content: "Recovered historical answer",
+            createdAt: 4,
+            completedAt: 5,
+          },
+          isLast: false,
+          isHistory: true,
+        },
+      ],
+      totalCount: 5,
+    });
+    window.realmflow = {
+      ...window.realmflow,
+      business: {
+        ...window.realmflow?.business,
+        searchConversationTranscript,
+        listConversationTurns,
+      },
+    } as typeof window.realmflow;
+    renderSession([completedMessage()]);
+
+    fireEvent.change(
+      screen.getByRole("searchbox", { name: "搜索当前对话" }),
+      { target: { value: "historical" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "搜索" }));
+    fireEvent.click(
+      await screen.findByRole("option", {
+        name: /Recovered historical answer/,
+      }),
+    );
+
+    expect(searchConversationTranscript).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      query: "historical",
+      limit: 12,
+    });
+    expect(listConversationTurns).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      anchorTurnId: "turn-history",
+      limit: 50,
+    });
+    expect(await screen.findByText("Historical question")).toBeVisible();
+    expect(
+      document.querySelector('[data-turn-id="turn-history"]'),
+    ).toBeInTheDocument();
+  });
+
+  it("clears the current conversation search without submitting the stale query", () => {
+    const searchConversationTranscript = vi.fn().mockResolvedValue([]);
+    window.realmflow = {
+      ...window.realmflow,
+      business: {
+        ...window.realmflow?.business,
+        searchConversationTranscript,
+      },
+    } as typeof window.realmflow;
+    renderSession([completedMessage()]);
+
+    const searchbox = screen.getByRole("searchbox", {
+      name: "搜索当前对话",
+    });
+    fireEvent.change(searchbox, { target: { value: "OK" } });
+    fireEvent.click(screen.getByRole("button", { name: "清除搜索" }));
+
+    expect(searchbox).toHaveValue("");
+    expect(screen.getByRole("button", { name: "搜索" })).toBeDisabled();
+    expect(searchConversationTranscript).not.toHaveBeenCalled();
   });
 
   it("adds a follow-up to the Composer and sends it through the revisioned command", async () => {
@@ -542,6 +763,39 @@ describe("general conversation pages", () => {
     expect(textarea).toHaveValue("Continue safely");
   });
 
+  it("shows a folder unavailable toast when a bound folder conversation becomes stale", async () => {
+    const onAppendMessage = vi
+      .fn()
+      .mockRejectedValue(
+        new Error("绑定的文件夹不可用，请检查目录后重试"),
+      );
+    renderSession(
+      [completedMessage()],
+      onAppendMessage,
+      { kind: "none" },
+      undefined,
+      {
+        session: {
+          folderPath: "/private/tmp/missing-project",
+          workspaceId: undefined,
+        },
+      },
+    );
+    const textarea = screen.getByRole("textbox", { name: "继续对话" });
+
+    fireEvent.change(textarea, {
+      target: { value: "Read the folder marker" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送对话消息" }));
+
+    expect(
+      await screen.findByText("绑定的文件夹不可用，请检查目录后重试"),
+    ).toBeVisible();
+    expect(screen.queryByText("发送消息失败，请重试")).not.toBeInTheDocument();
+    expect(screen.queryByText("/private/tmp/missing-project")).not.toBeInTheDocument();
+    expect(textarea).toHaveValue("Read the folder marker");
+  });
+
   it("classifies missing generated artifact files separately from retryable open failures", () => {
     expect(
       artifactOpenFailureMessageKey(
@@ -555,7 +809,7 @@ describe("general conversation pages", () => {
     ).toBe("chat.openArtifactFailed");
   });
 
-  it("renders pending, tool, completed, and failed message states distinctly", () => {
+  it("renders pending, completed, and failed message states distinctly", () => {
     renderSession([
       completedMessage(),
       {
@@ -564,13 +818,6 @@ describe("general conversation pages", () => {
         status: "pending",
         content: "",
         createdAt: 2,
-      },
-      {
-        id: "tool",
-        role: "tool",
-        status: "completed",
-        content: "Read package.json",
-        createdAt: 3,
       },
       {
         id: "failed",
@@ -582,9 +829,8 @@ describe("general conversation pages", () => {
       },
     ]);
 
-    expect(screen.getByText("正在生成回答…")).toBeInTheDocument();
-    expect(screen.getByText("工具")).toBeInTheDocument();
-    expect(screen.getByText("Read package.json")).toBeInTheDocument();
+    expect(screen.getByText("思考中")).toBeInTheDocument();
+    expect(screen.getByText("正在规划下一步")).toBeInTheDocument();
     expect(screen.getByText("Partial answer")).toBeInTheDocument();
     expect(screen.getByText("Provider stream interrupted")).toHaveAttribute(
       "role",
@@ -993,13 +1239,6 @@ describe("general conversation pages", () => {
         createdAt: 2,
       },
       {
-        id: "tool-1",
-        role: "tool",
-        status: "completed",
-        content: "Read package.json",
-        createdAt: 3,
-      },
-      {
         id: "question-2",
         role: "user",
         status: "completed",
@@ -1061,20 +1300,6 @@ describe("general conversation pages", () => {
         status: "completed",
         content: "Answer",
         createdAt: 2,
-      },
-      {
-        id: "tool-1",
-        role: "tool",
-        status: "completed",
-        content: "Hidden tool output",
-        createdAt: 3,
-      },
-      {
-        id: "pending-1",
-        role: "assistant",
-        status: "pending",
-        content: "Pending",
-        createdAt: 4,
       },
     ]);
 
@@ -1243,17 +1468,16 @@ describe("general conversation pages", () => {
     const scroll = view.container.querySelector<HTMLElement>(
       ".chat-session-scroll",
     );
-    const userMessages =
-      view.container.querySelectorAll<HTMLElement>(".chat-message.user");
+    const turns = view.container.querySelectorAll<HTMLElement>(".chat-turn");
     Object.defineProperty(scroll, "clientHeight", {
       configurable: true,
       value: 400,
     });
-    Object.defineProperty(userMessages[0], "offsetTop", {
+    Object.defineProperty(turns[0], "offsetTop", {
       configurable: true,
       value: 20,
     });
-    Object.defineProperty(userMessages[1], "offsetTop", {
+    Object.defineProperty(turns[1], "offsetTop", {
       configurable: true,
       value: 300,
     });
@@ -1301,8 +1525,16 @@ describe("general conversation pages", () => {
   });
 });
 
+type ConversationFixtureMessage = Omit<
+  ChatSession["messages"][number],
+  "turnId" | "role"
+> & {
+  turnId?: string;
+  role: "user" | "assistant" | "tool";
+};
+
 function renderSession(
-  messages: ChatSession["messages"],
+  messages: ConversationFixtureMessage[],
   onAppendMessage = vi.fn(),
   knowledgeScope: ChatSession["knowledgeScope"] = { kind: "none" },
   onSendFollowUpSuggestion?: Parameters<
@@ -1325,7 +1557,7 @@ function renderSession(
 }
 
 function sessionView(
-  messages: ChatSession["messages"],
+  messages: ConversationFixtureMessage[],
   onAppendMessage = vi.fn(),
   knowledgeScope: ChatSession["knowledgeScope"] = { kind: "none" },
   onSendFollowUpSuggestion?: Parameters<
@@ -1336,6 +1568,7 @@ function sessionView(
     spaces?: Parameters<typeof ChatSessionPage>[0]["spaces"];
   } = {},
 ) {
+  const fixtureConversation = buildConversationFixture(messages);
   return (
     <MemoryRouter initialEntries={["/sessions/session-1"]}>
       <Routes>
@@ -1351,7 +1584,8 @@ function sessionView(
                   workspaceId: "workspace-1",
                   title: "General conversation",
                   spacePath: "",
-                  messages,
+                  turns: fixtureConversation.turns,
+                  messages: fixtureConversation.messages,
                   revision: 2,
                   createdAt: 1,
                   updatedAt: 1,
@@ -1372,11 +1606,122 @@ function sessionView(
 function completedMessage(): ChatSession["messages"][number] {
   return {
     id: "user",
+    turnId: "unused-test-turn",
     role: "user",
     status: "completed",
     content: "Hello",
     createdAt: 1,
   };
+}
+
+function conversationMessages(count: number): ConversationFixtureMessage[] {
+  return Array.from({ length: count }, (_, index) => [
+    {
+      id: `user-${index}`,
+      role: "user" as const,
+      status: "completed" as const,
+      content: `Question ${index + 1}`,
+      createdAt: index * 2 + 1,
+    },
+    {
+      id: `assistant-${index}`,
+      role: "assistant" as const,
+      status: "completed" as const,
+      content: `Answer ${index + 1}`,
+      createdAt: index * 2 + 2,
+      completedAt: index * 2 + 2,
+    },
+  ]).flat();
+}
+
+function pagedTurnView(index: number, total: number): ConversationTurnView {
+  return {
+    id: `test-turn-${index}`,
+    index,
+    status: "completed",
+    userMessage: {
+      id: `user-${index}`,
+      sessionId: "session-1",
+      turnId: `test-turn-${index}`,
+      role: "user",
+      status: "completed",
+      content: `Question ${index + 1}`,
+      createdAt: index * 2 + 1,
+    },
+    assistantMessage: {
+      id: `assistant-${index}`,
+      sessionId: "session-1",
+      turnId: `test-turn-${index}`,
+      role: "assistant",
+      status: "completed",
+      content: `Answer ${index + 1}`,
+      createdAt: index * 2 + 2,
+      completedAt: index * 2 + 2,
+    },
+    isLast: index === total - 1,
+    isHistory: index < total - 1,
+  };
+}
+
+function buildConversationFixture(
+  input: ConversationFixtureMessage[],
+): Pick<ChatSession, "turns" | "messages"> {
+  const messages: ChatSession["messages"] = [];
+  const turns: ChatSession["turns"] = [];
+  let cursor = 0;
+  while (cursor < input.length) {
+    const first = input[cursor];
+    const second =
+      first.role === "user" && input[cursor + 1]?.role === "assistant"
+        ? input[cursor + 1]
+        : undefined;
+    const turnId = `test-turn-${turns.length}`;
+    const user =
+      first.role === "user"
+        ? first
+        : {
+            id: `${turnId}-user`,
+            role: "user" as const,
+            status: "completed" as const,
+            content: "",
+            createdAt: first.createdAt,
+          };
+    const assistant =
+      second ??
+      (first.role === "assistant"
+        ? first
+        : {
+            id: `${turnId}-assistant`,
+            role: "assistant" as const,
+            status: "completed" as const,
+            content: first.role === "tool" ? first.content : "",
+            createdAt: first.createdAt,
+          });
+    const status =
+      assistant.status === "pending"
+        ? "running"
+        : assistant.status === "failed"
+          ? "failed"
+          : "completed";
+    messages.push(
+      { ...user, turnId, role: "user" },
+      { ...assistant, turnId, role: "assistant" },
+    );
+    turns.push({
+      id: turnId,
+      sessionId: "session-1",
+      index: turns.length,
+      userMessageId: user.id,
+      assistantMessageId: assistant.id,
+      status,
+      createdAt: Math.min(user.createdAt, assistant.createdAt),
+      ...(status === "completed" || status === "failed"
+        ? { completedAt: Math.max(user.createdAt, assistant.createdAt) }
+        : {}),
+    });
+    cursor += second ? 2 : 1;
+  }
+  return { turns, messages };
 }
 
 function deferred<T>() {

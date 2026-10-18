@@ -87,6 +87,10 @@ const expectedDesignArtifact = {
   relativePath: 'artifacts/design.md',
   kind: 'markdown'
 }
+const currentDesignTarget = {
+  nodeId: 'node-design',
+  nodeRunId: 'node-run-design'
+}
 
 describe('SqliteArtifactRepository', () => {
   it.each([String.raw`artifacts\..\outside.md`, 'artifacts/./design.md'])(
@@ -99,6 +103,7 @@ describe('SqliteArtifactRepository', () => {
           runId: 'run-1',
           requirementId: 'requirement-1',
           stageId: 'design',
+          ...currentDesignTarget,
           expectedArtifact: { ...expectedDesignArtifact, relativePath: path },
           artifact: { path, content: '# Invalid' },
           completionEvent
@@ -113,6 +118,7 @@ describe('SqliteArtifactRepository', () => {
     await mkdir(workspaceRoot)
     await mkdir(outsideDirectory)
     await symlink(outsideDirectory, join(workspaceRoot, 'artifacts'))
+    await seedWorkflowNodeRun(createSqliteRepositories(database), 'run-1')
     const repository = new SqliteArtifactRepository(database)
 
     await expect(
@@ -120,6 +126,7 @@ describe('SqliteArtifactRepository', () => {
         runId: 'run-1',
         requirementId: 'requirement-1',
         stageId: 'design',
+        ...currentDesignTarget,
         expectedArtifact: expectedDesignArtifact,
         artifact: {
           path: 'artifacts/design.md',
@@ -132,12 +139,14 @@ describe('SqliteArtifactRepository', () => {
   })
 
   it('commits file, metadata, requirement stage and run completion atomically', async () => {
+    await seedWorkflowNodeRun(createSqliteRepositories(database), 'run-1')
     const repository = new SqliteArtifactRepository(database)
 
     const result = await repository.commit({
       runId: 'run-1',
       requirementId: 'requirement-1',
       stageId: 'design',
+      ...currentDesignTarget,
       expectedArtifact: expectedDesignArtifact,
       artifact: {
         path: 'artifacts/design.md',
@@ -149,7 +158,7 @@ describe('SqliteArtifactRepository', () => {
     expect(result).toEqual({
       artifactId: expect.any(String),
       requirementId: 'requirement-1',
-      nodeId: 'requirement-1:design',
+      nodeId: 'node-design',
       relativePath: 'artifacts/design.md',
       kind: 'markdown',
       checksum: expect.stringMatching(/^sha256:/),
@@ -178,7 +187,7 @@ describe('SqliteArtifactRepository', () => {
       database
         .prepare('SELECT stage FROM requirements WHERE id = ?')
         .get('requirement-1')
-    ).toEqual({ stage: 'design' })
+    ).toEqual({ stage: 'analysis' })
     expect(
       database.prepare('SELECT status FROM ai_runs WHERE id = ?').get('run-1')
     ).toEqual({ status: 'completed' })
@@ -192,6 +201,7 @@ describe('SqliteArtifactRepository', () => {
   })
 
   it('lists and reads only committed formal artifacts for knowledge sync', async () => {
+    await seedWorkflowNodeRun(createSqliteRepositories(database), 'run-1')
     const repository = new SqliteArtifactRepository(database) as SqliteArtifactRepository & {
       listByRequirement: (requirementId: string) => Promise<
         Array<{
@@ -213,6 +223,7 @@ describe('SqliteArtifactRepository', () => {
       runId: 'run-1',
       requirementId: 'requirement-1',
       stageId: 'design',
+      ...currentDesignTarget,
       expectedArtifact: expectedDesignArtifact,
       artifact: {
         path: 'artifacts/design.md',
@@ -252,11 +263,13 @@ describe('SqliteArtifactRepository', () => {
   })
 
   it('returns original binary bytes and media type for knowledge extraction', async () => {
+    await seedWorkflowNodeRun(createSqliteRepositories(database), 'run-1')
     const repository = new SqliteArtifactRepository(database)
     const committed = await repository.commit({
       runId: 'run-1',
       requirementId: 'requirement-1',
       stageId: 'design',
+      ...currentDesignTarget,
       expectedArtifact: expectedDesignArtifact,
       artifact: {
         path: 'artifacts/design.md',
@@ -477,11 +490,13 @@ describe('SqliteArtifactRepository', () => {
   })
 
   it('returns the original formal version for an exact completed-event replay', async () => {
+    await seedWorkflowNodeRun(createSqliteRepositories(database), 'run-1')
     const repository = new SqliteArtifactRepository(database)
     const command = {
       runId: 'run-1',
       requirementId: 'requirement-1',
       stageId: 'design' as const,
+      ...currentDesignTarget,
       expectedArtifact: expectedDesignArtifact,
       artifact: {
         path: 'artifacts/design.md',
@@ -503,11 +518,13 @@ describe('SqliteArtifactRepository', () => {
   })
 
   it('rejects a conflicting replay without creating another version or event', async () => {
+    await seedWorkflowNodeRun(createSqliteRepositories(database), 'run-1')
     const repository = new SqliteArtifactRepository(database)
     const command = {
       runId: 'run-1',
       requirementId: 'requirement-1',
       stageId: 'design' as const,
+      ...currentDesignTarget,
       expectedArtifact: expectedDesignArtifact,
       artifact: {
         path: 'artifacts/design.md',
@@ -532,6 +549,7 @@ describe('SqliteArtifactRepository', () => {
   })
 
   it('rejects a stale completion sequence before creating workspace state', async () => {
+    await seedWorkflowNodeRun(createSqliteRepositories(database), 'run-1')
     const repository = new SqliteArtifactRepository(database)
 
     await expect(
@@ -539,6 +557,7 @@ describe('SqliteArtifactRepository', () => {
         runId: 'run-1',
         requirementId: 'requirement-1',
         stageId: 'design',
+        ...currentDesignTarget,
         expectedArtifact: expectedDesignArtifact,
         artifact: {
           path: 'artifacts/design.md',
@@ -558,6 +577,7 @@ describe('SqliteArtifactRepository', () => {
         runId: 'run-1',
         requirementId: 'requirement-1',
         stageId: 'design',
+        ...currentDesignTarget,
         expectedArtifact: {
           relativePath: 'artifacts/approved.md',
           kind: 'markdown'
@@ -574,7 +594,7 @@ describe('SqliteArtifactRepository', () => {
     await expect(stat(workspaceRoot)).rejects.toThrow()
   })
 
-  it('rejects a custom-node run when the commit omits its node target', async () => {
+  it('rejects a formal artifact commit without a node target', async () => {
     const repositories = createSqliteRepositories(database)
     await repositories.aiRuns.save({
       ...createAiRun(
@@ -606,18 +626,20 @@ describe('SqliteArtifactRepository', () => {
           id: 'run-custom:completed',
           runId: 'run-custom'
         }
-      })
-    ).rejects.toThrow('AI run does not match the artifact target')
+      } as never)
+    ).rejects.toThrow('Node ID is required')
     await expect(stat(workspaceRoot)).rejects.toThrow()
   })
 
   it('replaces the primary artifact with a monotonic version for the same node', async () => {
     const repositories = createSqliteRepositories(database)
+    await seedWorkflowNodeRun(repositories, 'run-1')
     const repository = new SqliteArtifactRepository(database)
     const firstCommand = {
       runId: 'run-1',
       requirementId: 'requirement-1',
       stageId: 'design' as const,
+      ...currentDesignTarget,
       expectedArtifact: expectedDesignArtifact,
       artifact: {
         path: 'artifacts/design.md',
@@ -627,15 +649,35 @@ describe('SqliteArtifactRepository', () => {
     }
     const first = await repository.commit(firstCommand)
     await repositories.aiRuns.save({
-      ...createAiRun('run-2', 'requirement-1', 'design'),
+      ...createAiRun(
+        'run-2',
+        'requirement-1',
+        'design',
+        'node-design'
+      ),
       status: 'running',
       lastSequence: 3
     })
+    await repositories.nodeRuns.save(
+      {
+        id: 'node-run-design-2',
+        executionId: 'execution-design',
+        nodeId: 'node-design',
+        aiRunId: 'run-2',
+        status: 'running',
+        attempt: 2,
+        createdAt: 2,
+        updatedAt: 2
+      },
+      0
+    )
 
     const result = await repository.commit({
       runId: 'run-2',
       requirementId: 'requirement-1',
       stageId: 'design',
+      nodeId: 'node-design',
+      nodeRunId: 'node-run-design-2',
       expectedArtifact: expectedDesignArtifact,
       artifact: {
         path: 'artifacts/design.md',
@@ -671,10 +713,11 @@ describe('SqliteArtifactRepository', () => {
   })
 
   it('exposes only the committed primary artifact to the completion gate', async () => {
+    await seedWorkflowNodeRun(createSqliteRepositories(database), 'run-1')
     const repository = new SqliteArtifactRepository(database)
     const repositories = createSqliteRepositories(database)
     const node: RequirementNode = {
-      id: 'requirement-1:design',
+      id: 'node-design',
       type: 'ai_generate',
       name: 'Design',
       description: '',
@@ -684,8 +727,7 @@ describe('SqliteArtifactRepository', () => {
       executor: {
         kind: 'ai_generate',
         prompt: 'Design the requirement.',
-        artifact: expectedDesignArtifact,
-        legacyStageId: 'design'
+        artifact: expectedDesignArtifact
       }
     }
     const evaluator = new NodeCompletionGateEvaluator({
@@ -698,8 +740,8 @@ describe('SqliteArtifactRepository', () => {
       requirementId: 'requirement-1',
       node,
       nodeRun: {
-        id: 'node-run-1',
-        executionId: 'execution-1',
+        id: 'node-run-design',
+        executionId: 'execution-design',
         nodeId: node.id,
         status: 'running' as const,
         attempt: 1,
@@ -718,6 +760,7 @@ describe('SqliteArtifactRepository', () => {
       runId: 'run-1',
       requirementId: 'requirement-1',
       stageId: 'design',
+      ...currentDesignTarget,
       expectedArtifact: expectedDesignArtifact,
       artifact: {
         path: 'artifacts/design.md',
@@ -733,11 +776,13 @@ describe('SqliteArtifactRepository', () => {
   })
 
   it('recovers the formal file, metadata, run and event after reopening SQLite', async () => {
+    await seedWorkflowNodeRun(createSqliteRepositories(database), 'run-1')
     const repository = new SqliteArtifactRepository(database)
     const committed = await repository.commit({
       runId: 'run-1',
       requirementId: 'requirement-1',
       stageId: 'design',
+      ...currentDesignTarget,
       expectedArtifact: expectedDesignArtifact,
       artifact: {
         path: 'artifacts/design.md',
@@ -981,6 +1026,7 @@ describe('SqliteArtifactRepository', () => {
   })
 
   it('rolls back SQL, preserves the old file and removes temporary files when rename fails', async () => {
+    await seedWorkflowNodeRun(createSqliteRepositories(database), 'run-1')
     const targetPath = join(workspaceRoot, 'artifacts', 'design.md')
     await mkdir(join(workspaceRoot, 'artifacts'), { recursive: true })
     await writeFile(targetPath, '# Existing', 'utf8')
@@ -995,6 +1041,7 @@ describe('SqliteArtifactRepository', () => {
         runId: 'run-1',
         requirementId: 'requirement-1',
         stageId: 'design',
+        ...currentDesignTarget,
         expectedArtifact: expectedDesignArtifact,
         artifact: {
           path: 'artifacts/design.md',
@@ -1019,6 +1066,7 @@ describe('SqliteArtifactRepository', () => {
   })
 
   it('rolls back metadata and cleans temporary files when audit insertion fails', async () => {
+    await seedWorkflowNodeRun(createSqliteRepositories(database), 'run-1')
     const targetPath = join(workspaceRoot, 'artifacts', 'design.md')
     await mkdir(join(workspaceRoot, 'artifacts'), { recursive: true })
     await writeFile(targetPath, '# Existing', 'utf8')
@@ -1036,6 +1084,7 @@ describe('SqliteArtifactRepository', () => {
         runId: 'run-1',
         requirementId: 'requirement-1',
         stageId: 'design',
+        ...currentDesignTarget,
         expectedArtifact: expectedDesignArtifact,
         artifact: {
           path: 'artifacts/design.md',
@@ -1070,6 +1119,7 @@ describe('SqliteArtifactRepository', () => {
         runId: 'missing-run',
         requirementId: 'requirement-1',
         stageId: 'design',
+        ...currentDesignTarget,
         expectedArtifact: {
           relativePath: 'design.md',
           kind: 'markdown'

@@ -1,15 +1,14 @@
 import type { AgentRuntimeRun } from '../../../../domain/agent-runtime'
-import type { AgentRunCheckpointRepository } from '../../ai-run/application/ports'
 import type { RuntimeDelegationStore } from './runtime-delegation'
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled'])
+const COMPLETED_SUMMARY = 'Task completed. Check the execution details.'
 
-/** Startup reconciliation only. Existing runs are resumed by the normal checkpoint recovery workflow. */
+/** Startup reconciliation only. Existing runs are resumed by DSH session recovery. */
 export class ReconcileRuntimeDelegations {
   constructor(private readonly dependencies: {
     store: RuntimeDelegationStore
     runs: { getById(id: string): AgentRuntimeRun | undefined | Promise<AgentRuntimeRun | undefined> }
-    checkpoints: AgentRunCheckpointRepository
   }, private readonly now: () => number = Date.now) {}
 
   async execute(): Promise<void> {
@@ -29,12 +28,10 @@ export class ReconcileRuntimeDelegations {
         }
         continue
       }
-      const checkpoint = run ? await this.dependencies.checkpoints.getLatest(run.id) : undefined
       const status = run?.status === 'completed' ? 'completed'
         : run?.status === 'cancelled' ? 'cancelled' : 'failed'
       const summary = status === 'completed'
-        ? checkpoint?.messageWindow.filter((message) => message.role === 'assistant' && !message.toolCalls?.length)
-          .map((message) => message.content).filter(Boolean).at(-1) || 'Task completed; stored answer unavailable'
+        ? COMPLETED_SUMMARY
         : status === 'cancelled' ? 'Subagent task was cancelled'
         : run?.error || 'Subagent startup was interrupted'
       this.dependencies.store.finish(record.runId, {

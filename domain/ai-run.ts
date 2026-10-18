@@ -2,6 +2,8 @@ import type { RequirementStageId } from './requirement'
 import type { ModelCallErrorCode } from './model'
 import type {
   ReferenceItem,
+  SubAgentChildProjection,
+  TodoItemProjection,
   ToolCallCategory
 } from './assistant-turn'
 
@@ -24,12 +26,14 @@ export const AI_RUN_EVENT_TYPES = [
   'answer.delta',
   'execution.summary.delta',
   'reference.added',
+  'todo.updated',
   'tool.call.requested',
   'tool.call.started',
   'tool.call.progress',
   'tool.call.completed',
   'tool.call.failed',
   'tool.call.permission_required',
+  'delegation.updated',
   'artifact.ready',
   'run.retrying',
   'run.waiting_input',
@@ -86,6 +90,11 @@ export type AiRunEventData = {
   summaryId?: string
   source?: 'provider' | 'system'
   reference?: ReferenceItem
+  todo?: {
+    todoId: string
+    title: string
+    items: TodoItemProjection[]
+  }
   callId?: string
   requestId?: string
   toolExecutionId?: string
@@ -97,6 +106,12 @@ export type AiRunEventData = {
   artifactIds?: string[]
   toolCall?: AiRunToolCall
   toolResult?: AiRunToolResult
+  groupId?: string
+  parentRunId?: string
+  strategy?: 'parallel' | 'sequential'
+  requestedAt?: number
+  completedAt?: number
+  children?: SubAgentChildProjection[]
   artifact?: GeneratedArtifact
   message?: string
   usage?: {

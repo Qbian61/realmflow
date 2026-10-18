@@ -36,9 +36,22 @@ function renderPage(): void {
                       id: "session-share",
                       title: "Release plan",
                       spacePath: "/spaces/product",
+                      turns: [
+                        {
+                          id: "turn-share",
+                          sessionId: "session-share",
+                          index: 0,
+                          userMessageId: "message-user",
+                          assistantMessageId: "message-assistant",
+                          status: "completed",
+                          createdAt: 1,
+                          completedAt: 2,
+                        },
+                      ],
                       messages: [
                         {
                           id: "message-user",
+                          turnId: "turn-share",
                           role: "user",
                           status: "completed",
                           content: "Plan the release",
@@ -46,6 +59,7 @@ function renderPage(): void {
                         },
                         {
                           id: "message-assistant",
+                          turnId: "turn-share",
                           role: "assistant",
                           status: "completed",
                           content: "Use a canary rollout.",

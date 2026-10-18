@@ -247,6 +247,7 @@ describe('TemplateMigrationService queries', () => {
         requirementId: 'requirement-1',
         stageId: 'analysis',
         nodeId: 'requirement-1:analysis',
+        nodeRunId: 'node-run-1',
         relativePath: 'analysis.md',
         kind: 'markdown',
         checksum: 'artifact-checksum',

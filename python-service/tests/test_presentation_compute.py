@@ -3,21 +3,13 @@ import hashlib
 import io
 import zipfile
 
-from fastapi.testclient import TestClient
 from PIL import Image
 from pptx import Presentation
 from pptx.chart.data import ChartData
 from pptx.enum.chart import XL_CHART_TYPE
 from pptx.util import Inches
 
-from app import create_app
-
-
-def client() -> TestClient:
-    return TestClient(
-        create_app(auth_token="session-secret"),
-        headers={"Authorization": "Bearer session-secret"},
-    )
+from private_worker import realmflow_private_worker, run_worker
 
 
 def compute(
@@ -25,9 +17,9 @@ def compute(
     parameters: dict[str, object] | None = None,
     document: bytes | None = None,
 ) -> dict[str, object]:
-    response = client().post(
-        "/api/v1/office/presentations/compute",
-        json={
+    return run_worker(
+        "office.presentation.compute",
+        {
             "format": "pptx",
             "operation": operation,
             "documentBase64": base64.b64encode(
@@ -36,8 +28,6 @@ def compute(
             "parameters": parameters or {},
         },
     )
-    assert response.status_code == 200, response.text
-    return response.json()
 
 
 def decoded(payload: dict[str, object]) -> bytes:
@@ -341,18 +331,20 @@ def test_reports_animation_as_preservation_risk() -> None:
 
 
 def test_rejects_invalid_document_encoding_with_stable_error() -> None:
-    response = client().post(
-        "/api/v1/office/presentations/compute",
-        json={
-            "format": "pptx",
-            "operation": "inspect",
-            "documentBase64": "***",
-            "parameters": {},
-        },
-    )
-
-    assert response.status_code == 422
-    assert response.json()["detail"]["code"] == "presentation_input_invalid"
+    try:
+        run_worker(
+            "office.presentation.compute",
+            {
+                "format": "pptx",
+                "operation": "inspect",
+                "documentBase64": "***",
+                "parameters": {},
+            },
+        )
+    except realmflow_private_worker.WorkerInputError as error:
+        assert error.code == "presentation_input_invalid"
+    else:
+        raise AssertionError("invalid presentation encoding was accepted")
 
 
 def pptx_fixture() -> bytes:

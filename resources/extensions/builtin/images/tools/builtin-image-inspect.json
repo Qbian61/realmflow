@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.image.inspect",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Inspect image",
   "description": "Open and inspect an authorized PNG, JPEG, WebP, GIF, or SVG file.",
   "tags": [

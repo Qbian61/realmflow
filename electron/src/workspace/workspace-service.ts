@@ -33,11 +33,42 @@ const IMAGE_EXTENSIONS = new Set(['.avif', '.gif', '.jpeg', '.jpg', '.png', '.we
 const FIXED_LAYOUT_EXTENSIONS = new Set(['.ofd', '.pdf'])
 const BINARY_EXTENSIONS = new Set([
   '.doc',
+  '.docm',
   '.docx',
+  '.dot',
+  '.dotm',
+  '.dotx',
+  '.epub',
+  '.gz',
+  '.key',
+  '.mpp',
+  '.msg',
+  '.numbers',
+  '.odp',
+  '.ods',
+  '.odt',
+  '.pages',
+  '.pot',
+  '.potm',
+  '.potx',
+  '.pps',
+  '.ppsm',
   '.ppt',
+  '.pptm',
   '.pptx',
+  '.pub',
+  '.tar',
+  '.tgz',
+  '.vsd',
+  '.vsdx',
+  '.wps',
+  '.wpt',
   '.xls',
+  '.xlsm',
   '.xlsx',
+  '.xlt',
+  '.xltm',
+  '.xltx',
   '.zip'
 ])
 const MARKDOWN_EXTENSIONS = new Set(['.markdown', '.md', '.mdx'])
@@ -83,6 +114,7 @@ const LANGUAGE_BY_EXTENSION: Record<string, string> = {
 type SessionBinding = {
   rootPath: string
   allowedFiles: Set<string> | null
+  fileTargets?: Map<string, string>
 }
 
 export type ManagedDirectory = {
@@ -553,8 +585,14 @@ export class WorkspaceService {
     }
   }
 
-  async openSessionFiles(filePaths: string[]): Promise<OpenedSessionFiles> {
+  async openSessionFiles(
+    filePaths: string[],
+    displayNames?: string[]
+  ): Promise<OpenedSessionFiles> {
     if (filePaths.length === 0) throw new Error('No files were selected')
+    if (displayNames && displayNames.length !== filePaths.length) {
+      throw new Error('Selected file display names do not match')
+    }
     const canonicalPaths = await Promise.all(
       filePaths.map(async (path) => {
         const parentPath = await this.securePaths.canonicalizeDirectory(dirname(path))
@@ -573,11 +611,30 @@ export class WorkspaceService {
     }
 
     const workspaceId = `session-${randomUUID()}`
-    const allowedFiles = new Set(canonicalPaths.map((path) => basename(path)))
-    this.sessionBindings.set(workspaceId, { rootPath, allowedFiles })
+    const aliases = canonicalPaths.map((path, index) => {
+      const alias = this.securePaths.normalizeRelativePath(
+        displayNames?.[index] ?? basename(path)
+      )
+      if (!alias || alias !== basename(alias)) {
+        throw new Error('Selected file display name is invalid')
+      }
+      return alias
+    })
+    const allowedFiles = new Set(aliases)
+    if (allowedFiles.size !== aliases.length) {
+      throw new Error('Selected file display names must be unique')
+    }
+    const fileTargets = new Map(
+      aliases.map((alias, index) => [alias, canonicalPaths[index]])
+    )
+    this.sessionBindings.set(workspaceId, {
+      rootPath,
+      allowedFiles,
+      fileTargets
+    })
     const binding = this.createBinding(workspaceId, rootPath)
     const files = await Promise.all(
-      [...allowedFiles].map((path) => this.readFile(workspaceId, path))
+      aliases.map((path) => this.readFile(workspaceId, path))
     )
     return { binding, files }
   }
@@ -593,6 +650,13 @@ export class WorkspaceService {
     const normalizedPath = this.securePaths.normalizeRelativePath(relativePath)
     if (!selection.allowedFiles.has(normalizedPath)) {
       throw new Error('File is not authorized for this session')
+    }
+    const aliasedTarget = selection.fileTargets?.get(normalizedPath)
+    if (aliasedTarget) {
+      if (!(await stat(aliasedTarget)).isFile()) {
+        throw new Error('Selected path is not a file')
+      }
+      return aliasedTarget
     }
     const { targetPath } = await this.securePaths.resolveExistingPath(
       selection.rootPath,
@@ -622,6 +686,15 @@ export class WorkspaceService {
       requirementId,
       directoryPath
     )
+    const fileTargets = this.sessionBindings.get(requirementId)?.fileTargets
+    if (
+      fileTargets &&
+      this.securePaths.normalizeRelativePath(directoryPath, true) === ''
+    ) {
+      return [...fileTargets.keys()]
+        .map((path) => ({ name: path, path, type: 'file' as const }))
+        .sort((left, right) => left.name.localeCompare(right.name))
+    }
     const targetStats = await stat(targetPath)
     if (!targetStats.isDirectory()) throw new Error('Path is not a directory')
 
@@ -694,6 +767,13 @@ export class WorkspaceService {
   }
 
   async readManifest(requirementId: string): Promise<RequirementManifest> {
+    if (this.sessionBindings.get(requirementId)?.allowedFiles) {
+      return {
+        version: 1,
+        requirementId,
+        stages: {}
+      }
+    }
     return this.metadata.readManifest(requirementId)
   }
 
@@ -779,9 +859,19 @@ export class WorkspaceService {
       true
     )
     const binding = await this.requireBinding(requirementId)
-    const allowedFiles = this.sessionBindings.get(requirementId)?.allowedFiles
+    const sessionBinding = this.sessionBindings.get(requirementId)
+    const allowedFiles = sessionBinding?.allowedFiles
     if (allowedFiles && normalizedPath && !allowedFiles.has(normalizedPath)) {
       throw new Error('File is not authorized for this session')
+    }
+    const aliasedTarget = normalizedPath
+      ? sessionBinding?.fileTargets?.get(normalizedPath)
+      : undefined
+    if (aliasedTarget) {
+      return {
+        rootPath: binding.rootPath,
+        targetPath: aliasedTarget
+      }
     }
     return this.securePaths.resolveExistingPath(
       binding.rootPath,

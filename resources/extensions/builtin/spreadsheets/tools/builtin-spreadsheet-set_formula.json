@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.spreadsheet.set_formula",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Set spreadsheet formula",
   "description": "Write formulas and require verified recalculation before save.",
   "tags": [

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.spreadsheet.inspect",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Inspect spreadsheet",
   "description": "Open and inspect an authorized XLSX, CSV, or TSV file.",
   "tags": [

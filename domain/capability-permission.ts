@@ -11,6 +11,7 @@ import {
 export type ToolBusinessScope =
   | { kind: 'requirement'; requirementId: string }
   | { kind: 'workspace'; workspaceId: string }
+  | { kind: 'folder'; folderSessionId: string }
 
 export type ToolPermissionResource =
   | ToolBusinessScope
@@ -30,6 +31,7 @@ export type PermissionContext = {
   sessionId?: string
   requirementId?: string
   workspaceId?: string
+  folderSessionId?: string
 }
 
 export type BoundScopeAuthorization = {
@@ -201,6 +203,8 @@ export function permissionResourceKey(
       return `requirement:${resource.requirementId}`
     case 'workspace':
       return `workspace:${resource.workspaceId}`
+    case 'folder':
+      return `folder:${resource.folderSessionId}`
     case 'path':
       return `path:${resource.access}:${resource.canonicalPath}`
     case 'process':
@@ -310,6 +314,19 @@ function normalizeResource(value: unknown): ToolPermissionResource {
         workspaceId: requirePermissionIdentifier(
           resource.workspaceId,
           'workspace ID'
+        )
+      }
+    case 'folder':
+      requireExactKeys(
+        resource,
+        new Set(['kind', 'folderSessionId']),
+        'folder resource'
+      )
+      return {
+        kind: 'folder',
+        folderSessionId: requirePermissionIdentifier(
+          resource.folderSessionId,
+          'folder session ID'
         )
       }
     case 'path':
@@ -428,6 +445,20 @@ function normalizeBusinessScope(value: unknown): ToolBusinessScope {
       )
     }
   }
+  if (scope.kind === 'folder') {
+    requireExactKeys(
+      scope,
+      new Set(['kind', 'folderSessionId']),
+      'business scope'
+    )
+    return {
+      kind: 'folder',
+      folderSessionId: requirePermissionIdentifier(
+        scope.folderSessionId,
+        'folder session ID'
+      )
+    }
+  }
   throw new Error('Permission business scope is invalid')
 }
 
@@ -435,9 +466,9 @@ function normalizeContext(value: unknown): PermissionContext {
   const context = requireObject(value, 'context')
   requireExactKeys(
     context,
-    new Set(['sessionId', 'requirementId', 'workspaceId']),
+    new Set(['sessionId', 'requirementId', 'workspaceId', 'folderSessionId']),
     'context',
-    new Set(['sessionId', 'requirementId', 'workspaceId'])
+    new Set(['sessionId', 'requirementId', 'workspaceId', 'folderSessionId'])
   )
   return {
     ...(context.sessionId === undefined
@@ -462,6 +493,14 @@ function normalizeContext(value: unknown): PermissionContext {
           workspaceId: requirePermissionIdentifier(
             context.workspaceId,
             'workspace ID'
+          )
+        }),
+    ...(context.folderSessionId === undefined
+      ? {}
+      : {
+          folderSessionId: requirePermissionIdentifier(
+            context.folderSessionId,
+            'folder session ID'
           )
         })
   }
@@ -514,6 +553,13 @@ function assertResourceContext(
     context.workspaceId !== scope.workspaceId
   ) {
     throw new Error('Permission workspace context does not match resource')
+  }
+  if (
+    scope.kind === 'folder' &&
+    context.folderSessionId !== undefined &&
+    context.folderSessionId !== scope.folderSessionId
+  ) {
+    throw new Error('Permission folder context does not match resource')
   }
 }
 

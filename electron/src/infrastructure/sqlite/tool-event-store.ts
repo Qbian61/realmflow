@@ -9,7 +9,6 @@ import {
   requireDigest,
   requireIdentifier,
   requireInteger,
-  requireText,
   type JsonObject
 } from '../../../../domain/tool-protocol-validation'
 import type {
@@ -237,25 +236,6 @@ export class SqliteToolEventStore implements ToolEventStore {
         lastEvent.metadata.occurredAt
       )
 
-    const insertOutbox = this.database.prepare(
-      `INSERT INTO tool_outbox (
-        id, topic, message_key, payload_json, headers_json, status,
-        available_at, lease_owner, lease_expires_at, attempts,
-        error_summary, created_at, updated_at, published_at
-      ) VALUES (?, ?, ?, ?, ?, 'pending', ?, NULL, NULL, 0, NULL, ?, ?, NULL)`
-    )
-    for (const message of input.outbox) {
-      insertOutbox.run(
-        requireIdentifier(message.id, 'outbox ID'),
-        requireText(message.topic, 'outbox topic'),
-        requireText(message.messageKey, 'outbox message key'),
-        JSON.stringify(cloneJsonObject(message.payload, 'outbox payload')),
-        JSON.stringify(cloneJsonObject(message.headers, 'outbox headers')),
-        requireTimestamp(message.availableAt, 'outbox available at'),
-        lastEvent.metadata.occurredAt,
-        lastEvent.metadata.occurredAt
-      )
-    }
     return { status: 'appended', result, events }
   }
 
@@ -312,10 +292,6 @@ function parseJsonObject(value: string, field: string): JsonObject {
   } catch {
     throw new Error(`Tool event ${field} is invalid`)
   }
-}
-
-function requireTimestamp(value: unknown, field: string): number {
-  return requireInteger(value, field, 0, Number.MAX_SAFE_INTEGER)
 }
 
 function validateIdempotencyKey(value: string): void {

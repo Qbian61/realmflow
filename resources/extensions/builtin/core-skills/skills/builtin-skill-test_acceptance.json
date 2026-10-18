@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.skill.test_acceptance",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "name": "Test acceptance",
   "description": "Run tests, inspect results, and produce acceptance evidence.",
   "instructionsPath": "instructions/test_acceptance.md",

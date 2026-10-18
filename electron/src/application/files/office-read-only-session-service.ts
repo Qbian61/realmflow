@@ -1,4 +1,4 @@
-import type { OfficeSafeCopyFormat } from '../../sidecar/client'
+import type { OfficeSafeCopyFormat } from './private-python-worker-client'
 import type { LocalPresentationSessionService } from './local-presentation-session-service'
 import type { LocalSpreadsheetSessionService } from './local-spreadsheet-session-service'
 import type { LocalWordSessionService } from './local-word-session-service'

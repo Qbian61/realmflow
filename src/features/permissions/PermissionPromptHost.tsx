@@ -70,6 +70,7 @@ export function PermissionPromptHost({
   useEffect(() => {
     const form = target?.parentElement?.querySelector<HTMLFormElement>('form.composer')
     if (!form || !request) return
+    if (form.querySelector('.stop-action')) return
     const wasHidden = form.hidden
     const wasInert = form.hasAttribute('inert')
     form.hidden = true

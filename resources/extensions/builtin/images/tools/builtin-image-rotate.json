@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.image.rotate",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Rotate image",
   "description": "Rotate an image after applying its stored orientation.",
   "tags": [

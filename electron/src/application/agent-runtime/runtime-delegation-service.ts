@@ -103,16 +103,22 @@ export class RuntimeDelegationService {
     return this.dependencies.store.list(runId)
   }
 
-  async execute(runId: string, requestId: string, request: DelegationRequest, signal: AbortSignal): Promise<DelegationResult> {
+  async execute(
+    runId: string,
+    requestId: string,
+    request: DelegationRequest,
+    signal: AbortSignal
+  ): Promise<DelegationResult & { children: RuntimeDelegation[] }> {
     const records = this.spawn(runId, requestId, request, signal)
     await this.yieldSlot(runId, () => Promise.all(records.map((record) => this.entries.get(record.runId)?.done)))
-    const tasks = records.map((record) => this.dependencies.store.get(record.runId)?.result)
+    const children = records.map((record) => this.dependencies.store.get(record.runId))
+    const tasks = children.map((record) => record?.result)
     if (tasks.some((task) => !task)) throw new Error('runtime_delegation_recovery_required')
     const results = tasks as SubagentTaskResult[]
     const status = results.every((task) => task.status === 'completed') ? 'completed'
       : results.every((task) => task.status === 'cancelled') ? 'cancelled'
       : results.every((task) => task.status === 'failed') ? 'failed' : 'partial'
-    return { status, tasks: results }
+    return { status, tasks: results, children: children as RuntimeDelegation[] }
   }
 
   async wait(parentRunId: string, runIds: string[], waitMs = 0): Promise<RuntimeDelegation[]> {

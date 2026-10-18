@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.realmflow.spaces.list",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "name": "List spaces",
   "description": "List active spaces.",
   "tags": [

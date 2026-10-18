@@ -10,9 +10,8 @@ export type CommitFormalArtifactCommand = {
   runId: string
   requirementId: string
   stageId: RequirementStageId
-  nodeId?: string
-  nodeRunId?: string
-  legacyStageId?: RequirementStageId
+  nodeId: string
+  nodeRunId: string
   expectedArtifact: {
     relativePath: string
     kind: string
@@ -29,9 +28,8 @@ export class CommitFormalArtifactUseCase {
   async execute(
     command: CommitFormalArtifactCommand
   ): Promise<FormalArtifactCommitResult> {
-    if (command.nodeId && !command.nodeRunId) {
-      throw new Error('Node run is required for a node artifact')
-    }
+    if (!command.nodeId) throw new Error('Node ID is required')
+    if (!command.nodeRunId) throw new Error('Node run is required')
     if (
       command.completionEvent.runId !== command.runId ||
       command.completionEvent.type !== 'run.completed'

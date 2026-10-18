@@ -67,7 +67,7 @@ describe('workflow canvas model', () => {
     )
   })
 
-  it('treats fully overlapping legacy coordinates as missing layout', () => {
+  it('treats fully overlapping coordinates as missing layout', () => {
     const template = createTemplate(
       [
         { ...node('analysis', 0), position: { x: 0, y: 0 } },

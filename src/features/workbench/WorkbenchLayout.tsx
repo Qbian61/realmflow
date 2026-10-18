@@ -73,6 +73,7 @@ type WorkbenchLayoutProps = {
   panelOpen: boolean;
   panelMaximized: boolean;
   panelWidth: number;
+  maximizedLeftInset: number;
   tabs: WorkbenchTab[];
   activeTab?: WorkbenchTab;
   activeTabId?: string;
@@ -108,6 +109,7 @@ export function WorkbenchLayout({
   panelOpen,
   panelMaximized,
   panelWidth,
+  maximizedLeftInset,
   tabs,
   activeTab,
   activeTabId,
@@ -148,7 +150,10 @@ export function WorkbenchLayout({
           .filter(Boolean)
           .join(" ")}
         style={
-          { "--global-workbench-width": `${panelWidth}px` } as CSSProperties
+          {
+            "--global-workbench-width": `${panelWidth}px`,
+            "--global-workbench-maximized-left": `${maximizedLeftInset}px`,
+          } as CSSProperties
         }
       >
         <div className="global-workbench-page" onClickCapture={onPageClick}>

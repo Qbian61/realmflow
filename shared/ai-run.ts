@@ -1,22 +1,11 @@
 import type { AiRun, AiRunEvent } from '../domain/ai-run'
-import type { RequirementStageId } from '../domain/requirement'
 
-type StartAiRunBase = {
+export type StartAiRunInput = {
   requirementId: string
   modelProfileId?: string
+  nodeId: string
+  nodeRunId: string
 }
-
-export type StartAiRunInput =
-  | (StartAiRunBase & {
-      nodeId: string
-      nodeRunId: string
-      stageId?: RequirementStageId
-    })
-  | (StartAiRunBase & {
-      stageId: RequirementStageId
-      nodeId?: never
-      nodeRunId?: string
-    })
 
 export type CancelAiRunInput = {
   runId: string

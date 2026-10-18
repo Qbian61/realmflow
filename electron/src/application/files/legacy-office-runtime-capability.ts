@@ -4,7 +4,6 @@ import { delimiter, join } from 'node:path'
 import type { ToolCatalogState } from '../../../../domain/tool-catalog'
 import type { PdfGenerationReadinessSnapshot } from '../../../../domain/pdf-generation'
 import {
-  nonReadyToolIds,
   type RuntimeToolAvailabilityProvider,
   type RuntimeToolEligibilitySnapshot
 } from '../tools/runtime-tool-availability'
@@ -39,10 +38,6 @@ export class LegacyOfficeRuntimeCapabilityProvider
       this.cached = this.detect(now, cacheTtlMs)
     }
     return new Map(await this.cached)
-  }
-
-  async getUnavailableToolIds(): Promise<Set<string>> {
-    return nonReadyToolIds(await this.getEligibilitySnapshot())
   }
 
   async getPdfGenerationLibreOfficeReadiness(

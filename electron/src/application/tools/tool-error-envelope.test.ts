@@ -78,7 +78,7 @@ describe('tool error envelope', () => {
     })
   })
 
-  it('recomputes legacy adapter categories instead of persisting them', () => {
+  it('recomputes caller-provided categories from stable error codes', () => {
     expect(
       normalizeToolExecutionError({
         code: 'tool_policy_denied',

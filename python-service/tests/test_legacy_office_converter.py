@@ -5,14 +5,13 @@ import zipfile
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 
-from app import create_app
 from app.services.legacy_office_converter import (
     LegacyOfficeConversionError,
     LegacyOfficeConverter,
     libreoffice_command,
 )
+from private_worker import realmflow_private_worker, run_worker
 
 
 def ooxml(format_: str) -> bytes:
@@ -172,7 +171,7 @@ def test_libreoffice_command_has_no_user_controlled_arguments() -> None:
     )
 
 
-def test_conversion_endpoint_returns_a_stable_unavailable_error(
+def test_private_worker_returns_a_stable_unavailable_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def unavailable(*, format_: str, document: bytes) -> object:
@@ -181,26 +180,23 @@ def test_conversion_endpoint_returns_a_stable_unavailable_error(
             "LibreOffice is unavailable. Install LibreOffice and retry.",
         )
 
-    from app.api import routes
-
     monkeypatch.setattr(
-        routes.legacy_office_converter,
+        realmflow_private_worker.legacy_office_converter,
         "convert",
         unavailable,
     )
-    response = TestClient(
-        create_app(auth_token="session-secret"),
-        headers={"Authorization": "Bearer session-secret"},
-    ).post(
-        "/api/v1/office/legacy/convert",
-        json={
-            "sourceFormat": "doc",
-            "documentBase64": base64.b64encode(b"legacy").decode("ascii"),
-        },
-    )
-
-    assert response.status_code == 503
-    assert response.json()["detail"] == {
-        "code": "converter_unavailable",
-        "message": "LibreOffice is unavailable. Install LibreOffice and retry.",
-    }
+    try:
+        run_worker(
+            "office.legacy.convert",
+            {
+                "sourceFormat": "doc",
+                "documentBase64": base64.b64encode(b"legacy").decode("ascii"),
+            },
+        )
+    except LegacyOfficeConversionError as error:
+        assert error.code == "converter_unavailable"
+        assert str(error) == (
+            "LibreOffice is unavailable. Install LibreOffice and retry."
+        )
+    else:
+        raise AssertionError("unavailable converter was accepted")

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.presentation.add_text",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Add presentation text",
   "description": "Add a bounded text box to a slide.",
   "tags": [

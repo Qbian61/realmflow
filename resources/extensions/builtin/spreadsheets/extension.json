@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "packageId": "realmflow.builtin.spreadsheets",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Spreadsheets",
   "description": "Revision-safe local spreadsheet inspection and editing.",
   "publisher": {

@@ -55,6 +55,7 @@ describe('ConversationInputPreprocessor', () => {
         attachmentId: 'attachment-text',
         status: 'ready',
         kind: 'document',
+        path: join(rootPath, 'blobs', 'text'),
         summary: expect.objectContaining({
           sourceDigest: expect.any(String),
           chunks: expect.arrayContaining([
@@ -178,6 +179,10 @@ describe('ConversationInputPreprocessor', () => {
         dataBase64: bytes.toString('base64')
       }
     ])
+    expect(result.attachments[0]).toMatchObject({
+      attachmentId: 'attachment-image',
+      digest: 'c'.repeat(64)
+    })
     expect(JSON.stringify(result)).not.toContain(rootPath)
   })
 

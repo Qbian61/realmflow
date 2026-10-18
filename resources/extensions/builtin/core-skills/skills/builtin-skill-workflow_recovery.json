@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.skill.workflow_recovery",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "name": "Workflow recovery",
   "description": "Inspect failures, plan recovery, and retry without bypassing gates.",
   "instructionsPath": "instructions/workflow_recovery.md",

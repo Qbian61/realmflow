@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.office.inspect_original",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "name": "Inspect original Office file",
   "description": "Open an Office template or macro-enabled document in a read-only local session.",
   "tags": [

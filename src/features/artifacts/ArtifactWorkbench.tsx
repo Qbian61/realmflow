@@ -36,11 +36,11 @@ import { ArtifactFileBrowser } from "./ArtifactFileBrowser";
 import { ArtifactFixedLayoutPreview } from "./ArtifactFixedLayoutPreview";
 import { ArtifactImagePreview } from "./ArtifactImagePreview";
 import { fixedLayoutFileType } from "./fixed-layout-file-type";
+import { loadInitialPreviewUrls } from "./load-initial-preview-urls";
 import "./artifact-workbench.css";
 
 const CodeEditor = lazy(() => import("./CodeEditor"));
 const EMPTY_FILES: WorkspaceFile[] = [];
-
 type OpenDocument = {
   file: WorkspaceFile;
   draft: string;
@@ -127,6 +127,7 @@ export default function ArtifactWorkbench({
     setBinding(null);
     setManifest(null);
     setEntriesByDirectory({});
+    setPreviewUrls({});
     documentsRef.current = [];
     const initialDocuments = initialFiles.map((file) => ({
       file,
@@ -145,6 +146,10 @@ export default function ArtifactWorkbench({
       setLoading(false);
       return;
     }
+
+    void loadInitialPreviewUrls(api, requirementId, initialFiles).then((urls) => {
+      if (!cancelled) setPreviewUrls(urls);
+    });
 
     void api
       .getBinding(requirementId)

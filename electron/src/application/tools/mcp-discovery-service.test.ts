@@ -4,7 +4,7 @@ import {
   McpDiscoveryService,
   type SyntheticMcpCatalog
 } from './mcp-discovery-service'
-import type { McpClientConnection, McpRemoteTool } from './mcp-tool-adapter'
+import type { McpClientConnection, McpRemoteTool } from './mcp-client-contract'
 
 describe('McpDiscoveryService', () => {
   it('maps tools/list to a deterministic synthetic package and publishes it', async () => {

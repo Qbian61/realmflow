@@ -76,8 +76,8 @@ describe('CommitFormalArtifactUseCase', () => {
           content: '# Security Review'
         },
         completionEvent
-      })
-    ).rejects.toThrow('Node run is required for a node artifact')
+      } as never)
+    ).rejects.toThrow('Node run is required')
     expect(commit).not.toHaveBeenCalled()
   })
 

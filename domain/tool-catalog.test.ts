@@ -82,6 +82,42 @@ describe('Tool Catalog projection', () => {
     expect(catalog.skills.map(({ version }) => version)).toEqual(['1.0.0'])
   })
 
+  it('rejects historical Skill definitions instead of upgrading them during projection', () => {
+    const currentDefinition = skillDefinition({
+      package: {
+        packageId: 'realmflow.builtin.core-skills',
+        packageVersion: '1.0.0',
+        packageDigest: 'a'.repeat(64)
+      },
+      requiredTools: []
+    })
+    const invalidDefinition = currentDefinition as Record<string, unknown>
+    delete invalidDefinition.examples
+    invalidDefinition.inputSchema = {
+      type: 'object',
+      additionalProperties: true,
+    }
+    invalidDefinition.outputSchema = {
+      type: 'object',
+      additionalProperties: true,
+    }
+
+    expect(() => reduceToolCatalogEvents([
+      event(1, 'extension', 'extension.builtin_synchronized', {
+        packageId: 'realmflow.builtin.core-skills',
+        packageVersion: '1.0.0',
+        packageDigest: 'a'.repeat(64),
+        origin: 'builtin',
+        name: 'Core Skills',
+        description: 'Built-in Skills.'
+      }),
+      event(2, 'definition', 'skill.definition_published', {
+        definition: invalidDefinition,
+      })
+    ])
+    ).toThrow('Skill definition')
+  })
+
   it('keeps Plugin contributions blocked until required packages are enabled', () => {
     const plugin = event(1, 'extension', 'extension.package_imported', {
       packageId: 'com.example.research',
@@ -299,7 +335,7 @@ function toolDefinition(overrides: Record<string, unknown> = {}) {
   }
 }
 
-function skillDefinition() {
+function skillDefinition(overrides: Record<string, unknown> = {}) {
   return {
     schemaVersion: 1,
     id: 'builtin.skills.summarize-file',
@@ -354,6 +390,7 @@ function skillDefinition() {
     limits: {
       maxToolCalls: 4,
       timeoutMs: 60_000
-    }
+    },
+    ...overrides
   }
 }

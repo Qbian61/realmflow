@@ -108,6 +108,7 @@ export function WorkbenchProvider({
         panelOpen={panelOpen}
         panelMaximized={geometry.panelMaximized}
         panelWidth={geometry.panelWidth}
+        maximizedLeftInset={geometry.maximizedLeftInset}
         tabs={tabs}
         activeTab={activeTab}
         activeTabId={activeTabId}

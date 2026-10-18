@@ -34,6 +34,42 @@ export type BrowserCallContext = {
   signal: AbortSignal
 }
 
+export type BrowserToolRuntimePort = {
+  createSession(call: BrowserCallContext): Promise<BrowserSession>
+  attachSession(
+    profileId: string,
+    call: BrowserCallContext
+  ): Promise<BrowserSession>
+  closeSession(id: string, call: BrowserCallContext): Promise<void>
+  execute(
+    id: string,
+    action: BrowserAction,
+    args: JsonObject,
+    call: BrowserCallContext
+  ): Promise<JsonObject>
+  describe?(
+    id: string,
+    action: BrowserAction,
+    args: JsonObject,
+    call: BrowserCallContext
+  ): Promise<BrowserEffectEvidence>
+  describeCurrent?(
+    action: BrowserAction,
+    args: JsonObject,
+    call: BrowserCallContext
+  ): Promise<BrowserEffectEvidence>
+  resolveCurrentSessionId?(call: BrowserCallContext): Promise<string>
+  closeCurrent?(call: BrowserCallContext): Promise<string>
+  executeCurrent?(
+    action: BrowserAction,
+    args: JsonObject,
+    call: BrowserCallContext
+  ): Promise<JsonObject>
+  ensureCurrentSession?(
+    call: BrowserCallContext
+  ): Promise<BrowserSession & { created: boolean }>
+}
+
 export interface BrowserSessionRepository {
   list(): BrowserSession[]
   get(id: string): BrowserSession | undefined
@@ -54,4 +90,11 @@ export interface BrowserDriver {
     signal: AbortSignal,
     scopeRoots: string[]
   ): Promise<JsonObject>
+}
+
+export function browserError(
+  code: string,
+  message: string
+): Error & { code: string } {
+  return Object.assign(new Error(message), { code: `browser_${code}` })
 }

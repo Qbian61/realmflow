@@ -86,10 +86,8 @@ describe('AI run IPC', () => {
       runId: 'run-1',
       completion: Promise.resolve()
     })
-    const executeStage = vi.fn()
     registerAiRunIpc({
       executeNode: { execute: executeNode } as never,
-      executeStage: { execute: executeStage } as never,
       cancel: { execute: vi.fn() } as never,
       getRun: { execute: vi.fn() } as never,
       listEvents: { execute: vi.fn() } as never,
@@ -119,7 +117,6 @@ describe('AI run IPC', () => {
       nodeId: 'requirement-1:analysis',
       nodeRunId: 'node-run-1'
     })
-    expect(executeStage).not.toHaveBeenCalled()
   })
 
   it('queries persisted runs and control-event history through use cases', async () => {
@@ -135,7 +132,6 @@ describe('AI run IPC', () => {
     const listEvents = { execute: vi.fn().mockResolvedValue(events) }
     registerAiRunIpc({
       executeNode: { execute: vi.fn() } as never,
-      executeStage: { execute: vi.fn() } as never,
       cancel: { execute: vi.fn() } as never,
       getRun: getRun as never,
       listEvents: listEvents as never,
@@ -175,7 +171,6 @@ describe('AI run IPC', () => {
     const events = [createEvent('run-1')]
     registerAiRunIpc({
       executeNode: { execute: vi.fn() } as never,
-      executeStage: { execute: vi.fn() } as never,
       cancel: { execute: vi.fn() } as never,
       getRun: {
         execute: vi.fn(async () => {
@@ -216,7 +211,6 @@ describe('AI run IPC', () => {
     }
     registerAiRunIpc({
       executeNode: { execute: vi.fn() } as never,
-      executeStage: { execute: vi.fn() } as never,
       cancel: { execute: vi.fn() } as never,
       getRun: { execute: vi.fn() } as never,
       listEvents: { execute: vi.fn() } as never,

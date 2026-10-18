@@ -1,400 +1,272 @@
 import { vi } from 'vitest'
-import { createRunCheckpoint } from '../../../domain/agent-run-recovery'
+import { createDshRunManifest } from '../../../dsh-plugins/realmflow-runtime/src/test-manifest-fixture'
 import {
   createInitialRunBudgetLedger,
   DEFAULT_AGENT_EXECUTION_POLICY,
   type AgentRunLifecycleStatus,
   type AgentRuntimeRun
 } from '../../../domain/agent-runtime'
+import type { DshRunManifest } from '../../../domain/dsh-run-manifest'
+import {
+  createDshSessionBinding,
+  dshRunOwnerKey,
+  type DshSessionBinding
+} from '../../../domain/dsh-session-binding'
 import type {
-  AgentRunCheckpointRepository,
   AgentRuntimeRunRepository
 } from '../ai-run/application/ports'
 import { RecoverAgentRuntimeRunsUseCase } from './recover-agent-runtime-runs'
 
 describe('RecoverAgentRuntimeRunsUseCase', () => {
-  it('preserves blocked runs for explicit recovery without preventing other runs from resuming', async () => {
-    const blocked = runtimeRun('blocked', 'recovery_blocked')
-    const running = runtimeRun('running', 'running')
-    const resume = vi.fn()
-    const transition = vi.fn(async (id: string, status: string) => {
-      if (id === blocked.id && status === 'retrying') throw new Error('invalid_transition')
-    })
-    expect(await recoveryUseCase({
-      runs: repository([blocked, running], transition),
-      checkpointByRun: new Map([[blocked.id, checkpoint(blocked.id)], [running.id, checkpoint(running.id)]]),
-      resume
-    }).execute()).toEqual({ resumed: 1, blocked: 0, preserved: 1 })
-    expect(resume).toHaveBeenCalledOnce()
-    expect(resume).toHaveBeenCalledWith(running, expect.anything())
-  })
-
-  it.each(['validation', 'attachment'] as const)('preserves cancellation during recovery %s', async (stage) => {
-    const run = runtimeRun('run-cancelled', 'running')
-    let current = run
-    const transition = vi.fn(async (_id: string, status: AgentRunLifecycleStatus) => {
-      current = { ...current, status }
-    })
-    const runs = { ...repository([run], transition), getById: vi.fn(async () => current) }
-    const start = vi.fn()
-    const cancel = vi.fn()
-    const resume = vi.fn(async () => {
-      if (stage === 'attachment') current = { ...current, status: 'cancelled' }
-      return { start, cancel }
-    })
-    const result = await recoveryUseCase({
-      runs, checkpointByRun: new Map([[run.id, checkpoint(run.id)]]), resume,
-      reconcile: async () => {
-        if (stage === 'validation') current = { ...current, status: 'cancelled' }
-        return []
-      }
-    }).execute()
-    expect(result).toEqual({ resumed: 0, blocked: 0, preserved: 1 })
-    expect(current.status).toBe('cancelled')
-    expect(start).not.toHaveBeenCalled()
-    if (stage === 'validation') expect(resume).not.toHaveBeenCalled()
-    else expect(cancel).toHaveBeenCalledOnce()
-  })
-
-  it('preserves terminal status when attaching recovery fails after cancellation', async () => {
-    const run = runtimeRun('run-cancelled', 'running')
-    let current = run
-    const transition = vi.fn(async (_id: string, status: AgentRunLifecycleStatus) => {
-      current = { ...current, status }
-    })
-    const runs = { ...repository([run], transition), getById: vi.fn(async () => current) }
-    const result = await recoveryUseCase({
-      runs, checkpointByRun: new Map([[run.id, checkpoint(run.id)]]),
-      resume: async () => { current = { ...current, status: 'cancelled' }; throw new Error('request_cancelled') }
-    }).execute()
-    expect(current.status).toBe('cancelled')
-    expect(result).toEqual({ resumed: 0, blocked: 0, preserved: 1 })
-  })
-
-  it('does not recover a descendant cancelled while its ancestor was being recovered', async () => {
-    const parent = runtimeRun('parent', 'running')
-    const child = runtimeRun('child', 'running')
-    const transition = vi.fn()
-    const runs = {
-      ...repository([parent, child], transition),
-      getById: vi.fn(async (id: string) => id === 'child' ? { ...child, status: 'cancelled' as const } : parent)
-    }
-    const resume = vi.fn()
-    await recoveryUseCase({ runs, checkpointByRun: new Map([
-      [parent.id, checkpoint(parent.id)], [child.id, checkpoint(child.id)]
-    ]), resume }).execute()
-    expect(resume).toHaveBeenCalledOnce()
-    expect(resume).toHaveBeenCalledWith(parent, expect.anything())
-  })
-
-  it('activates the recovered stream only after committing the running lifecycle', async () => {
-    const running = runtimeRun('run-running', 'running')
+  it('syncs DSH history before resuming an active interrupted session', async () => {
+    const running = runtimeRun('run-running', 'running', 'workflow-node')
     const order: string[] = []
-    const transition = vi.fn(async (_id: string, status: string) => { order.push(status) })
+    const manifest = manifestForRun(running)
+    const binding = bindingForManifest(manifest, { lastProjectedSequence: 4 })
+    const transition = vi.fn(async (_id: string, status: string) => {
+      order.push(status)
+    })
     const start = vi.fn(() => { order.push('consume') })
     const useCase = recoveryUseCase({
       runs: repository([running], transition),
-      checkpointByRun: new Map([[running.id, checkpoint(running.id)]]),
-      resume: vi.fn(async () => ({ start }))
-    })
-    await useCase.execute()
-    expect(order).toEqual(['retrying', 'running', 'consume'])
-  })
-
-  it('resumes a running Run from its last safe checkpoint', async () => {
-    const running = runtimeRun('run-running', 'running')
-    const transition = vi.fn().mockResolvedValue(undefined)
-    const resume = vi.fn().mockResolvedValue(undefined)
-    const useCase = recoveryUseCase({
-      runs: repository([running], transition),
-      checkpointByRun: new Map([
-        [running.id, checkpoint(running.id)]
-      ]),
-      resume
+      manifestByRun: new Map([[running.id, manifest]]),
+      bindingByOwner: new Map([[binding.ownerKey, binding]]),
+      historySync: vi.fn(async () => {
+        order.push('history')
+        return {
+          status: 'synced' as const,
+          dshSessionId: manifest.sessionId,
+          fromSequence: 4,
+          toSequence: 7,
+          projectedEvents: 3,
+          productCommandResultsReconciled: 1,
+          hasMore: false
+        }
+      }),
+      resumeSession: vi.fn(async () => {
+        order.push('resume')
+        return { start }
+      })
     })
 
     await expect(useCase.execute()).resolves.toEqual({
       resumed: 1,
+      interrupted: 0,
       blocked: 0,
-      preserved: 0
+      preserved: 0,
+      syncedEvents: 3,
+      reconciledProductCommands: 1
     })
+    expect(order).toEqual(['history', 'retrying', 'resume', 'running', 'consume'])
     expect(transition.mock.calls).toEqual([
       ['run-running', 'retrying', 500],
       ['run-running', 'running', 500]
     ])
-    expect(resume).toHaveBeenCalledWith(
+    expect(useCase.dependenciesForTest.historySync).toHaveBeenCalledWith({
+      runtimeInstanceId: 'runtime-1',
+      manifest
+    })
+    expect(useCase.dependenciesForTest.resumeSession).toHaveBeenCalledWith(
       running,
-      expect.objectContaining({
-        runId: running.id,
-        resumeToken: expect.any(String)
-      })
+      manifest,
+      binding
     )
   })
 
-  it('preserves waiting input and paused Runs without provider work', async () => {
+  it('interrupts a conversation run whose scenario policy forbids automatic resume', async () => {
+    const running = runtimeRun('run-conversation', 'running', 'general')
+    const transition = vi.fn().mockResolvedValue(undefined)
+    const manifest = manifestForRun(running)
+    const binding = bindingForManifest(manifest)
+    const resumeSession = vi.fn()
+    const useCase = recoveryUseCase({
+      runs: repository([running], transition),
+      manifestByRun: new Map([[running.id, manifest]]),
+      bindingByOwner: new Map([[binding.ownerKey, binding]]),
+      resumeSession
+    })
+
+    await expect(useCase.execute()).resolves.toEqual({
+      resumed: 0,
+      interrupted: 1,
+      blocked: 0,
+      preserved: 0,
+      syncedEvents: 0,
+      reconciledProductCommands: 0
+    })
+    expect(resumeSession).not.toHaveBeenCalled()
+    expect(transition).toHaveBeenCalledWith(
+      running.id,
+      'failed',
+      500,
+      'interrupted:application_restart'
+    )
+    expect(useCase.dependenciesForTest.projectRecoveryEvent)
+      .toHaveBeenCalledWith(running, {
+        type: 'run.failed',
+        data: {
+          errorCode: 'interrupted',
+          message: 'Application restarted before the run completed'
+        }
+      })
+  })
+
+  it('preserves waiting input, paused, and recovery-blocked runs without DSH work', async () => {
     const waitingInput = runtimeRun('run-input', 'waiting_input')
     const paused = runtimeRun('run-paused', 'paused')
+    const blocked = runtimeRun('run-blocked', 'recovery_blocked')
     const transition = vi.fn()
-    const resume = vi.fn()
+    const historySync = vi.fn()
+    const resumeSession = vi.fn()
     const useCase = recoveryUseCase({
-      runs: repository([waitingInput, paused], transition),
-      checkpointByRun: new Map([
-        [waitingInput.id, checkpoint(waitingInput.id)],
-        [paused.id, checkpoint(paused.id)]
-      ]),
-      resume
+      runs: repository([waitingInput, paused, blocked], transition),
+      historySync,
+      resumeSession
     })
 
     await expect(useCase.execute()).resolves.toEqual({
       resumed: 0,
+      interrupted: 0,
       blocked: 0,
-      preserved: 2
+      preserved: 3,
+      syncedEvents: 0,
+      reconciledProductCommands: 0
     })
     expect(transition).not.toHaveBeenCalled()
-    expect(resume).not.toHaveBeenCalled()
+    expect(historySync).not.toHaveBeenCalled()
+    expect(resumeSession).not.toHaveBeenCalled()
   })
 
-  it('resumes a waiting permission Run so its pending Tool Call can finish', async () => {
-    const waitingPermission = runtimeRun(
-      'run-waiting-permission',
-      'waiting_permission'
-    )
+  it('blocks a run without a DSH session binding instead of requiring a legacy checkpoint', async () => {
+    const run = runtimeRun('run-missing-binding', 'running')
     const transition = vi.fn().mockResolvedValue(undefined)
-    const resume = vi.fn().mockResolvedValue(undefined)
+    const manifest = manifestForRun(run)
     const useCase = recoveryUseCase({
-      runs: repository([waitingPermission], transition),
-      checkpointByRun: new Map([
-        [
-          waitingPermission.id,
-          checkpoint(waitingPermission.id, [
-            {
-              callId: 'call-pending',
-              toolName: 'files.write',
-              executionId: 'execution-pending',
-              requestId: 'permission-pending',
-              effect: 'local_write',
-              idempotency: 'required',
-              status: 'permission_required'
-            }
-          ])
-        ]
-      ]),
-      reconcile: vi.fn().mockResolvedValue([
-        { callId: 'call-pending', outcome: 'not_started' }
-      ]),
-      resume
+      runs: repository([run], transition),
+      manifestByRun: new Map([[run.id, manifest]])
     })
 
     await expect(useCase.execute()).resolves.toEqual({
-      resumed: 1,
-      blocked: 0,
-      preserved: 0
+      resumed: 0,
+      interrupted: 0,
+      blocked: 1,
+      preserved: 0,
+      syncedEvents: 0,
+      reconciledProductCommands: 0
     })
-    expect(transition.mock.calls).toEqual([
-      ['run-waiting-permission', 'retrying', 500],
-      ['run-waiting-permission', 'running', 500]
-    ])
-    expect(resume).toHaveBeenCalledWith(
-      waitingPermission,
+    expect(transition).toHaveBeenCalledWith(
+      run.id,
+      'recovery_blocked',
+      500,
+      'recovery_blocked:dsh_session_unavailable'
+    )
+    expect(useCase.dependenciesForTest.projectRecoveryEvent).toHaveBeenCalledWith(
+      run,
       expect.objectContaining({
-        pendingCalls: [
-          expect.objectContaining({
-            callId: 'call-pending',
-            requestId: 'permission-pending'
-          })
-        ]
+        type: 'run.recovery_blocked',
+        data: expect.objectContaining({
+          recoveryReason: 'dsh_session_unavailable',
+          recoveryActions: ['resume', 'cancel']
+        })
       })
     )
   })
 
-  it.each([
-    [
-      'profile_unavailable',
-      {
-        profileAvailable: false,
-        capabilitiesAvailable: true,
-        modelAvailable: true,
-        permissionValid: true,
-        credentialAvailable: true
-      }
-    ],
-    [
-      'capability_unavailable',
-      {
-        profileAvailable: true,
-        capabilitiesAvailable: false,
-        modelAvailable: true,
-        permissionValid: true,
-        credentialAvailable: true
-      }
-    ],
-    [
-      'model_unavailable',
-      {
-        profileAvailable: true,
-        capabilitiesAvailable: true,
-        modelAvailable: false,
-        permissionValid: true,
-        credentialAvailable: true
-      }
-    ],
-    [
-      'permission_expired',
-      {
-        profileAvailable: true,
-        capabilitiesAvailable: true,
-        modelAvailable: true,
-        permissionValid: false,
-        credentialAvailable: true
-      }
-    ],
-    [
-      'credential_unavailable',
-      {
-        profileAvailable: true,
-        capabilitiesAvailable: true,
-        modelAvailable: true,
-        permissionValid: true,
-        credentialAvailable: false
-      }
-    ]
-  ] as const)(
-    'blocks recovery with stable reason %s',
-    async (reason, availability) => {
-      const run = runtimeRun('run-blocked', 'running')
-      const transition = vi.fn().mockResolvedValue(undefined)
-      const useCase = recoveryUseCase({
-        runs: repository([run], transition),
-        checkpointByRun: new Map([[run.id, checkpoint(run.id)]]),
-        availability
-      })
-
-      await expect(useCase.execute()).resolves.toEqual({
-        resumed: 0,
-        blocked: 1,
-        preserved: 0
-      })
-      expect(transition).toHaveBeenCalledWith(
-        run.id,
-        'recovery_blocked',
-        500,
-        `recovery_blocked:${reason}`
-      )
-    }
-  )
-
-  it('blocks a Run with an unknown external side effect instead of replaying it', async () => {
-    const run = runtimeRun('run-unknown', 'running')
+  it('blocks a run whose Product Command result history cannot be reconciled', async () => {
+    const run = runtimeRun('run-product-command-conflict', 'running')
     const transition = vi.fn().mockResolvedValue(undefined)
-    const resume = vi.fn()
+    const manifest = manifestForRun(run)
+    const binding = bindingForManifest(manifest)
     const useCase = recoveryUseCase({
       runs: repository([run], transition),
-      checkpointByRun: new Map([
-        [
-          run.id,
-          checkpoint(run.id, [
-            {
-              callId: 'call-1',
-              executionId: 'execution-1',
-              effect: 'external_write',
-              idempotency: 'none',
-              status: 'running'
-            }
-          ])
-        ]
-      ]),
-      reconcile: vi.fn().mockResolvedValue([
-        { callId: 'call-1', outcome: 'unknown' }
-      ]),
-      resume
+      manifestByRun: new Map([[run.id, manifest]]),
+      bindingByOwner: new Map([[binding.ownerKey, binding]]),
+      historySync: vi.fn(async () => {
+        throw new Error('Product command idempotency key conflicts')
+      })
     })
 
     await expect(useCase.execute()).resolves.toEqual({
       resumed: 0,
+      interrupted: 0,
       blocked: 1,
-      preserved: 0
+      preserved: 0,
+      syncedEvents: 0,
+      reconciledProductCommands: 0
     })
     expect(transition).toHaveBeenCalledWith(
       run.id,
       'recovery_blocked',
       500,
-      'recovery_blocked:side_effect_unknown'
-    )
-    expect(resume).not.toHaveBeenCalled()
-  })
-
-  it('blocks a new Runtime Run that has no durable checkpoint', async () => {
-    const run = runtimeRun('run-missing', 'preparing')
-    const transition = vi.fn().mockResolvedValue(undefined)
-    const useCase = recoveryUseCase({
-      runs: repository([run], transition),
-      checkpointByRun: new Map()
-    })
-
-    await expect(useCase.execute()).resolves.toEqual({
-      resumed: 0,
-      blocked: 1,
-      preserved: 0
-    })
-    expect(transition).toHaveBeenCalledWith(
-      run.id,
-      'recovery_blocked',
-      500,
-      'recovery_blocked:checkpoint_unavailable'
+      'recovery_blocked:history_sync_failed'
     )
   })
 })
 
 function recoveryUseCase(input: {
   runs: AgentRuntimeRunRepository
-  checkpointByRun: Map<string, ReturnType<typeof checkpoint>>
-  availability?: {
-    profileAvailable: boolean
-    capabilitiesAvailable: boolean
-    modelAvailable: boolean
-    permissionValid: boolean
-    credentialAvailable: boolean
-  }
-  reconcile?: (
-    run: AgentRuntimeRun
-  ) => Promise<
-    Array<{
-      callId: string
-      outcome: 'completed' | 'not_started' | 'unknown'
-    }>
-  >
-  resume?: (
+  manifestByRun?: Map<string, DshRunManifest>
+  bindingByOwner?: Map<string, DshSessionBinding>
+  historySync?: (input: {
+    runtimeInstanceId: string
+    manifest: DshRunManifest
+  }) => Promise<{
+    status: 'synced'
+    dshSessionId: string
+    fromSequence: number
+    toSequence: number
+    projectedEvents: number
+    productCommandResultsReconciled: number
+    hasMore: boolean
+  }>
+  resumeSession?: (
     run: AgentRuntimeRun,
-    value: ReturnType<typeof checkpoint>
+    manifest: DshRunManifest,
+    binding: DshSessionBinding
   ) => Promise<void | { start(): void }>
 }) {
-  const checkpoints = {
-    save: vi.fn(),
-    getLatest: vi.fn(async (runId: string) =>
-      input.checkpointByRun.get(runId)
-    ),
-    list: vi.fn()
-  } satisfies AgentRunCheckpointRepository
-  return new RecoverAgentRuntimeRunsUseCase(
+  const dependencies = {
+    runtimeInstanceId: 'runtime-1',
+    runs: input.runs,
+    manifests: {
+      getByRunId: vi.fn(async (runId: string) =>
+        input.manifestByRun?.get(runId)
+      )
+    },
+    sessions: {
+      getByOwner: vi.fn(async (owner) =>
+        input.bindingByOwner?.get(dshRunOwnerKey(owner))
+      )
+    },
+    historySync: {
+      syncRun:
+        input.historySync ??
+        vi.fn(async ({ manifest }) => ({
+          status: 'synced' as const,
+          dshSessionId: manifest.sessionId,
+          fromSequence: 0,
+          toSequence: 0,
+          projectedEvents: 0,
+          productCommandResultsReconciled: 0,
+          hasMore: false
+        }))
+    },
+    resumeSession: input.resumeSession ?? vi.fn().mockResolvedValue(undefined),
+    projectRecoveryEvent: vi.fn().mockResolvedValue(undefined)
+  }
+  const useCase = new RecoverAgentRuntimeRunsUseCase(
     {
-      runs: input.runs,
-      checkpoints,
-      validateConfiguration: vi.fn().mockResolvedValue(
-        input.availability ?? {
-          profileAvailable: true,
-          capabilitiesAvailable: true,
-          modelAvailable: true,
-          permissionValid: true,
-          credentialAvailable: true
-        }
-      ),
-      reconcilePendingCalls:
-        input.reconcile ?? vi.fn().mockResolvedValue([]),
-      resume: input.resume ?? vi.fn().mockResolvedValue(undefined),
-      projectRecoveryEvent: vi.fn().mockResolvedValue(undefined)
+      ...dependencies
     },
     () => 500
   )
+  return Object.assign(useCase, {
+    dependenciesForTest: {
+      historySync: dependencies.historySync.syncRun,
+      resumeSession: dependencies.resumeSession,
+      projectRecoveryEvent: dependencies.projectRecoveryEvent
+    }
+  })
 }
 
 function repository(
@@ -405,48 +277,16 @@ function repository(
     create: vi.fn(),
     bindProviderRun: vi.fn(),
     transition,
-    getByProviderRunId: vi.fn(),
     listByRootRunId: vi.fn(),
     listByParentRunId: vi.fn(),
     listUnfinished: vi.fn().mockResolvedValue(runs)
   }
 }
 
-function checkpoint(
-  runId: string,
-  pendingCalls: Parameters<typeof createRunCheckpoint>[0]['pendingCalls'] = []
-) {
-  return createRunCheckpoint({
-    runId,
-    ordinal: 1,
-    reason: 'tool_completed',
-    snapshotDigest: 'a'.repeat(64),
-    configurationDigests: {
-      agentProfile: 'b'.repeat(64),
-      prompt: 'c'.repeat(64),
-      policy: 'd'.repeat(64),
-      capabilityCatalog: 'e'.repeat(64),
-      capabilityBinding: 'f'.repeat(64)
-    },
-    messageWindow: [
-      { id: 'message-1', role: 'user', content: 'Continue' }
-    ],
-    pendingCalls,
-    remainingBudgets: {
-      toolCalls: 7,
-      subagents: 0,
-      retries: 2,
-      timeoutMs: 800_000,
-      tokens: 4_096
-    },
-    projectionCursor: 4,
-    createdAt: 100
-  })
-}
-
 function runtimeRun(
   id: string,
-  status: AgentRunLifecycleStatus
+  status: AgentRunLifecycleStatus,
+  scenarioId: AgentRuntimeRun['snapshot']['scenarioId'] = 'general'
 ): AgentRuntimeRun {
   return {
     id,
@@ -458,9 +298,9 @@ function runtimeRun(
       rootRunId: id,
       delegationDepth: 0,
       delegationOrdinal: 0,
-      scenarioId: 'general',
-      pipelineVersion: 'builtin.general.v1',
-      agentProfileId: 'builtin.general',
+      scenarioId,
+      pipelineVersion: `builtin.${scenarioId}.v1`,
+      agentProfileId: `builtin.${scenarioId}`,
       agentProfileVersion: '1.0.0',
       agentProfileDigest: 'b'.repeat(64),
       promptDigest: 'c'.repeat(64),
@@ -484,4 +324,29 @@ function runtimeRun(
     createdAt: 100,
     updatedAt: 100
   }
+}
+
+function manifestForRun(run: AgentRuntimeRun): DshRunManifest {
+  return createDshRunManifest({
+    runId: run.id,
+    sessionId: `session-${run.id}`,
+    owner: run.snapshot.scope.kind === 'workspace'
+      ? { workspaceId: run.snapshot.scope.workspaceId }
+      : { conversationId: run.snapshot.conversationId ?? run.id }
+  })
+}
+
+function bindingForManifest(
+  manifest: DshRunManifest,
+  overrides: Partial<Parameters<typeof createDshSessionBinding>[0]> = {}
+): DshSessionBinding {
+  return createDshSessionBinding({
+    owner: manifest.owner,
+    dshSessionId: manifest.sessionId,
+    runManifestDigest: manifest.digest,
+    runtimeBuildDigest: 'b'.repeat(64),
+    lastProjectedSequence: 0,
+    createdAt: 100,
+    ...overrides
+  })
 }

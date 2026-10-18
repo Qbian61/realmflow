@@ -35,6 +35,13 @@ function openSchedules(): void {
   )
 }
 
+function openUserMenuItem(name: string): HTMLElement {
+  fireEvent.click(screen.getByRole('button', { name: 'Qbian61' }))
+  return within(
+    screen.getByRole('menu', { name: '用户菜单' })
+  ).getByRole('menuitem', { name })
+}
+
 describe('RealmFlow navigation', () => {
   beforeEach(() => {
     window.localStorage.clear()
@@ -61,18 +68,22 @@ describe('RealmFlow navigation', () => {
   })
 
   it('renders the main navigation entries', () => {
+    window.history.replaceState(null, '', '#/')
     render(<App />)
 
-    const links = within(
-      screen.getByRole('navigation', { name: '主导航' })
-    ).getAllByRole('link')
-    expect(links.map((link) => link.textContent)).toEqual([
-        '工作台',
-        '新对话',
-        '能力',
-        '流程模板',
-        '统计分析'
-    ])
+    const navigation = screen.getByRole('navigation', { name: '主导航' })
+    expect(
+      within(navigation).getAllByRole('link').map((link) => link.textContent)
+    ).toEqual(['新对话'])
+
+    const toggle = screen.getByRole('button', { name: '隐藏菜单栏' })
+    const home = screen.getByRole('link', { name: '工作台' })
+    const edgeActions = toggle.closest('.sidebar-edge-actions')
+    expect(edgeActions).not.toBeNull()
+    expect(Array.from(edgeActions?.children ?? [])).toEqual([home, toggle])
+    expect(navigation).not.toContainElement(home)
+    expect(home).toHaveClass('active')
+    expect(home).toHaveAttribute('href', '#/')
     expect(screen.getByText('空间 (1)')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'xxx 空间' })).toBeInTheDocument()
     expect(screen.queryByText('域流工作台')).not.toBeInTheDocument()
@@ -384,7 +395,7 @@ describe('RealmFlow navigation', () => {
     ).toBeInTheDocument()
     expect(workbench).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('link', { name: '能力' }))
+    fireEvent.click(openUserMenuItem('能力'))
     expect(
       within(screen.getByTestId('app-content')).getByRole('tab', {
         name: '工具'
@@ -402,7 +413,12 @@ describe('RealmFlow navigation', () => {
     ).toBeInTheDocument()
     expect(workbench).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('link', { name: '统计分析' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Qbian61' }))
+    const userMenu = screen.getByRole('menu', { name: '用户菜单' })
+    fireEvent.click(
+      within(userMenu).getByRole('menuitem', { name: '统计分析' })
+    )
+    expect(userMenu).not.toBeInTheDocument()
     expect(
       within(screen.getByTestId('app-content')).getByRole('tablist', {
         name: '统计视图'
@@ -431,7 +447,7 @@ describe('RealmFlow navigation', () => {
       target: { value: '保留定时任务草稿' }
     })
 
-    fireEvent.click(screen.getByRole('link', { name: '能力' }))
+    fireEvent.click(openUserMenuItem('能力'))
     fireEvent.click(screen.getByRole('tab', { name: '技能' }))
 
     fireEvent.click(screen.getByRole('link', { name: '新对话' }))
@@ -447,7 +463,7 @@ describe('RealmFlow navigation', () => {
       '保留定时任务草稿'
     )
 
-    fireEvent.click(screen.getByRole('link', { name: '能力' }))
+    fireEvent.click(openUserMenuItem('能力'))
     expect(screen.getByRole('tab', { name: '技能' })).toHaveAttribute(
       'aria-selected',
       'true'
@@ -498,18 +514,26 @@ describe('RealmFlow navigation', () => {
     window.history.replaceState(null, '', '#/templates/template-1/edit')
     render(<App />)
 
-    const workflowLink = screen.getByRole('link', { name: '流程模板' })
-    expect(workflowLink).toHaveClass('active')
+    const workflowLink = openUserMenuItem('流程模板')
+    expect(workflowLink).toHaveAttribute('aria-current', 'page')
     expect(workflowLink).toHaveAttribute(
       'href',
       '#/templates/template-1/edit'
     )
 
-    fireEvent.click(screen.getByRole('link', { name: '能力' }))
-    fireEvent.click(screen.getByRole('link', { name: '流程模板' }))
+    fireEvent.click(
+      within(screen.getByRole('menu', { name: '用户菜单' })).getByRole(
+        'menuitem',
+        { name: '能力' }
+      )
+    )
+    fireEvent.click(openUserMenuItem('流程模板'))
 
     expect(window.location.hash).toBe('#/templates/template-1/edit')
-    expect(screen.getByRole('link', { name: '流程模板' })).toHaveClass('active')
+    expect(openUserMenuItem('流程模板')).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
     window.history.replaceState(null, '', '#/')
   })
 
@@ -743,8 +767,8 @@ describe('RealmFlow navigation', () => {
       'src',
       expect.stringContaining('logo.png')
     )
-    expect(executionLogo).toHaveAttribute('width', '28')
-    expect(executionLogo).toHaveAttribute('height', '28')
+    expect(executionLogo).toHaveAttribute('width', '18')
+    expect(executionLogo).toHaveAttribute('height', '18')
     expect(executionLogo).toHaveAttribute('loading', 'lazy')
     expect(executionLogo).toHaveAttribute('decoding', 'async')
     expect(within(messages).queryByText(/任务耗时/)).not.toBeInTheDocument()
@@ -1110,9 +1134,9 @@ describe('RealmFlow navigation', () => {
     expect(
       within(main).getByRole('heading', { name: '软件全流程开发' })
     ).toBeInTheDocument()
-        expect(
-          screen.queryByRole('complementary', { name: '全局工作区' })
-        ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('complementary', { name: '全局工作区' })
+    ).not.toBeInTheDocument()
     const flow = main.querySelector('.development-flow-track')
     expect(flow).toBeInTheDocument()
 
@@ -1127,19 +1151,17 @@ describe('RealmFlow navigation', () => {
       expect(within(flow as HTMLElement).getByText(stage)).toBeInTheDocument()
     }
 
-        const designStage = within(main).getByRole('button', {
-          name: '打开技术方案阶段'
-        })
-        fireEvent.click(designStage)
-        expect(designStage).toHaveAttribute('aria-pressed', 'true')
-        expect(
-          screen.getByRole('complementary', { name: '全局工作区' })
-        ).toBeInTheDocument()
-        expect(
-          within(
-            screen.getByRole('complementary', { name: '全局工作区' })
-          ).getByRole('tab', { name: '登录流程优化' })
-        ).toBeInTheDocument()
+    const designStage = within(main).getByRole('button', {
+      name: '打开技术方案阶段'
+    })
+    fireEvent.click(designStage)
+    expect(designStage).toHaveAttribute('aria-pressed', 'true')
+    expect(
+      screen.queryByRole('complementary', { name: '全局工作区' })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: '打开工作区' })
+    ).toBeInTheDocument()
   })
 
   it('renders the default test requirement and highlights it on selection', () => {
@@ -1458,6 +1480,9 @@ describe('RealmFlow navigation', () => {
       '主题跟随系统',
       '通用',
       '模型配置',
+      '能力',
+      '流程模板',
+      '统计分析',
       '网页与搜索',
       '数据备份',
       'RealmFlow 官网',
@@ -1519,25 +1544,68 @@ describe('RealmFlow navigation', () => {
   it('hides the sidebar and keeps only its restore control visible', () => {
     render(<App />)
 
+    const shell = screen.getByTestId('app-shell')
     const content = screen.getByTestId('app-content')
     const header = within(content).getByRole('banner', {
       name: '主工作区工具栏'
     })
     const body = content.querySelector('.app-content-body')
     const hideButton = screen.getByRole('button', { name: '隐藏菜单栏' })
-    expect(header).toContainElement(hideButton)
-    expect(body).not.toContainElement(hideButton)
+    const home = screen.getByRole('link', { name: '工作台' })
+    const expandedActions = hideButton.closest<HTMLElement>(
+      '.sidebar-edge-actions'
+    )
+    expect(expandedActions).not.toBeNull()
+    expect(shell).toContainElement(expandedActions)
+    expect(header).not.toContainElement(expandedActions)
+    expect(body).not.toContainElement(expandedActions)
+    expect(Array.from(expandedActions?.children ?? [])).toEqual([
+      home,
+      hideButton
+    ])
     expect(hideButton.closest('.sidebar')).toBeNull()
 
     fireEvent.click(hideButton)
     expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
 
     const showButton = screen.getByRole('button', { name: '展示菜单栏' })
-    expect(header).toContainElement(showButton)
+    const collapsedActions = showButton.closest<HTMLElement>(
+      '.sidebar-edge-actions'
+    )
+    expect(collapsedActions).not.toBeNull()
+    expect(shell).toContainElement(collapsedActions)
+    expect(header).toContainElement(collapsedActions)
+    expect(Array.from(collapsedActions?.children ?? [])).toEqual([showButton])
+    expect(
+      screen.queryByRole('link', { name: '工作台' })
+    ).not.toBeInTheDocument()
     expect(showButton.closest('.sidebar')).toBeNull()
 
     fireEvent.click(showButton)
     expect(screen.getByRole('complementary')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '工作台' })).toBeInTheDocument()
+  })
+
+  it('keeps the sidebar available while the right workspace is maximized', () => {
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: '打开工作区' }))
+    const panel = screen.getByRole('complementary', { name: '全局工作区' })
+    fireEvent.click(screen.getByRole('button', { name: '最大化工作区' }))
+
+    expect(panel.closest('.global-workbench-layout')).toHaveClass('maximized')
+    expect(document.querySelector('.sidebar')).toBeVisible()
+    expect(
+      screen.getByRole('button', { name: '隐藏菜单栏' })
+    ).toBeVisible()
+
+    fireEvent.click(screen.getByRole('button', { name: '隐藏菜单栏' }))
+
+    expect(document.querySelector('.sidebar')).toBeNull()
+    expect(panel.closest('.global-workbench-layout')).toHaveClass('maximized')
+    expect(
+      screen.getByRole('button', { name: '展示菜单栏' })
+    ).toBeVisible()
   })
 
   it('places persistence status between the workspace header and page body', () => {
@@ -1581,9 +1649,17 @@ describe('RealmFlow navigation', () => {
     })
 
     expect(screen.getByTestId('app-shell')).toHaveStyle({
+      '--sidebar-width': '264px'
+    })
+    expect(window.localStorage.getItem('realmflow:sidebar-width')).toBe('264')
+  })
+
+  it('uses the standard 256px sidebar width by default', () => {
+    render(<App />)
+
+    expect(screen.getByTestId('app-shell')).toHaveStyle({
       '--sidebar-width': '256px'
     })
-    expect(window.localStorage.getItem('realmflow:sidebar-width')).toBe('256')
   })
 
   it('centers the sidebar drag target on the content border without width jumping', () => {
@@ -1605,9 +1681,9 @@ describe('RealmFlow navigation', () => {
     )
 
     expect(screen.getByTestId('app-shell')).toHaveStyle({
-      '--sidebar-width': '292px'
+      '--sidebar-width': '300px'
     })
-    expect(window.localStorage.getItem('realmflow:sidebar-width')).toBe('292')
+    expect(window.localStorage.getItem('realmflow:sidebar-width')).toBe('300')
   })
 
   it('keeps the middle workspace at least 320px wide while resizing the sidebar', () => {
@@ -1639,7 +1715,7 @@ describe('RealmFlow navigation', () => {
       new MouseEvent('pointermove', { bubbles: true, clientX: 1000 })
     )
 
-    expect(shell).toHaveStyle({ '--sidebar-width': '364px' })
+    expect(shell).toHaveStyle({ '--sidebar-width': '380px' })
   })
 
   it('opens the new chat composer and submits a prompt', async () => {

@@ -3,7 +3,7 @@ import type { JsonObject } from '../../../../domain/tool-protocol-validation'
 import {
   calculateMcpToolSchemaDigest,
   type McpClientFactory
-} from '../tools/mcp-tool-adapter'
+} from '../tools/mcp-client-contract'
 import {
   ConnectorGatewayError,
   type ConnectorProtocolAdapter,

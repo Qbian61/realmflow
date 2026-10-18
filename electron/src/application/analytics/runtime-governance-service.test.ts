@@ -219,11 +219,22 @@ function seedRuntimeFacts(database: Database.Database): void {
     .run()
   database
     .prepare(
-      `INSERT INTO chat_messages (
-        id, session_id, role, status, content, run_id, error, sort_order,
-        created_at
+      `INSERT INTO conversation_turns (
+        id, session_id, turn_index, user_message_id, assistant_message_id,
+        run_id, status, created_at, completed_at
       ) VALUES (
-        'assistant-1', 'session-1', 'assistant', 'failed',
+        'turn-1', 'session-1', 0, 'user-1', 'assistant-1',
+        'run-failed', 'failed', 100, 150
+      )`
+    )
+    .run()
+  database
+    .prepare(
+      `INSERT INTO chat_messages (
+        id, session_id, turn_id, role, status, content, run_id, error,
+        sort_order, created_at
+      ) VALUES (
+        'assistant-1', 'session-1', 'turn-1', 'assistant', 'failed',
         'private request at /Users/alice/project', 'run-failed',
         'permission denied', 0, 100
       )`

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.document.insert_blocks",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "name": "Insert document blocks",
   "description": "Insert Markdown as structured document blocks.",
   "tags": [

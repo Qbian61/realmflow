@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.attachment.read_chunk",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "name": "Read attachment chunk",
   "description": "Read one referenced long-text attachment chunk from the current conversation.",
   "tags": [

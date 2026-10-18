@@ -10,7 +10,7 @@ import {
   calculateMcpToolSchemaDigest,
   type McpClientFactory,
   type McpRemoteTool
-} from './mcp-tool-adapter'
+} from './mcp-client-contract'
 import { assertDescribedStrictObjectSchema } from './tool-contract-schema-metadata'
 
 export type SyntheticMcpCatalog = {

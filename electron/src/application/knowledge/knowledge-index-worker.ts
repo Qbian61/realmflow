@@ -136,7 +136,7 @@ type WorkerSourceReader = {
   isCurrent(snapshot: FrozenKnowledgeSourceSnapshot): Promise<boolean>
 }
 
-type WorkerSidecar = {
+type WorkerEmbeddingService = {
   chunkKnowledgeDocuments(
     documents: KnowledgeChunkSourceDocument[],
     signal: AbortSignal
@@ -151,6 +151,8 @@ type WorkerSidecar = {
     embeddings: Array<{ id: string; embedding: number[] }>
   }>
 }
+
+type WorkerSidecar = WorkerEmbeddingService
 
 type WorkerQdrant = {
   upsertPoints(
@@ -182,7 +184,8 @@ type WorkerQdrant = {
 type KnowledgeIndexWorkerDependencies = {
   repository: WorkerRepository
   reader: WorkerSourceReader
-  sidecar: WorkerSidecar
+  sidecar?: WorkerSidecar
+  embedding?: WorkerEmbeddingService
   qdrant: WorkerQdrant
   profile: VectorIndexProfile
   now?: () => number
@@ -324,7 +327,7 @@ export class KnowledgeIndexWorker {
               job,
               snapshot,
               incremental,
-              sidecar: this.dependencies.sidecar,
+              embedding: this.embedding(),
               signal,
               at: this.now()
             })
@@ -543,7 +546,7 @@ export class KnowledgeIndexWorker {
       const batch = await buildFullGeneration({
         job: input.job,
         snapshot: batchSnapshot,
-        sidecar: this.dependencies.sidecar,
+        embedding: this.embedding(),
         signal: input.signal,
         at: this.now()
       })
@@ -647,6 +650,14 @@ export class KnowledgeIndexWorker {
       progress.status = 'failed'
     }
   }
+
+  private embedding(): WorkerEmbeddingService {
+    const embedding = this.dependencies.embedding ?? this.dependencies.sidecar
+    if (!embedding) {
+      throw new Error('Knowledge embedding service is unavailable')
+    }
+    return embedding
+  }
 }
 
 type RepositoryIncrementalBase = {
@@ -659,7 +670,7 @@ async function buildIncrementalGenerationOrFull(input: {
   job: WorkerJob
   snapshot: FrozenKnowledgeSourceSnapshot
   incremental: RepositoryIncrementalBase | undefined
-  sidecar: WorkerSidecar
+  embedding: WorkerEmbeddingService
   signal: AbortSignal
   at: number
 }): Promise<BuiltGeneration> {
@@ -668,14 +679,14 @@ async function buildIncrementalGenerationOrFull(input: {
         job: input.job,
         snapshot: input.snapshot,
         incremental: input.incremental,
-        sidecar: input.sidecar,
+        embedding: input.embedding,
         signal: input.signal,
         at: input.at
       })
     : buildFullGeneration({
         job: input.job,
         snapshot: input.snapshot,
-        sidecar: input.sidecar,
+        embedding: input.embedding,
         signal: input.signal,
         at: input.at
       })
@@ -684,7 +695,7 @@ async function buildIncrementalGenerationOrFull(input: {
 async function buildFullGeneration(input: {
   job: WorkerJob
   snapshot: FrozenKnowledgeSourceSnapshot
-  sidecar: WorkerSidecar
+  embedding: WorkerEmbeddingService
   signal: AbortSignal
   at: number
 }): Promise<BuiltGeneration> {
@@ -703,7 +714,7 @@ async function buildFullGeneration(input: {
       offset + MAX_CHUNK_DOCUMENT_BATCH_SIZE
     )
     try {
-      const chunked = await input.sidecar.chunkKnowledgeDocuments(
+      const chunked = await input.embedding.chunkKnowledgeDocuments(
         batch,
         input.signal
       )
@@ -717,7 +728,7 @@ async function buildFullGeneration(input: {
       }
       for (const document of batch) {
         try {
-          const chunked = await input.sidecar.chunkKnowledgeDocuments(
+          const chunked = await input.embedding.chunkKnowledgeDocuments(
             [document],
             input.signal
           )
@@ -756,7 +767,7 @@ async function buildIncrementalGeneration(input: {
   job: WorkerJob
   snapshot: FrozenKnowledgeSourceSnapshot
   incremental: RepositoryIncrementalBase
-  sidecar: WorkerSidecar
+  embedding: WorkerEmbeddingService
   signal: AbortSignal
   at: number
 }): Promise<BuiltGeneration> {
@@ -934,7 +945,7 @@ async function buildPoints(input: {
   job: WorkerJob
   snapshot: FrozenKnowledgeSourceSnapshot
   chunked: ChunkedKnowledgeResult
-  sidecar: WorkerSidecar
+  embedding: WorkerEmbeddingService
   signal: AbortSignal
   at: number
 }): Promise<BuiltGeneration> {
@@ -1006,7 +1017,7 @@ async function buildPoints(input: {
 
   const embeddingById = new Map<string, number[]>()
   for (const batch of batchEmbeddingInputs(chunks)) {
-    const response = await input.sidecar.embedKnowledgeDocuments(
+    const response = await input.embedding.embedKnowledgeDocuments(
       batch.map(({ id, chunk }) => ({ id, text: chunk.content })),
       input.signal
     )

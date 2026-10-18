@@ -92,6 +92,7 @@ describe('StartedNodeProtection', () => {
           requirementId: 'requirement-1',
           stageId: 'analysis',
           nodeId: 'node-1',
+          nodeRunId: 'node-run-1',
           relativePath: 'artifacts/analysis.md',
           kind: 'markdown',
           checksum: 'checksum',

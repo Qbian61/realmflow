@@ -1,6 +1,11 @@
 import type { ConversationKnowledgeScope } from '../../domain/conversation-knowledge-scope'
+import type { ConversationMessageAttachment } from '../../domain/conversation-input'
 import type { ConversationProcessingSnapshot } from '../../domain/conversation-processor'
 import type { AssistantTurnProjection } from '../../domain/assistant-turn'
+import {
+  validateConversationTurns,
+  type ConversationTurn
+} from '../../domain/conversation-turn'
 import type {
   AssistantMessageFollowUp,
   ConversationMessageSource
@@ -9,7 +14,8 @@ import { isRecord } from './workspace'
 
 export type ChatSessionMessage = {
   id: string
-  role?: 'user' | 'assistant' | 'tool'
+  turnId: string
+  role: 'user' | 'assistant'
   status?: 'pending' | 'completed' | 'failed'
   runId?: string
   modelName?: string
@@ -22,6 +28,7 @@ export type ChatSessionMessage = {
   execution?: AssistantTurnProjection
   source?: ConversationMessageSource
   followUp?: AssistantMessageFollowUp
+  attachments?: readonly ConversationMessageAttachment[]
   content: string
   createdAt: number
   completedAt?: number
@@ -39,6 +46,7 @@ export type ChatSession = {
   modelProfileId?: string
   title: string
   spacePath: string
+  turns: ConversationTurn[]
   messages: ChatSessionMessage[]
   sortOrder?: number
   revision?: number
@@ -55,9 +63,22 @@ export function createDefaultChatSessions(): ChatSession[] {
       spacePath: '/spaces/xxx',
       createdAt: 1,
       updatedAt: 1,
+      turns: [
+        {
+          id: 'test-conversation-turn-1',
+          sessionId: 'test-conversation',
+          index: 0,
+          userMessageId: 'test-conversation-message-1',
+          assistantMessageId: 'test-conversation-message-2',
+          status: 'completed',
+          createdAt: 1,
+          completedAt: 2
+        }
+      ],
       messages: [
         {
           id: 'test-conversation-message-1',
+          turnId: 'test-conversation-turn-1',
           role: 'user',
           status: 'completed',
           content: '如何设计空间内的需求管理流程？',
@@ -65,6 +86,7 @@ export function createDefaultChatSessions(): ChatSession[] {
         },
         {
           id: 'test-conversation-message-2',
+          turnId: 'test-conversation-turn-1',
           role: 'assistant',
           status: 'completed',
           content:
@@ -80,9 +102,22 @@ export function createDefaultChatSessions(): ChatSession[] {
       spacePath: '/spaces/xxx',
       createdAt: 1,
       updatedAt: 1,
+      turns: [
+        {
+          id: 'test-conversation-2-turn-1',
+          sessionId: 'test-conversation-2',
+          index: 0,
+          userMessageId: 'test-conversation-2-message-1',
+          assistantMessageId: 'test-conversation-2-message-2',
+          status: 'completed',
+          createdAt: 1,
+          completedAt: 2
+        }
+      ],
       messages: [
         {
           id: 'test-conversation-2-message-1',
+          turnId: 'test-conversation-2-turn-1',
           role: 'user',
           status: 'completed',
           content: '如何制定需求测试计划？',
@@ -90,6 +125,7 @@ export function createDefaultChatSessions(): ChatSession[] {
         },
         {
           id: 'test-conversation-2-message-2',
+          turnId: 'test-conversation-2-turn-1',
           role: 'assistant',
           status: 'completed',
           content:
@@ -123,6 +159,8 @@ export function isChatSession(value: unknown): value is ChatSession {
     value.spacePath.startsWith('/spaces/') &&
     (value.modelProfileId === undefined ||
       typeof value.modelProfileId === 'string') &&
+    Array.isArray(value.turns) &&
+    validateSessionTurns(value.id, value.turns) &&
     Array.isArray(value.messages) &&
     value.messages.every(isChatSessionMessage) &&
     typeof value.createdAt === 'number' &&
@@ -134,14 +172,12 @@ function isChatSessionMessage(value: unknown): value is ChatSessionMessage {
   return (
     isRecord(value) &&
     typeof value.id === 'string' &&
+    typeof value.turnId === 'string' &&
     typeof value.content === 'string' &&
     typeof value.createdAt === 'number' &&
     (value.completedAt === undefined ||
       typeof value.completedAt === 'number') &&
-    (value.role === undefined ||
-      value.role === 'user' ||
-      value.role === 'assistant' ||
-      value.role === 'tool') &&
+    (value.role === 'user' || value.role === 'assistant') &&
     (value.status === undefined ||
       value.status === 'pending' ||
       value.status === 'completed' ||
@@ -150,6 +186,9 @@ function isChatSessionMessage(value: unknown): value is ChatSessionMessage {
     (value.modelName === undefined || typeof value.modelName === 'string') &&
     (value.error === undefined || typeof value.error === 'string')
     &&
+    (value.attachments === undefined ||
+      (Array.isArray(value.attachments) &&
+        value.attachments.every(isConversationMessageAttachment))) &&
     (value.execution === undefined ||
       (isRecord(value.execution) &&
         value.execution.runId === value.runId &&
@@ -160,6 +199,38 @@ function isChatSessionMessage(value: unknown): value is ChatSessionMessage {
         isRecord(value.processing.rawUserInput) &&
         value.processing.rawUserInput.content === value.content))
   )
+}
+
+function isConversationMessageAttachment(
+  value: unknown
+): value is ConversationMessageAttachment {
+  return (
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    typeof value.fileName === 'string' &&
+    typeof value.mimeType === 'string' &&
+    (value.mediaKind === 'image' || value.mediaKind === 'document') &&
+    Number.isSafeInteger(value.sizeBytes) &&
+    (value.sizeBytes as number) >= 0 &&
+    (value.status === 'registered' ||
+      value.status === 'ready' ||
+      value.status === 'failed') &&
+    (value.errorCode === undefined || typeof value.errorCode === 'string') &&
+    (value.errorMessage === undefined || typeof value.errorMessage === 'string')
+  )
+}
+
+function validateSessionTurns(
+  sessionId: string,
+  value: unknown[]
+): value is ConversationTurn[] {
+  try {
+    const turns = value as ConversationTurn[]
+    validateConversationTurns(turns)
+    return turns.every((turn) => turn.sessionId === sessionId)
+  } catch {
+    return false
+  }
 }
 
 export function titleFromPrompt(prompt: string): string {

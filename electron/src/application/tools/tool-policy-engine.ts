@@ -77,7 +77,8 @@ export class ToolPolicyEngine {
       }
       return {
         id: tool.id, version: tool.version, digest: tool.definitionDigest,
-        allowed: reason === 'allowed', reason,
+        allowed: reason === 'allowed' || reason === 'explicit_grant_required',
+        reason,
       }
     })
     const grants = decisions.filter(({ allowed }) => allowed).map(({ id, version, digest }) => ({

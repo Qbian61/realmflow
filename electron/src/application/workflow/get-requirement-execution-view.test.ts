@@ -714,6 +714,7 @@ function createHarness(input: {
                 nodeRunId,
                 title: 'Implementation',
                 sortOrder: 1,
+                turns: [],
                 messages: [],
                 revision: 2,
                 createdAt: 1,

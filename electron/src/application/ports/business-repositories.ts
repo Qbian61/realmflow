@@ -4,7 +4,12 @@ import type {
   AssistantTurnProjection
 } from '../../../../domain/assistant-turn'
 import type { ConversationKnowledgeScope } from '../../../../domain/conversation-knowledge-scope'
+import type { ConversationMessageAttachment } from '../../../../domain/conversation-input'
 import type { ConversationProcessingSnapshot } from '../../../../domain/conversation-processor'
+import type {
+  ConversationTurn,
+  ConversationTurnMessage
+} from '../../../../domain/conversation-turn'
 import type { TurnContextRoute } from '../../../../domain/conversation-context-route'
 import type { ConversationContextProjection } from '../../../../domain/conversation-context-projection'
 import type {
@@ -154,7 +159,8 @@ export type RequirementRecord = {
 
 export type ChatMessageRecord = {
   id: string
-  role: 'user' | 'assistant' | 'tool'
+  turnId: string
+  role: 'user' | 'assistant'
   status: 'pending' | 'completed' | 'failed'
   content: string
   modelName?: string
@@ -168,6 +174,7 @@ export type ChatMessageRecord = {
   execution?: AssistantTurnProjection
   source?: ConversationMessageSource
   followUp?: AssistantMessageFollowUp
+  attachments?: readonly ConversationMessageAttachment[]
   sortOrder: number
   createdAt: number
   completedAt?: number
@@ -187,6 +194,7 @@ export type ChatSessionRecord = {
   modelProfileId?: string
   title: string
   sortOrder: number
+  turns: ConversationTurn[]
   messages: ChatMessageRecord[]
   createdAt: number
   updatedAt: number
@@ -197,11 +205,49 @@ export type RecentConversationQuery = {
   workspaceId?: string
   folderPath?: string
   updatedAfter?: number
+  cursor?: string
+  limit?: number
+}
+
+export type RecentConversationRecord = {
+  id: string
+  approvalProfileId: import('../../../../domain/approval-profile').ApprovalProfileId
+  kind: 'general' | 'space'
+  workspaceId?: string
+  folderPath?: string
+  modelProfileId?: string
+  title: string
+  sortOrder: number
+  revision: number
+  turnCount: number
+  latestTurnStatus?: ConversationTurn['status']
+  latestAnswerPreview?: string
+  createdAt: number
+  updatedAt: number
 }
 
 export type RecentConversationList = {
-  conversations: Array<Revisioned<ChatSessionRecord>>
+  conversations: RecentConversationRecord[]
   folderPaths: string[]
+  totalCount: number
+  nextCursor?: string
+}
+
+export type ConversationTurnPage = {
+  turns: ConversationTurn[]
+  messages: ConversationTurnMessage[]
+  projections: AssistantTurnProjection[]
+  nextCursor?: string
+  totalCount: number
+}
+
+export interface ConversationTurnPageRepository {
+  listTurns: (query: {
+    sessionId: string
+    cursor?: string
+    anchorTurnId?: string
+    limit: number
+  }) => Promise<ConversationTurnPage>
 }
 
 export type ConversationTurnResult = {
@@ -219,8 +265,8 @@ export type ArtifactMetadataRecord = {
   id: string
   requirementId: string
   stageId: RequirementStageId
-  nodeId?: string
-  nodeRunId?: string
+  nodeId: string
+  nodeRunId: string
   relativePath: string
   kind: string
   checksum: string
@@ -318,10 +364,9 @@ export interface ChatSessionRepository {
     expectedRevision: number
     updatedAt: number
   }) => Promise<ConversationTurnResult>
-  rebindTurnRun: (input: {
+  markTurnRetrying: (input: {
     sessionId: string
     assistantMessageId: string
-    previousRunId: string
     runId: string
     modelName: string
     expectedRevision: number
@@ -404,8 +449,7 @@ export interface ArtifactMetadataRepository {
   ) => Promise<boolean>
   invalidateByNodeRunIds: (
     nodeRunIds: readonly string[],
-    updatedAt: number,
-    legacyNodeIds?: readonly string[]
+    updatedAt: number
   ) => Promise<number>
 }
 
@@ -926,6 +970,10 @@ export interface ModelPoolRepository {
     expectedRevision: number
   ) => Promise<SaveResult<ModelProfile>>
   getProfileReferences: (id: string) => Promise<ModelProfileReferences>
+  clearConversationModelProfileReferences: (
+    profileIds: readonly string[],
+    updatedAt: number
+  ) => Promise<number>
   deleteProfile: (id: string, expectedRevision: number) => Promise<boolean>
   countProfilesByProvider: (providerId: string) => Promise<number>
   softDeleteProvider: (

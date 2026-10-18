@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.archives.extract",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "name": "Extract archive",
   "description": "Safely extract an authorized archive into a new local directory.",
   "tags": [

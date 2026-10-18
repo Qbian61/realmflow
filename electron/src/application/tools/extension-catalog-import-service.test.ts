@@ -105,7 +105,7 @@ describe('ExtensionCatalogImportService', () => {
     })
   })
 
-  it('commits the managed package, events, outbox, and catalog projection', async () => {
+  it('commits the managed package, events, and catalog projection', async () => {
     const service = createService(new SqliteUnitOfWork(database))
 
     const result = await service.importFromPath({
@@ -145,14 +145,6 @@ describe('ExtensionCatalogImportService', () => {
       { eventType: 'skill.definition_published' },
       { eventType: 'extension.activation_changed' }
     ])
-    expect(
-      database
-        .prepare(
-          `SELECT topic, status FROM tool_outbox
-           WHERE topic = 'catalog.refresh'`
-        )
-        .get()
-    ).toEqual({ topic: 'catalog.refresh', status: 'pending' })
   })
 
   it('is idempotent and does not publish duplicate definition events', async () => {

@@ -14,25 +14,6 @@ import type {
 import { useLocalization } from "../../../localization/LocalizationProvider";
 import { taskRequestId } from "./task-ui-utils";
 
-function normalizeTaskSnapshot(
-  snapshot: WorkbenchTaskTableSnapshot,
-): WorkbenchTaskTableSnapshot {
-  const viewState = snapshot.table.viewState;
-  return {
-    ...snapshot,
-    table: {
-      ...snapshot.table,
-      viewState: {
-        filters: viewState?.filters ?? [],
-        filterJoin: "and",
-        groups: viewState?.groups ?? [],
-        sorts: viewState?.sorts ?? [],
-      },
-    },
-    groupTree: snapshot.groupTree ?? [],
-  };
-}
-
 export function useTaskTableManagement(api?: WorkbenchTaskApi) {
   const { t } = useLocalization();
   const [tables, setTables] = useState<WorkbenchTaskTableSummary[]>([]);
@@ -45,7 +26,7 @@ export function useTaskTableManagement(api?: WorkbenchTaskApi) {
   > = (next) => {
     setSnapshotState((current) => {
       const resolved = typeof next === "function" ? next(current) : next;
-      return resolved ? normalizeTaskSnapshot(resolved) : undefined;
+      return resolved;
     });
   };
 

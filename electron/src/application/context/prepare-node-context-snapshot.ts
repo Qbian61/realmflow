@@ -6,7 +6,7 @@ import type {
   AiGenerateExecutorConfig,
   WorkflowNodeConfiguration
 } from '../../../../domain/workflow'
-import type { StageContextRepository } from '../../ai-run/application/ports'
+import type { NodeContextRepository } from '../../ai-run/application/ports'
 import type {
   ContextSnapshotRepository,
   NodeRunRepository,
@@ -42,7 +42,7 @@ type Dependencies = {
   models: {
     routeModel: (request: ModelRouteRequest) => Promise<ModelRouteResult>
   }
-  contexts: Pick<StageContextRepository, 'loadNode'>
+  contexts: Pick<NodeContextRepository, 'loadNode'>
   snapshots: Pick<ContextSnapshotRepository, 'get'>
 }
 

@@ -1,10 +1,10 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createAiRun } from '../../../../domain/ai-run'
 import {
-  createAssistantTurnProjection,
+  createAssistantTurnProjection as createProjection,
   projectAssistantTurn,
   type AssistantRunEvent
 } from '../../../../domain/assistant-turn'
@@ -61,6 +61,14 @@ const requirement: RequirementRecord = {
   updatedAt: 20
 }
 
+function createAssistantTurnProjection(
+  input: Omit<Parameters<typeof createProjection>[0], 'turnId'> & {
+    turnId?: string
+  }
+) {
+  return createProjection({ turnId: 'turn-1', ...input })
+}
+
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), 'realmflow-repositories-'))
   database = openRealmFlowDatabase(join(directory, 'realmflow.db'))
@@ -86,9 +94,23 @@ describe('SQLite business repositories', () => {
       knowledgeScope: { kind: 'none' },
       title: 'Original title',
       sortOrder: 0,
+      turns: [
+        {
+          id: 'conversation-manage-turn',
+          sessionId: 'conversation-manage',
+          index: 0,
+          userMessageId: 'conversation-manage-user',
+          assistantMessageId: 'conversation-manage-assistant',
+          runId: 'conversation-manage-run',
+          status: 'completed',
+          createdAt: 10,
+          completedAt: 12
+        }
+      ],
       messages: [
         {
           id: 'conversation-manage-user',
+          turnId: 'conversation-manage-turn',
           role: 'user',
           status: 'completed',
           content: 'Hello',
@@ -97,6 +119,7 @@ describe('SQLite business repositories', () => {
         },
         {
           id: 'conversation-manage-assistant',
+          turnId: 'conversation-manage-turn',
           role: 'assistant',
           status: 'completed',
           content: 'Hello back',
@@ -124,6 +147,7 @@ describe('SQLite business repositories', () => {
       projectAssistantTurn(
         createAssistantTurnProjection({
           runId: completedEvent.runId,
+          turnId: 'conversation-manage-turn',
           assistantMessageId: 'conversation-manage-assistant',
           startedAt: 11
         }),
@@ -820,8 +844,7 @@ describe('SQLite business repositories', () => {
             artifact: {
               relativePath: 'artifacts/analysis.md',
               kind: 'markdown'
-            },
-            legacyStageId: 'analysis'
+            }
           }
         },
         {
@@ -988,8 +1011,9 @@ describe('SQLite business repositories', () => {
 
   it('persists requirements, sessions, messages and artifacts', async () => {
     const repositories = createSqliteRepositories(database)
-    await repositories.workspaces.save(workspace, 0)
-    await repositories.requirements.save(requirement, 0)
+    await seedWorkflowExecution(repositories)
+    const discussionRun = nodeRun('node-run-discussion', 'completed')
+    await repositories.nodeRuns.save(discussionRun, 0)
 
     const session: ChatSessionRecord = {
       id: 'session-1',
@@ -1002,9 +1026,22 @@ describe('SQLite business repositories', () => {
       sortOrder: 0,
       createdAt: 30,
       updatedAt: 31,
+      turns: [
+        {
+          id: 'turn-1',
+          sessionId: 'session-1',
+          index: 0,
+          userMessageId: 'message-1',
+          assistantMessageId: 'message-2',
+          status: 'completed',
+          createdAt: 30,
+          completedAt: 31
+        }
+      ],
       messages: [
         {
           id: 'message-1',
+          turnId: 'turn-1',
           role: 'user',
           status: 'completed',
           content: 'Question',
@@ -1013,6 +1050,7 @@ describe('SQLite business repositories', () => {
         },
         {
           id: 'message-2',
+          turnId: 'turn-1',
           role: 'assistant',
           status: 'completed',
           content: 'Answer',
@@ -1025,13 +1063,15 @@ describe('SQLite business repositories', () => {
       id: 'artifact-1',
       requirementId: requirement.id,
       stageId: 'analysis',
-      nodeId: 'custom-analysis',
+      nodeId: discussionRun.nodeId,
+      nodeRunId: discussionRun.id,
       relativePath: 'artifacts/analysis.md',
       kind: 'markdown',
       checksum: 'sha256:abc',
       version: 1,
       byteSize: 42,
       isPrimary: true,
+      isValid: true,
       createdAt: 50,
       updatedAt: 50
     }
@@ -1055,6 +1095,7 @@ describe('SQLite business repositories', () => {
     const session: ChatSessionRecord = {
       id: 'approval-session', kind: 'general', knowledgeScope: { kind: 'none' },
       approvalProfileId: 'cautious', title: 'Approval', sortOrder: 0,
+      turns: [],
       messages: [], createdAt: 1, updatedAt: 1
     }
     await repositories.chatSessions.save(session, 0)
@@ -1079,6 +1120,7 @@ describe('SQLite business repositories', () => {
       folderPath: '/tmp/task-folder',
       title: 'General chat',
       sortOrder: 0,
+      turns: [],
       messages: [],
       createdAt: 60,
       updatedAt: 60
@@ -1092,16 +1134,8 @@ describe('SQLite business repositories', () => {
       nodeRunId: 'node-run-1',
       title: 'Node chat',
       sortOrder: 1,
-      messages: [
-        {
-          id: 'message-tool',
-          role: 'tool',
-          status: 'completed',
-          content: 'Tool output',
-          sortOrder: 0,
-          createdAt: 61
-        }
-      ],
+      turns: [],
+      messages: [],
       createdAt: 61,
       updatedAt: 61
     } as unknown as ChatSessionRecord
@@ -1111,14 +1145,94 @@ describe('SQLite business repositories', () => {
 
     const recentRepository = repositories.chatSessions as unknown as {
       listRecent: (query: object) => Promise<{
-        conversations: Array<ChatSessionRecord & { revision: number }>
+        conversations: Array<Record<string, unknown>>
         folderPaths: string[]
       }>
     }
     await expect(recentRepository.listRecent({})).resolves.toEqual({
-      conversations: [{ ...general, approvalProfileId: 'protected', revision: 1 }],
-      folderPaths: ['/tmp/task-folder']
+      conversations: [{
+        id: general.id,
+        approvalProfileId: 'protected',
+        kind: 'general',
+        folderPath: general.folderPath,
+        title: general.title,
+        sortOrder: general.sortOrder,
+        revision: 1,
+        turnCount: 0,
+        createdAt: general.createdAt,
+        updatedAt: general.updatedAt
+      }],
+      folderPaths: ['/tmp/task-folder'],
+      totalCount: 1
     })
+  })
+
+  it('lists recent conversation metadata without hydrating full sessions', async () => {
+    const repositories = createSqliteRepositories(database)
+    const session = {
+      id: 'session-lightweight',
+      kind: 'general',
+      knowledgeScope: { kind: 'none' },
+      title: 'Lightweight',
+      sortOrder: 0,
+      turns: [{
+        id: 'turn-lightweight',
+        sessionId: 'session-lightweight',
+        index: 0,
+        userMessageId: 'user-lightweight',
+        assistantMessageId: 'assistant-lightweight',
+        status: 'completed',
+        createdAt: 100,
+        completedAt: 101
+      }],
+      messages: [{
+        id: 'user-lightweight',
+        turnId: 'turn-lightweight',
+        role: 'user',
+        status: 'completed',
+        content: 'Question',
+        sortOrder: 0,
+        createdAt: 100
+      }, {
+        id: 'assistant-lightweight',
+        turnId: 'turn-lightweight',
+        role: 'assistant',
+        status: 'completed',
+        content: 'A concise answer preview',
+        sortOrder: 1,
+        createdAt: 100,
+        completedAt: 101
+      }],
+      createdAt: 100,
+      updatedAt: 101
+    } as ChatSessionRecord
+    await repositories.chatSessions.save(session, 0)
+    const internals = repositories.chatSessions as unknown as {
+      getTurns: { all: (...args: unknown[]) => unknown[] }
+      getMessages: { all: (...args: unknown[]) => unknown[] }
+    }
+    const getTurns = vi.spyOn(internals.getTurns, 'all')
+    const getMessages = vi.spyOn(internals.getMessages, 'all')
+
+    await expect(repositories.chatSessions.listRecent({})).resolves.toEqual({
+      conversations: [{
+        id: session.id,
+        approvalProfileId: 'protected',
+        kind: 'general',
+        title: session.title,
+        sortOrder: 0,
+        revision: 1,
+        turnCount: 1,
+        latestTurnStatus: 'completed',
+        latestAnswerPreview: 'A concise answer preview',
+        createdAt: 100,
+        updatedAt: 101
+      }],
+      folderPaths: [],
+      totalCount: 1
+    })
+    expect(getTurns).not.toHaveBeenCalled()
+    expect(getMessages).not.toHaveBeenCalled()
   })
 
   it('lists recent conversations with stable ordering and folder options', async () => {
@@ -1135,6 +1249,7 @@ describe('SQLite business repositories', () => {
         nodeRunId: 'node-run-newest',
         title: 'Node newest',
         sortOrder: 0,
+        turns: [],
         messages: [],
         createdAt: 500,
         updatedAt: 500
@@ -1149,6 +1264,7 @@ describe('SQLite business repositories', () => {
         workspaceId: workspace.id,
         title: 'Space Z',
         sortOrder: 1,
+        turns: [],
         messages: [],
         createdAt: 300,
         updatedAt: 300
@@ -1160,6 +1276,7 @@ describe('SQLite business repositories', () => {
         folderPath: '/tmp/folder-b',
         title: 'Folder B',
         sortOrder: 2,
+        turns: [],
         messages: [],
         createdAt: 300,
         updatedAt: 300
@@ -1171,6 +1288,7 @@ describe('SQLite business repositories', () => {
         folderPath: '/tmp/folder-a',
         title: 'Folder A',
         sortOrder: 3,
+        turns: [],
         messages: [],
         createdAt: 200,
         updatedAt: 200
@@ -1182,19 +1300,81 @@ describe('SQLite business repositories', () => {
 
     const recentRepository = repositories.chatSessions as unknown as {
       listRecent: (query: object) => Promise<{
-        conversations: Array<ChatSessionRecord & { revision: number }>
+        conversations: Array<Record<string, unknown>>
         folderPaths: string[]
       }>
     }
 
     await expect(recentRepository.listRecent({})).resolves.toEqual({
       conversations: [
-        { ...sessions[2], approvalProfileId: 'protected', revision: 1 },
-        { ...sessions[1], approvalProfileId: 'protected', revision: 1 },
-        { ...sessions[3], approvalProfileId: 'protected', revision: 1 }
+        expect.objectContaining({
+          id: sessions[2].id,
+          title: sessions[2].title,
+          turnCount: 0,
+          revision: 1
+        }),
+        expect.objectContaining({
+          id: sessions[1].id,
+          title: sessions[1].title,
+          turnCount: 0,
+          revision: 1
+        }),
+        expect.objectContaining({
+          id: sessions[3].id,
+          title: sessions[3].title,
+          turnCount: 0,
+          revision: 1
+        })
       ],
-      folderPaths: ['/tmp/folder-b', '/tmp/folder-a']
+      folderPaths: ['/tmp/folder-b', '/tmp/folder-a'],
+      totalCount: 3
     })
+  })
+
+  it('pages recent conversations with a stable filter-bound cursor', async () => {
+    const repositories = createSqliteRepositories(database)
+    const records = [
+      ['session-a', 300],
+      ['session-b', 300],
+      ['session-c', 200]
+    ] as const
+    for (const [id, updatedAt] of records) {
+      await repositories.chatSessions.save({
+        id,
+        kind: 'general',
+        knowledgeScope: { kind: 'none' },
+        title: id,
+        sortOrder: 0,
+        turns: [],
+        messages: [],
+        createdAt: updatedAt,
+        updatedAt
+      }, 0)
+    }
+
+    const first = await repositories.chatSessions.listRecent({
+      kind: 'general',
+      limit: 2
+    })
+    expect(first).toMatchObject({
+      conversations: [{ id: 'session-a' }, { id: 'session-b' }],
+      totalCount: 3,
+      nextCursor: expect.any(String)
+    })
+
+    await expect(repositories.chatSessions.listRecent({
+      kind: 'general',
+      cursor: first.nextCursor,
+      limit: 2
+    })).resolves.toMatchObject({
+      conversations: [{ id: 'session-c' }],
+      totalCount: 3
+    })
+    await expect(repositories.chatSessions.listRecent({
+      kind: 'space',
+      cursor: first.nextCursor,
+      limit: 2
+    })).rejects.toThrow('recent_conversation_cursor_invalid')
   })
 
   it('intersects recent type, context, and inclusive time filters', async () => {
@@ -1208,6 +1388,7 @@ describe('SQLite business repositories', () => {
         folderPath: '/tmp/filter-folder',
         title: 'Boundary',
         sortOrder: 0,
+        turns: [],
         messages: [],
         createdAt: 200,
         updatedAt: 200
@@ -1219,6 +1400,7 @@ describe('SQLite business repositories', () => {
         folderPath: '/tmp/filter-folder',
         title: 'Older',
         sortOrder: 1,
+        turns: [],
         messages: [],
         createdAt: 199,
         updatedAt: 199
@@ -1233,6 +1415,7 @@ describe('SQLite business repositories', () => {
         workspaceId: workspace.id,
         title: 'Space',
         sortOrder: 2,
+        turns: [],
         messages: [],
         createdAt: 300,
         updatedAt: 300
@@ -1244,7 +1427,7 @@ describe('SQLite business repositories', () => {
 
     const recentRepository = repositories.chatSessions as unknown as {
       listRecent: (query: object) => Promise<{
-        conversations: Array<ChatSessionRecord & { revision: number }>
+        conversations: Array<Record<string, unknown>>
         folderPaths: string[]
       }>
     }
@@ -1256,7 +1439,7 @@ describe('SQLite business repositories', () => {
         updatedAfter: 200
       })
     ).resolves.toMatchObject({
-      conversations: [{ ...sessions[0], revision: 1 }]
+      conversations: [{ id: sessions[0].id, revision: 1 }]
     })
     await expect(
       recentRepository.listRecent({
@@ -1264,11 +1447,11 @@ describe('SQLite business repositories', () => {
         workspaceId: workspace.id
       })
     ).resolves.toMatchObject({
-      conversations: [{ ...sessions[2], revision: 1 }]
+      conversations: [{ id: sessions[2].id, revision: 1 }]
     })
   })
 
-  it('persists conversation message lifecycle fields across database reopen', async () => {
+  it('persists conversation turn lifecycle fields across database reopen', async () => {
     let repositories = createSqliteRepositories(database)
     const session = {
       id: 'session-lifecycle',
@@ -1276,9 +1459,23 @@ describe('SQLite business repositories', () => {
       knowledgeScope: { kind: 'none' },
       title: 'Lifecycle',
       sortOrder: 0,
+      turns: [
+        {
+          id: 'turn-lifecycle',
+          sessionId: 'session-lifecycle',
+          index: 0,
+          userMessageId: 'message-user',
+          assistantMessageId: 'message-assistant',
+          runId: 'run-conversation-1',
+          status: 'failed',
+          createdAt: 70,
+          completedAt: 72
+        }
+      ],
       messages: [
         {
           id: 'message-user',
+          turnId: 'turn-lifecycle',
           role: 'user',
           status: 'completed',
           content: 'Inspect the run',
@@ -1287,22 +1484,15 @@ describe('SQLite business repositories', () => {
         },
         {
           id: 'message-assistant',
+          turnId: 'turn-lifecycle',
           role: 'assistant',
           status: 'failed',
           runId: 'run-conversation-1',
           error: 'Provider stream interrupted',
           content: 'Partial answer',
           sortOrder: 1,
-          createdAt: 71
-        },
-        {
-          id: 'message-tool',
-          role: 'tool',
-          status: 'completed',
-          runId: 'run-conversation-1',
-          content: 'Tool result',
-          sortOrder: 2,
-          createdAt: 72
+          createdAt: 71,
+          completedAt: 72
         }
       ],
       createdAt: 70,
@@ -1358,6 +1548,7 @@ describe('SQLite business repositories', () => {
         requirementId: requirement.id,
         stageId: 'analysis',
         nodeId: run.nodeId,
+        nodeRunId: run.id,
         relativePath: 'artifacts/conversation.md',
         kind: 'markdown',
         checksum: 'sha256:conversation',
@@ -1378,9 +1569,21 @@ describe('SQLite business repositories', () => {
       nodeRunId: run.id,
       title: 'Analysis conversation',
       sortOrder: 79,
+      turns: [
+        {
+          id: 'turn-node-references',
+          sessionId: 'session-node-references',
+          index: 0,
+          userMessageId: 'message-node-references',
+          assistantMessageId: 'message-node-references-assistant',
+          status: 'pending',
+          createdAt: 79
+        }
+      ],
       messages: [
         {
           id: 'message-node-references',
+          turnId: 'turn-node-references',
           role: 'user',
           status: 'completed',
           content: 'Yes',
@@ -1389,6 +1592,15 @@ describe('SQLite business repositories', () => {
           toolCallId: 'tool-call-conversation',
           artifactId: 'artifact-conversation',
           sortOrder: 0,
+          createdAt: 79
+        },
+        {
+          id: 'message-node-references-assistant',
+          turnId: 'turn-node-references',
+          role: 'assistant',
+          status: 'pending',
+          content: '',
+          sortOrder: 1,
           createdAt: 79
         }
       ],
@@ -1443,6 +1655,7 @@ describe('SQLite business repositories', () => {
       knowledgeScope: { kind: 'none' },
       title: 'Atomic turn',
       sortOrder: 80,
+      turns: [],
       messages: [],
       createdAt: 80,
       updatedAt: 80
@@ -1504,9 +1717,20 @@ describe('SQLite business repositories', () => {
       status: 'started',
       entity: {
         revision: 1,
+        turns: [
+          {
+            id: 'message-request-1:turn',
+            sessionId: 'session-turn',
+            index: 0,
+            userMessageId: 'message-request-1',
+            assistantMessageId: 'message-request-1:assistant',
+            status: 'pending'
+          }
+        ],
         messages: [
           {
             id: 'message-request-1',
+            turnId: 'message-request-1:turn',
             role: 'user',
             status: 'completed',
             content: '  Start the turn  ',
@@ -1520,6 +1744,7 @@ describe('SQLite business repositories', () => {
           },
           {
             id: 'message-request-1:assistant',
+            turnId: 'message-request-1:turn',
             role: 'assistant',
             status: 'pending',
             content: '',
@@ -1543,6 +1768,18 @@ describe('SQLite business repositories', () => {
     expect(routeConflict.status).toBe('message_conflict')
     expect(
       database.prepare('SELECT COUNT(*) FROM chat_messages').pluck().get()
+    ).toBe(2)
+    expect(
+      database.prepare('SELECT COUNT(*) FROM conversation_turns').pluck().get()
+    ).toBe(1)
+    expect(
+      database
+        .prepare(
+          `SELECT COUNT(*) FROM chat_messages
+           WHERE turn_id = 'message-request-1:turn'`
+        )
+        .pluck()
+        .get()
     ).toBe(2)
     expect(
       database
@@ -1572,6 +1809,22 @@ describe('SQLite business repositories', () => {
       bound.entity.messages.find(({ id }) => id === 'message-request-1')
         ?.processing
     ).toEqual(command.processing)
+    expect(bound.entity.turns).toEqual([
+      expect.objectContaining({
+        id: 'message-request-1:turn',
+        runId: 'run-1',
+        status: 'running'
+      })
+    ])
+    await expect(
+      repositories.chatSessions.bindTurnRun({
+        sessionId: session.id,
+        assistantMessageId: 'message-request-1:assistant',
+        runId: 'run-replacement',
+        expectedRevision: bound.entity.revision,
+        updatedAt: 83
+      })
+    ).resolves.toMatchObject({ status: 'conflict' })
 
     await expect(
       repositories.chatSessions.save(
@@ -1606,6 +1859,7 @@ describe('SQLite business repositories', () => {
       knowledgeScope: { kind: 'none' },
       title: 'Conflict',
       sortOrder: 90,
+      turns: [],
       messages: [],
       createdAt: 90,
       updatedAt: 90
@@ -1664,6 +1918,7 @@ describe('SQLite business repositories', () => {
       knowledgeScope: { kind: 'none' },
       title: 'Context rollback',
       sortOrder: 91,
+      turns: [],
       messages: [],
       createdAt: 91,
       updatedAt: 91
@@ -1767,6 +2022,7 @@ describe('SQLite business repositories', () => {
       knowledgeScope: { kind: 'none' },
       title: 'Finish',
       sortOrder: 100,
+      turns: [],
       messages: [],
       createdAt: 100,
       updatedAt: 100
@@ -1807,6 +2063,11 @@ describe('SQLite business repositories', () => {
       error: 'Stream interrupted',
       completedAt: 103
     })
+    expect(finished.entity.turns[0]).toMatchObject({
+      runId: 'run-finish',
+      status: 'failed',
+      completedAt: 103
+    })
     expect(
       await turns.recoverPendingTurns({
         error: 'Application interrupted',
@@ -1820,6 +2081,7 @@ describe('SQLite business repositories', () => {
       knowledgeScope: { kind: 'none' },
       title: 'Recovery',
       sortOrder: 110,
+      turns: [],
       messages: [],
       createdAt: 110,
       updatedAt: 110
@@ -1855,6 +2117,12 @@ describe('SQLite business repositories', () => {
           error: 'Application interrupted',
           completedAt: 112
         })
+      ],
+      turns: [
+        expect.objectContaining({
+          status: 'failed',
+          completedAt: 112
+        })
       ]
     })
   })
@@ -1867,6 +2135,7 @@ describe('SQLite business repositories', () => {
       knowledgeScope: { kind: 'none' },
       title: 'Preserved timeline',
       sortOrder: 111,
+      turns: [],
       messages: [],
       createdAt: 120,
       updatedAt: 120
@@ -1887,20 +2156,34 @@ describe('SQLite business repositories', () => {
       updatedAt: 122
     })
     const eventStore = new SqliteAssistantRunEventStore(database)
-    const completedEvent: AssistantRunEvent = {
-      id: 'event-preserved-timeline-completed',
+    const answerEvent: AssistantRunEvent = {
+      id: 'event-preserved-timeline-answer',
       runId: 'run-preserved-timeline',
       sequence: 1,
-      type: 'run.completed',
+      type: 'answer.delta',
       timestamp: 123,
-      data: {}
+      data: { delta: 'Done' }
     }
-    const completedProjection = projectAssistantTurn(
+    const answeredProjection = projectAssistantTurn(
       createAssistantTurnProjection({
-        runId: completedEvent.runId,
+        runId: answerEvent.runId,
+        turnId: 'message-preserved-timeline:turn',
         assistantMessageId: 'message-preserved-timeline:assistant',
         startedAt: 121
       }),
+      answerEvent
+    )
+    await eventStore.appendAndProject(answerEvent, answeredProjection)
+    const completedEvent: AssistantRunEvent = {
+      id: 'event-preserved-timeline-completed',
+      runId: 'run-preserved-timeline',
+      sequence: 2,
+      type: 'run.completed',
+      timestamp: 124,
+      data: {}
+    }
+    const completedProjection = projectAssistantTurn(
+      answeredProjection,
       completedEvent
     )
     await eventStore.appendAndProject(completedEvent, completedProjection)
@@ -1912,7 +2195,7 @@ describe('SQLite business repositories', () => {
       status: 'completed',
       content: 'Done',
       expectedRevision: bound.entity.revision,
-      updatedAt: 124
+      updatedAt: 125
     })
 
     expect(
@@ -1922,7 +2205,7 @@ describe('SQLite business repositories', () => {
         )
         .pluck()
         .get(completedEvent.runId)
-    ).toBe(1)
+    ).toBe(2)
     expect(await eventStore.getSnapshot(completedEvent.runId)).toEqual(
       completedProjection
     )
@@ -1955,6 +2238,112 @@ describe('SQLite business repositories', () => {
     ).resolves.toEqual(completedProjection)
   })
 
+  it('commits a completed turn only when projection and message answers match', async () => {
+    const repositories = createSqliteRepositories(database)
+    const session: ChatSessionRecord = {
+      id: 'session-answer-mirror',
+      kind: 'general',
+      knowledgeScope: { kind: 'none' },
+      title: 'Answer mirror',
+      sortOrder: 112,
+      turns: [],
+      messages: [],
+      createdAt: 130,
+      updatedAt: 130
+    }
+    const started = await repositories.chatSessions.beginTurn({
+      session,
+      expectedRevision: 0,
+      userMessageId: 'message-answer-mirror',
+      assistantMessageId: 'message-answer-mirror:assistant',
+      content: 'Return the canonical answer',
+      createdAt: 131
+    })
+    const bound = await repositories.chatSessions.bindTurnRun({
+      sessionId: session.id,
+      assistantMessageId: 'message-answer-mirror:assistant',
+      runId: 'run-answer-mirror',
+      expectedRevision: started.entity.revision,
+      updatedAt: 132
+    })
+    const eventStore = new SqliteAssistantRunEventStore(database)
+    let projection = createAssistantTurnProjection({
+      runId: 'run-answer-mirror',
+      turnId: 'message-answer-mirror:turn',
+      assistantMessageId: 'message-answer-mirror:assistant',
+      startedAt: 131
+    })
+    const answerEvent: AssistantRunEvent = {
+      id: 'event-answer-mirror-delta',
+      runId: projection.runId,
+      sequence: 1,
+      type: 'answer.delta',
+      timestamp: 133,
+      data: { delta: 'Canonical answer' }
+    }
+    projection = projectAssistantTurn(projection, answerEvent)
+    await eventStore.appendAndProject(answerEvent, projection)
+    const completedEvent: AssistantRunEvent = {
+      id: 'event-answer-mirror-completed',
+      runId: projection.runId,
+      sequence: 2,
+      type: 'run.completed',
+      timestamp: 134,
+      data: {}
+    }
+    projection = projectAssistantTurn(projection, completedEvent)
+    await eventStore.appendAndProject(completedEvent, projection)
+
+    await expect(
+      repositories.chatSessions.finishTurn({
+        sessionId: session.id,
+        assistantMessageId: 'message-answer-mirror:assistant',
+        runId: projection.runId,
+        status: 'completed',
+        content: 'Different answer',
+        expectedRevision: bound.entity.revision,
+        updatedAt: 135
+      })
+    ).rejects.toThrow(/projection answer/i)
+    await expect(repositories.chatSessions.get(session.id)).resolves.toMatchObject({
+      revision: bound.entity.revision,
+      turns: [expect.objectContaining({ status: 'running' })],
+      messages: [
+        expect.any(Object),
+        expect.objectContaining({ status: 'pending', content: '' })
+      ]
+    })
+
+    await expect(
+      repositories.chatSessions.finishTurn({
+        sessionId: session.id,
+        assistantMessageId: 'message-answer-mirror:assistant',
+        runId: projection.runId,
+        status: 'completed',
+        content: 'Canonical answer',
+        expectedRevision: bound.entity.revision,
+        updatedAt: 136
+      })
+    ).resolves.toMatchObject({
+      status: 'updated',
+      entity: {
+        turns: [
+          expect.objectContaining({
+            status: 'completed',
+            completedAt: 136
+          })
+        ],
+        messages: [
+          expect.any(Object),
+          expect.objectContaining({
+            status: 'completed',
+            content: 'Canonical answer'
+          })
+        ]
+      }
+    })
+  })
+
   it('allows an empty completed message for a persisted waiting-input projection', async () => {
     const repositories = createSqliteRepositories(database)
     const session: ChatSessionRecord = {
@@ -1963,6 +2352,7 @@ describe('SQLite business repositories', () => {
       knowledgeScope: { kind: 'none' },
       title: 'Waiting input timeline',
       sortOrder: 114,
+      turns: [],
       messages: [],
       createdAt: 150,
       updatedAt: 150
@@ -1994,6 +2384,7 @@ describe('SQLite business repositories', () => {
     const waitingProjection = projectAssistantTurn(
       createAssistantTurnProjection({
         runId: waitingEvent.runId,
+        turnId: 'message-waiting-input:turn',
         assistantMessageId: 'message-waiting-input:assistant',
         startedAt: 151
       }),
@@ -2026,6 +2417,7 @@ describe('SQLite business repositories', () => {
       knowledgeScope: { kind: 'none' },
       title: 'Empty completed timeline',
       sortOrder: 115,
+      turns: [],
       messages: [],
       createdAt: 160,
       updatedAt: 160
@@ -2059,6 +2451,7 @@ describe('SQLite business repositories', () => {
       projectAssistantTurn(
         createAssistantTurnProjection({
           runId: completedEvent.runId,
+          turnId: 'message-empty-completed:turn',
           assistantMessageId: 'message-empty-completed:assistant',
           startedAt: 161
         }),
@@ -2087,6 +2480,7 @@ describe('SQLite business repositories', () => {
       knowledgeScope: { kind: 'none' },
       title: 'Missing projection',
       sortOrder: 112,
+      turns: [],
       messages: [],
       createdAt: 130,
       updatedAt: 130
@@ -2139,6 +2533,7 @@ describe('SQLite business repositories', () => {
       knowledgeScope: { kind: 'none' },
       title: 'Running projection',
       sortOrder: 113,
+      turns: [],
       messages: [],
       createdAt: 140,
       updatedAt: 140
@@ -2172,6 +2567,7 @@ describe('SQLite business repositories', () => {
       projectAssistantTurn(
         createAssistantTurnProjection({
           runId: runningEvent.runId,
+          turnId: 'message-running-projection:turn',
           assistantMessageId: 'message-running-projection:assistant',
           startedAt: 141
         }),
@@ -2203,13 +2599,12 @@ describe('SQLite business repositories', () => {
     })
   })
 
-  it('atomically rebinds a pending assistant to a fallback model run', async () => {
+  it('marks a bound turn retrying without replacing its run identity', async () => {
     const repositories = createSqliteRepositories(database)
     const turns = repositories.chatSessions as typeof repositories.chatSessions & {
-      rebindTurnRun: (input: {
+      markTurnRetrying: (input: {
         sessionId: string
         assistantMessageId: string
-        previousRunId: string
         runId: string
         modelName: string
         expectedRevision: number
@@ -2225,6 +2620,7 @@ describe('SQLite business repositories', () => {
       knowledgeScope: { kind: 'none' },
       title: 'Fallback',
       sortOrder: 101,
+      turns: [],
       messages: [],
       createdAt: 100,
       updatedAt: 100
@@ -2235,7 +2631,7 @@ describe('SQLite business repositories', () => {
       userMessageId: 'message-fallback',
       assistantMessageId: 'message-fallback:assistant',
       content: 'Use another provider',
-      modelName: 'DeepSeek V4 Flash',
+      modelName: 'DeepSeek-V4.1-Flash',
       createdAt: 101
     })
     const bound = await turns.bindTurnRun({
@@ -2246,43 +2642,32 @@ describe('SQLite business repositories', () => {
       updatedAt: 102
     })
 
-    const rebound = await turns.rebindTurnRun({
-      sessionId: session.id,
-      assistantMessageId: 'message-fallback:assistant',
-      previousRunId: 'run-deepseek',
-      runId: 'run-volcengine',
-      modelName: 'Doubao Seed 2.1 Pro',
-      expectedRevision: bound.entity.revision,
-      updatedAt: 103
-    })
-
-    expect(rebound).toMatchObject({
-      status: 'updated',
-      entity: {
-        revision: bound.entity.revision + 1,
-        messages: [
-          expect.any(Object),
-          expect.objectContaining({
-            status: 'pending',
-            runId: 'run-volcengine',
-            modelName: 'Doubao Seed 2.1 Pro'
-          })
-        ]
-      }
-    })
-    await expect(
-      turns.rebindTurnRun({
+    const retrying = await turns.markTurnRetrying({
         sessionId: session.id,
         assistantMessageId: 'message-fallback:assistant',
-        previousRunId: 'run-deepseek',
-        runId: 'run-stale',
-        modelName: 'Stale',
+        runId: 'run-deepseek',
+        modelName: 'Doubao Seed 2.1 Pro',
         expectedRevision: bound.entity.revision,
-        updatedAt: 104
+        updatedAt: 103
       })
-    ).resolves.toMatchObject({
-      status: 'conflict',
-      entity: { revision: rebound.entity.revision }
+    expect(retrying).toMatchObject({
+      status: 'updated',
+      entity: {
+      revision: bound.entity.revision + 1,
+      turns: [
+        expect.objectContaining({
+          runId: 'run-deepseek',
+          status: 'retrying'
+        })
+      ],
+      messages: [
+        expect.any(Object),
+        expect.objectContaining({
+          runId: 'run-deepseek',
+          modelName: 'Doubao Seed 2.1 Pro'
+        })
+      ]
+      }
     })
   })
 
@@ -3373,25 +3758,25 @@ describe('SQLite business repositories', () => {
       enabled: true
     }
     const profile: ModelProfile = {
-      id: 'builtin-deepseek:deepseek-v4-flash',
+      id: 'builtin-deepseek:deepseek-flash',
       providerId: provider.id,
-      modelId: 'deepseek-v4-flash',
-      displayName: 'DeepSeek V4 Flash',
+      modelId: 'deepseek-flash',
+      displayName: 'DeepSeek-V4.1-Flash',
       source: 'catalog',
       catalogProviderId: 'deepseek',
-      catalogModelId: 'deepseek-v4-flash',
-      catalogVersion: 1,
+      catalogModelId: 'deepseek-flash',
+      catalogVersion: 2,
       defaultEnabled: true,
       enabledOverride: false,
       enabled: false,
       lifecycleStatus: 'active',
       capabilities: {
         text: true,
-        vision: false,
+        vision: true,
         toolCalling: true,
         structuredOutput: true
       },
-      inputTypes: ['text'],
+      inputTypes: ['text', 'image'],
       reasoning: true,
       contextWindow: 1_000_000,
       maxOutputTokens: 384_000,
@@ -3587,6 +3972,7 @@ describe('SQLite business repositories', () => {
         knowledgeScope: { kind: 'none' },
         title: 'Pinned conversation',
         sortOrder: 1,
+        turns: [],
         messages: [],
         modelProfileId: profile.id,
         createdAt: 80,
@@ -3822,7 +4208,7 @@ describe('SQLite business repositories', () => {
 
   it('records and filters model call metrics', async () => {
     const repositories = createSqliteRepositories(database)
-    await repositories.workspaces.save(workspace, 0)
+    await seedWorkflowExecution(repositories)
     const provider: ModelProvider = {
       id: 'provider-1',
       type: 'local',
@@ -3853,11 +4239,12 @@ describe('SQLite business repositories', () => {
     await repositories.modelPool.saveProfile(profile, 0)
     const metric: ModelCallMetric = {
       id: 'metric-1',
-      source: 'workflow_stage',
+      source: 'workflow_node',
       providerId: provider.id,
       modelProfileId: profile.id,
       workspaceId: workspace.id,
       requirementId: requirement.id,
+      nodeId: 'node-analysis',
       aiRunId: 'metric-run-1',
       inputTokens: 120,
       outputTokens: 40,
@@ -3939,6 +4326,7 @@ describe('SQLite business repositories', () => {
       knowledgeScope: { kind: 'none' },
       title: 'Metric conversation',
       sortOrder: 0,
+      turns: [],
       messages: [],
       createdAt: 1_000,
       updatedAt: 1_000

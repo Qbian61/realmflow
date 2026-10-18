@@ -4,13 +4,12 @@ import zipfile
 from xml.etree import ElementTree
 
 import pytest
-from fastapi.testclient import TestClient
 
-from app import create_app
 from app.services.office_package_sanitizer import (
     OfficePackageSanitizationError,
     OfficePackageSanitizer,
 )
+from private_worker import run_worker
 
 
 CONTENT_TYPES_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
@@ -121,13 +120,10 @@ def test_rejects_a_package_missing_its_required_main_part() -> None:
     assert raised.value.code == "office_safe_copy_package_invalid"
 
 
-def test_endpoint_returns_safety_facts_without_external_execution() -> None:
-    response = TestClient(
-        create_app(auth_token="session-secret"),
-        headers={"Authorization": "Bearer session-secret"},
-    ).post(
-        "/api/v1/office/safe-copy",
-        json={
+def test_private_worker_returns_safety_facts_without_external_execution() -> None:
+    payload = run_worker(
+        "office.safe_copy.create",
+        {
             "sourceFormat": "docm",
             "documentBase64": base64.b64encode(
                 package("docm", executable_parts=True)
@@ -135,8 +131,6 @@ def test_endpoint_returns_safety_facts_without_external_execution() -> None:
         },
     )
 
-    assert response.status_code == 200
-    payload = response.json()
     assert payload["outputFormat"] == "docx"
     assert payload["macrosRemoved"] is True
     assert payload["templateMaterialized"] is False

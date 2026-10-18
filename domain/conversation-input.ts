@@ -45,6 +45,18 @@ export type ConversationAttachmentDescriptor = {
   createdAt: number
 }
 
+export type ConversationMessageAttachment = Pick<
+  ConversationAttachmentDescriptor,
+  | 'id'
+  | 'fileName'
+  | 'mimeType'
+  | 'mediaKind'
+  | 'sizeBytes'
+  | 'status'
+  | 'errorCode'
+  | 'errorMessage'
+>
+
 export type LongTextChunk = {
   id: string
   attachmentId: string
@@ -78,6 +90,8 @@ export type PreparedConversationAttachment = {
   mimeType: string
   kind: ConversationAttachmentMediaKind
   status: 'ready' | 'failed'
+  path?: string
+  digest?: string
   extraction?: 'text' | 'parser' | 'ocr' | 'vision'
   content?: string
   summary?: LongTextSummary

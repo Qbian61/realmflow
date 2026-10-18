@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.browser.download",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Download browser file",
   "description": "Download up to 32 MiB with the current Run browser into authorized roots without overwrite. Redirects are rejected. Also writes a .realmflow-browser.json provenance sidecar.",
   "tags": [

@@ -12,7 +12,7 @@ import type { JsonObject } from '../../../../domain/tool-protocol-validation'
 import type {
   ExecuteToolExecutionResult,
   ToolExecutionCommand
-} from '../tools/tool-execution-application-service'
+} from '../tools/tool-execution-contract'
 
 export type PluginContributionAvailability = {
   packageId: string

@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { AiRunEvent } from '../../../../domain/ai-run'
+import {
+  createAssistantTurnProjection,
+  projectAssistantTurn,
+  type AssistantRunEvent
+} from '../../../../domain/assistant-turn'
 import type { ModelRouteResult } from '../../../../domain/model'
 import type { EffectiveModelSelection } from '../../../../domain/model-selection'
 import type {
@@ -10,10 +15,75 @@ import type {
 import { SendConversationMessageUseCase } from './send-conversation-message'
 
 describe('SendConversationMessageUseCase', () => {
+  it('publishes targeted Turn projections after durable timeline appends', async () => {
+    let session: Revisioned<ChatSessionRecord> = {
+      id: 'conversation-projection-events',
+      kind: 'general',
+      title: 'Projection events',
+      sortOrder: 0,
+      turns: [],
+      messages: [],
+      revision: 0,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const appendAndProject = vi.fn(async () => true)
+    const onProjectionUpdated = vi.fn()
+    const useCase = new SendConversationMessageUseCase({
+      sessions: createTestRepository(
+        () => session,
+        (next) => {
+          session = next
+        }
+      ),
+      timeline: {
+        appendAndProject,
+        listAfter: vi.fn(async () => []),
+        getSnapshot: vi.fn(async () => undefined),
+        rebuildProjection: vi.fn(async () => undefined)
+      },
+      onProjectionUpdated,
+      gateway: {
+        createRun: vi.fn(async () => ({ runId: 'projection-run' })),
+        cancelRun: vi.fn(),
+        streamEvents: async function* () {
+          yield event(
+            1,
+            'answer.delta',
+            { delta: 'Projected answer' },
+            'projection-run'
+          )
+          yield event(2, 'run.completed', {}, 'projection-run')
+        }
+      }
+    })
+
+    await useCase.execute({
+      sessionId: session.id,
+      content: 'Question',
+      expectedRevision: 0
+    })
+
+    expect(appendAndProject).toHaveBeenCalledTimes(2)
+    expect(onProjectionUpdated).toHaveBeenCalledTimes(2)
+    expect(onProjectionUpdated).toHaveBeenLastCalledWith({
+      sessionId: session.id,
+      turnId: expect.any(String),
+      projection: expect.objectContaining({
+        runId: 'projection-run',
+        answer: 'Projected answer',
+        status: 'completed'
+      })
+    })
+    expect(
+      appendAndProject.mock.invocationCallOrder[1]
+    ).toBeLessThan(onProjectionUpdated.mock.invocationCallOrder[1])
+  })
+
   it('uses Main default approval only for a new conversation and preserves its mode later', async () => {
     let session: Revisioned<ChatSessionRecord> | undefined
     const fresh: ChatSessionRecord = { id: 'default-approval', kind: 'general', title: 'Default',
-      sortOrder: 0, messages: [], createdAt: 1, updatedAt: 1 }
+      sortOrder: 0, turns: [], messages: [], createdAt: 1, updatedAt: 1 }
     const getDefaultApprovalProfile = vi.fn().mockResolvedValue('cautious')
     const createRun = vi.fn().mockResolvedValue({ runId: 'default-run' })
     const useCase = new SendConversationMessageUseCase({
@@ -33,7 +103,7 @@ describe('SendConversationMessageUseCase', () => {
   it('persists the chosen approval mode and passes it to every new run', async () => {
     let session: Revisioned<ChatSessionRecord> = {
       id: 'conversation-approval', kind: 'general', title: 'Approval',
-      sortOrder: 0, messages: [], revision: 0, createdAt: 1, updatedAt: 1
+      sortOrder: 0, turns: [], messages: [], revision: 0, createdAt: 1, updatedAt: 1
     }
     const createRun = vi.fn().mockResolvedValue({ runId: 'approval-run' })
     const useCase = new SendConversationMessageUseCase({
@@ -69,10 +139,110 @@ describe('SendConversationMessageUseCase', () => {
     )
   })
 
+  it('binds a selected Skill reference to the run context for one turn', async () => {
+    let session: Revisioned<ChatSessionRecord> = {
+      id: 'conversation-skill',
+      kind: 'general',
+      title: 'Skill',
+      sortOrder: 0,
+      turns: [],
+      messages: [],
+      revision: 0,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const createRun = vi.fn().mockResolvedValue({ runId: 'skill-run' })
+    const skill = {
+      kind: 'skill' as const,
+      id: 'builtin.skill.code_review',
+      version: '1.0.2',
+      digest: 'c'.repeat(64)
+    }
+    const useCase = new SendConversationMessageUseCase({
+      sessions: createTestRepository(
+        () => session,
+        (next) => {
+          session = next
+        }
+      ),
+      gateway: {
+        createRun,
+        cancelRun: vi.fn(),
+        streamEvents: async function* () {
+          yield event(1, 'run.completed', {}, 'skill-run')
+        }
+      }
+    })
+
+    await useCase.execute({
+      sessionId: session.id,
+      content: 'Review current changes',
+      expectedRevision: 0,
+      capabilities: { skill }
+    })
+
+    expect(createRun).toHaveBeenCalledWith(
+      expect.objectContaining({ skill }),
+      undefined
+    )
+  })
+
+  it('binds selected Connector and MCP references to the run context for one turn', async () => {
+    let session: Revisioned<ChatSessionRecord> = {
+      id: 'conversation-connectors',
+      kind: 'general',
+      title: 'Connectors',
+      sortOrder: 0,
+      turns: [],
+      messages: [],
+      revision: 0,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const createRun = vi.fn().mockResolvedValue({ runId: 'connector-run' })
+    const useCase = new SendConversationMessageUseCase({
+      sessions: createTestRepository(
+        () => session,
+        (next) => {
+          session = next
+        }
+      ),
+      gateway: {
+        createRun,
+        cancelRun: vi.fn(),
+        streamEvents: async function* () {
+          yield event(1, 'run.completed', {}, 'connector-run')
+        }
+      }
+    })
+
+    await useCase.execute({
+      sessionId: session.id,
+      content: 'Call MCP ping',
+      expectedRevision: 0,
+      capabilities: {
+        connectorBindings: [
+          { service: 'http', connectorId: 'connector.tc-p1-invalid' }
+        ],
+        mcpServerIds: ['mcp.tc-p1-local']
+      }
+    })
+
+    expect(createRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        connectorBindings: [
+          { service: 'http', connectorId: 'connector.tc-p1-invalid' }
+        ],
+        mcpServerIds: ['mcp.tc-p1-local']
+      }),
+      undefined
+    )
+  })
+
   it('rejects an unknown approval mode before persisting a message', async () => {
     let session: Revisioned<ChatSessionRecord> = {
       id: 'conversation-invalid-approval', kind: 'general', title: 'Approval',
-      sortOrder: 0, messages: [], revision: 0, createdAt: 1, updatedAt: 1
+      sortOrder: 0, turns: [], messages: [], revision: 0, createdAt: 1, updatedAt: 1
     }
     const createRun = vi.fn()
     const useCase = new SendConversationMessageUseCase({
@@ -93,6 +263,7 @@ describe('SendConversationMessageUseCase', () => {
       kind: 'general',
       title: 'Commands',
       sortOrder: 0,
+      turns: [],
       messages: [],
       revision: 0,
       createdAt: 1,
@@ -149,6 +320,7 @@ describe('SendConversationMessageUseCase', () => {
       kind: 'general',
       title: 'Ambiguous file request',
       sortOrder: 0,
+      turns: [],
       messages: [],
       revision: 0,
       createdAt: 1,
@@ -268,6 +440,7 @@ describe('SendConversationMessageUseCase', () => {
       kind: 'general',
       title: 'New topic after wait',
       sortOrder: 0,
+      turns: [],
       messages: [],
       revision: 0,
       createdAt: 1,
@@ -367,6 +540,7 @@ describe('SendConversationMessageUseCase', () => {
       kind: 'general',
       title: 'Image',
       sortOrder: 0,
+      turns: [],
       messages: [],
       revision: 0,
       createdAt: 1,
@@ -518,6 +692,7 @@ describe('SendConversationMessageUseCase', () => {
       nodeRunId: 'node-run-1',
       title: 'Node',
       sortOrder: 1,
+      turns: [],
       messages: [],
       revision: 0,
       createdAt: 1,
@@ -666,6 +841,7 @@ describe('SendConversationMessageUseCase', () => {
       ...identity,
       title: 'Conversation',
       sortOrder: 0,
+      turns: [],
       messages: [],
       revision: 1,
       createdAt: 1,
@@ -681,7 +857,11 @@ describe('SendConversationMessageUseCase', () => {
       ),
       spaceContext: {
         assertAvailable: vi.fn(),
-        assemble: vi.fn().mockResolvedValue('space context')
+        assembleSnapshot: vi.fn().mockResolvedValue({
+          content: 'space context',
+          allowedReferenceIds: [],
+          insufficientKnowledge: false
+        })
       },
       folderContext: { assertAvailable: vi.fn() },
       gateway: {
@@ -734,6 +914,7 @@ describe('SendConversationMessageUseCase', () => {
       kind: 'general',
       title: 'Failure',
       sortOrder: 0,
+      turns: [],
       messages: [],
       revision: 1,
       createdAt: 1,
@@ -804,6 +985,294 @@ describe('SendConversationMessageUseCase', () => {
     ).toBeLessThan(recordCall.mock.invocationCallOrder[0] ?? 0)
   })
 
+  it('appends a local stream failure after the last projected timeline sequence', async () => {
+    let session: Revisioned<ChatSessionRecord> = {
+      id: 'conversation-stream-failure-control-event',
+      kind: 'general',
+      title: 'Failure after control event',
+      sortOrder: 0,
+      turns: [],
+      messages: [],
+      revision: 1,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const appendedEvents: AssistantRunEvent[] = []
+    const repository = createTestRepository(
+      () => session,
+      (next) => {
+        session = next
+      }
+    )
+    const useCase = new SendConversationMessageUseCase({
+      sessions: repository,
+      timeline: {
+        appendAndProject: vi.fn(async (event) => {
+          appendedEvents.push(event)
+          return true
+        }),
+        listAfter: vi.fn(async () => []),
+        getSnapshot: vi.fn(async () => undefined),
+        rebuildProjection: vi.fn(async () => undefined)
+      },
+      gateway: {
+        createRun: vi.fn().mockResolvedValue({ runId: 'run-control-gap' }),
+        cancelRun: vi.fn(),
+        streamEvents: async function* () {
+          yield event(1, 'answer.delta', { delta: 'partial' }, 'run-control-gap')
+          yield event(2, 'run.turn_ready', {}, 'run-control-gap')
+          throw new Error('stream failed after control event')
+        }
+      },
+      now: () => 100,
+      createId: (() => {
+        const ids = ['message-user', 'message-assistant']
+        return () => ids.shift() as string
+      })()
+    })
+
+    const result = await useCase.execute({
+      sessionId: session.id,
+      content: 'Question',
+      expectedRevision: 1
+    })
+
+    expect(result.messages.at(-1)).toMatchObject({ status: 'failed' })
+    expect(appendedEvents.map(({ type, sequence }) => ({ type, sequence }))).toEqual([
+      { type: 'answer.delta', sequence: 1 },
+      { type: 'run.failed', sequence: 2 }
+    ])
+  })
+
+  it('finishes from a durable terminal timeline when a stream append conflicts with it', async () => {
+    let session: Revisioned<ChatSessionRecord> = {
+      id: 'conversation-stream-failure-durable-terminal',
+      kind: 'general',
+      title: 'Failure after external terminal projection',
+      sortOrder: 0,
+      turns: [],
+      messages: [],
+      revision: 1,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const repository = createTestRepository(
+      () => session,
+      (next) => {
+        session = next
+      }
+    )
+    const appendAndProject = vi.fn(async (event: AssistantRunEvent) => {
+      if (event.sequence === 1) return true
+      throw new Error('Assistant Run event conflicts with persisted fact')
+    })
+    const durableTerminal = projectAssistantTurn(
+      projectAssistantTurn(
+        createAssistantTurnProjection({
+          runId: 'run-durable-terminal',
+          turnId: 'message-user:turn',
+          assistantMessageId: 'message-assistant',
+          startedAt: 100
+        }),
+        {
+          id: 'event-1',
+          runId: 'run-durable-terminal',
+          sequence: 1,
+          type: 'answer.delta',
+          timestamp: 100,
+          data: { delta: 'partial' }
+        }
+      ),
+      {
+        id: 'external-permission-denied',
+        runId: 'run-durable-terminal',
+        sequence: 2,
+        type: 'run.failed',
+        timestamp: 110,
+        data: {
+          message: 'Permission denied by user',
+          errorCode: 'permission_denied'
+        }
+      }
+    )
+    const useCase = new SendConversationMessageUseCase({
+      sessions: repository,
+      timeline: {
+        appendAndProject,
+        listAfter: vi.fn(async () => []),
+        getSnapshot: vi.fn(async () => durableTerminal),
+        rebuildProjection: vi.fn(async () => undefined)
+      },
+      gateway: {
+        createRun: vi.fn().mockResolvedValue({ runId: 'run-durable-terminal' }),
+        cancelRun: vi.fn(),
+        streamEvents: async function* () {
+          yield event(1, 'answer.delta', { delta: 'partial' }, 'run-durable-terminal')
+          yield event(2, 'answer.delta', { delta: 'after conflict' }, 'run-durable-terminal')
+        }
+      },
+      now: () => 120,
+      createId: (() => {
+        const ids = ['message-user', 'message-assistant']
+        return () => ids.shift() as string
+      })()
+    })
+
+    const result = await useCase.execute({
+      sessionId: session.id,
+      content: 'Question',
+      expectedRevision: 1
+    })
+
+    expect(result.messages.at(-1)).toMatchObject({
+      status: 'failed',
+      content: 'partial',
+      error: 'Permission denied by user'
+    })
+    expect(appendAndProject).toHaveBeenCalledTimes(2)
+  })
+
+  it('continues from a durable permission timeline when a stream append conflicts with it', async () => {
+    let session: Revisioned<ChatSessionRecord> = {
+      id: 'conversation-stream-conflict-durable-permission',
+      kind: 'general',
+      title: 'Continue after external permission projection',
+      sortOrder: 0,
+      turns: [],
+      messages: [],
+      revision: 1,
+      createdAt: 1,
+      updatedAt: 1
+    }
+    const repository = createTestRepository(
+      () => session,
+      (next) => {
+        session = next
+      }
+    )
+    const appendAndProject = vi.fn(async (event: AssistantRunEvent) => {
+      if (event.sequence === 2) {
+        throw new Error('Assistant Run event conflicts with persisted fact')
+      }
+      return true
+    })
+    const afterAnswer = projectAssistantTurn(
+      createAssistantTurnProjection({
+        runId: 'run-durable-permission',
+        turnId: 'message-user:turn',
+        assistantMessageId: 'message-assistant',
+        startedAt: 100
+      }),
+      {
+        id: 'event-1',
+        runId: 'run-durable-permission',
+        sequence: 1,
+        type: 'answer.delta',
+        timestamp: 100,
+        data: { delta: 'partial' }
+      }
+    )
+    const durablePermission = projectAssistantTurn(
+      projectAssistantTurn(afterAnswer, {
+        id: 'external-tool-requested',
+        runId: 'run-durable-permission',
+        sequence: 2,
+        type: 'tool.call.requested',
+        timestamp: 110,
+        data: {
+          callId: 'call-1',
+          toolName: 'bash',
+          category: 'command',
+          argumentsSummary: 'write file'
+        }
+      }),
+      {
+        id: 'external-permission-required',
+        runId: 'run-durable-permission',
+        sequence: 3,
+        type: 'tool.call.permission_required',
+        timestamp: 111,
+        data: {
+          callId: 'call-1',
+          toolExecutionId: 'exec-1',
+          message: 'Allow bash?'
+        }
+      }
+    )
+    const useCase = new SendConversationMessageUseCase({
+      sessions: repository,
+      timeline: {
+        appendAndProject,
+        listAfter: vi.fn(async () => []),
+        getSnapshot: vi.fn(async () => durablePermission),
+        rebuildProjection: vi.fn(async () => undefined)
+      },
+      gateway: {
+        createRun: vi.fn().mockResolvedValue({ runId: 'run-durable-permission' }),
+        cancelRun: vi.fn(),
+        streamEvents: async function* () {
+          yield event(1, 'answer.delta', { delta: 'partial' }, 'run-durable-permission')
+          yield event(
+            2,
+            'tool.call.requested',
+            {
+              toolCall: {
+                index: 0,
+                id: 'call-1',
+                name: 'bash',
+                arguments: '{"command":"write"}'
+              }
+            },
+            'run-durable-permission'
+          )
+          yield event(
+            3,
+            'tool.call.permission_required',
+            {
+              callId: 'call-1',
+              toolExecutionId: 'exec-1',
+              message: 'Allow bash?'
+            },
+            'run-durable-permission'
+          )
+          yield event(
+            4,
+            'tool.call.completed',
+            {
+              toolResult: {
+                callId: 'call-1',
+                status: 'completed',
+                output: { ok: true },
+                toolExecutionId: 'exec-1',
+                resultSummary: 'wrote file'
+              }
+            },
+            'run-durable-permission'
+          )
+          yield event(5, 'run.completed', {}, 'run-durable-permission')
+        }
+      },
+      now: () => 120,
+      createId: (() => {
+        const ids = ['message-user', 'message-assistant']
+        return () => ids.shift() as string
+      })()
+    })
+
+    const result = await useCase.execute({
+      sessionId: session.id,
+      content: 'Question',
+      expectedRevision: 1
+    })
+
+    expect(result.messages.at(-1)).toMatchObject({
+      status: 'completed',
+      content: 'partial'
+    })
+    expect(appendAndProject.mock.calls.some(([event]) => event.sequence === 4)).toBe(true)
+    expect(appendAndProject.mock.calls.some(([event]) => event.type === 'run.failed')).toBe(false)
+  })
+
   it('fails the committed assistant turn when post-start reevaluation fails', async () => {
     let session: Revisioned<ChatSessionRecord> = {
       id: 'conversation-node-failed',
@@ -812,6 +1281,7 @@ describe('SendConversationMessageUseCase', () => {
       nodeRunId: 'node-run-1',
       title: 'Node',
       sortOrder: 1,
+      turns: [],
       messages: [],
       revision: 0,
       createdAt: 1,
@@ -864,6 +1334,7 @@ describe('SendConversationMessageUseCase', () => {
       workspaceId: 'workspace-1',
       title: 'Space',
       sortOrder: 1,
+      turns: [],
       messages: [],
       revision: 1,
       createdAt: 1,
@@ -888,9 +1359,13 @@ describe('SendConversationMessageUseCase', () => {
         assertAvailable: vi.fn(async () => {
           order.push('validate')
         }),
-        assemble: vi.fn(async () => {
+        assembleSnapshot: vi.fn(async () => {
           order.push('assemble')
-          return '## Space knowledge\nLocal checkout rules'
+          return {
+            content: '## Space knowledge\nLocal checkout rules',
+            allowedReferenceIds: [],
+            insufficientKnowledge: false
+          }
         })
       },
       gateway: {
@@ -938,6 +1413,7 @@ describe('SendConversationMessageUseCase', () => {
       workspaceId: 'workspace-1',
       title: 'Space',
       sortOrder: 1,
+      turns: [],
       messages: [],
       revision: 1,
       createdAt: 1,
@@ -954,7 +1430,7 @@ describe('SendConversationMessageUseCase', () => {
       sessions: repository,
       spaceContext: {
         assertAvailable: vi.fn(),
-        assemble: vi.fn().mockRejectedValue(
+        assembleSnapshot: vi.fn().mockRejectedValue(
           new Error('读取空间知识失败，请重试')
         )
       },
@@ -1003,6 +1479,7 @@ describe('SendConversationMessageUseCase', () => {
       kind: 'general',
       title: 'Artifacts',
       sortOrder: 1,
+      turns: [],
       messages: [],
       revision: 1,
       createdAt: 1,
@@ -1087,6 +1564,7 @@ describe('SendConversationMessageUseCase', () => {
       kind: 'general',
       title: 'Empty artifact answer',
       sortOrder: 1,
+      turns: [],
       messages: [],
       revision: 1,
       createdAt: 1,
@@ -1152,6 +1630,7 @@ describe('SendConversationMessageUseCase', () => {
       kind: 'general',
       title: 'Empty completed answer',
       sortOrder: 1,
+      turns: [],
       messages: [],
       revision: 1,
       createdAt: 1,
@@ -1163,6 +1642,8 @@ describe('SendConversationMessageUseCase', () => {
         session = next
       }
     )
+    const finishTurn = vi.spyOn(repository, 'finishTurn')
+    const projectedAnswers: string[] = []
     const finalizeRun = vi.fn().mockResolvedValue({
       schemaVersion: 1,
       generatedArtifacts: []
@@ -1170,6 +1651,15 @@ describe('SendConversationMessageUseCase', () => {
     const useCase = new SendConversationMessageUseCase({
       sessions: repository,
       generatedArtifacts: { finalizeRun },
+      timeline: {
+        appendAndProject: vi.fn(async (_event, projection) => {
+          projectedAnswers.push(projection.answer)
+          return true
+        }),
+        listAfter: vi.fn(async () => []),
+        getSnapshot: vi.fn(async () => undefined),
+        rebuildProjection: vi.fn(async () => undefined)
+      },
       gateway: {
         createRun: vi.fn().mockResolvedValue({ runId: 'run-empty-completed' }),
         cancelRun: vi.fn(),
@@ -1201,6 +1691,9 @@ describe('SendConversationMessageUseCase', () => {
       status: 'completed',
       content: '任务已完成，但模型没有返回最终总结。请查看执行详情确认处理过程。'
     })
+    expect(projectedAnswers.at(-1)).toBe(
+      finishTurn.mock.calls.at(-1)?.[0].content
+    )
   })
 
   it('retrieves all active workspaces for every turn of an all-workspaces conversation', async () => {
@@ -1210,6 +1703,7 @@ describe('SendConversationMessageUseCase', () => {
       knowledgeScope: { kind: 'all_workspaces' },
       title: 'All workspaces',
       sortOrder: 1,
+      turns: [],
       messages: [],
       revision: 1,
       createdAt: 1,
@@ -1221,16 +1715,17 @@ describe('SendConversationMessageUseCase', () => {
         session = next
       }
     )
-    const assembleScope = vi.fn().mockResolvedValue(
-      '## Space knowledge / Workspace One\nShared release rules'
-    )
+    const assembleSnapshot = vi.fn().mockResolvedValue({
+      content: '## Space knowledge / Workspace One\nShared release rules',
+      allowedReferenceIds: [],
+      insufficientKnowledge: false
+    })
     const createRun = vi.fn().mockResolvedValue({ runId: 'run-all' })
     const useCase = new SendConversationMessageUseCase({
       sessions: repository,
       spaceContext: {
         assertAvailable: vi.fn(),
-        assemble: vi.fn(),
-        assembleScope
+        assembleSnapshot
       },
       gateway: {
         createRun,
@@ -1253,7 +1748,7 @@ describe('SendConversationMessageUseCase', () => {
       expectedRevision: 1
     })
 
-    expect(assembleScope).toHaveBeenCalledWith(
+    expect(assembleSnapshot).toHaveBeenCalledWith(
       { kind: 'all_workspaces' },
       expect.arrayContaining([
         expect.objectContaining({
@@ -1287,6 +1782,7 @@ describe('SendConversationMessageUseCase', () => {
       knowledgeScope: { kind: 'none' },
       title: 'No knowledge',
       sortOrder: 1,
+      turns: [],
       messages: [],
       revision: 1,
       createdAt: 1,
@@ -1298,14 +1794,13 @@ describe('SendConversationMessageUseCase', () => {
         session = next
       }
     )
-    const assembleScope = vi.fn()
+    const assembleSnapshot = vi.fn()
     const createRun = vi.fn().mockResolvedValue({ runId: 'run-none' })
     const useCase = new SendConversationMessageUseCase({
       sessions: repository,
       spaceContext: {
         assertAvailable: vi.fn(),
-        assemble: vi.fn(),
-        assembleScope
+        assembleSnapshot
       },
       gateway: {
         createRun,
@@ -1328,7 +1823,7 @@ describe('SendConversationMessageUseCase', () => {
       expectedRevision: 1
     })
 
-    expect(assembleScope).not.toHaveBeenCalled()
+    expect(assembleSnapshot).not.toHaveBeenCalled()
     expect(createRun).toHaveBeenCalledWith(
       expect.objectContaining({
         context: expect.stringContaining('## Execution brief'),
@@ -1347,6 +1842,7 @@ describe('SendConversationMessageUseCase', () => {
       folderPath: '/canonical/project',
       title: 'Folder',
       sortOrder: 1,
+      turns: [],
       messages: [],
       revision: 1,
       createdAt: 1,
@@ -1422,6 +1918,7 @@ describe('SendConversationMessageUseCase', () => {
       folderPath: '/missing/project',
       title: 'Folder',
       sortOrder: 1,
+      turns: [],
       messages: [],
       revision: 1,
       createdAt: 1,
@@ -1435,12 +1932,16 @@ describe('SendConversationMessageUseCase', () => {
         get: vi.fn().mockResolvedValue(session),
         listByWorkspace: async () => [],
         listByNodeRun: async () => [],
-        listRecent: async () => ({ conversations: [], folderPaths: [] }),
+        listRecent: async () => ({
+          conversations: [],
+          folderPaths: [],
+          totalCount: 0
+        }),
         delete: async () => false,
         save: vi.fn(),
         beginTurn,
         bindTurnRun: vi.fn(),
-        rebindTurnRun: vi.fn(),
+        markTurnRetrying: vi.fn(),
         finishTurn: vi.fn(),
         recoverPendingTurns: vi.fn()
       },
@@ -1481,6 +1982,7 @@ describe('SendConversationMessageUseCase', () => {
       kind: 'general',
       title: 'Hello',
       sortOrder: 1,
+      turns: [],
       messages: [],
       revision: 1,
       createdAt: 1,
@@ -1582,14 +2084,36 @@ describe('SendConversationMessageUseCase', () => {
       kind: 'general',
       title: 'Auto',
       sortOrder: 1,
+      turns: [
+        {
+          id: 'previous-turn',
+          sessionId: 'conversation-auto',
+          index: 0,
+          userMessageId: 'previous-user',
+          assistantMessageId: 'previous-assistant',
+          status: 'failed',
+          createdAt: 1,
+          completedAt: 1
+        }
+      ],
       messages: [
         {
+          id: 'previous-user',
+          turnId: 'previous-turn',
+          role: 'user',
+          status: 'completed',
+          content: 'Previous request',
+          sortOrder: 0,
+          createdAt: 1
+        },
+        {
           id: 'previous-assistant',
+          turnId: 'previous-turn',
           role: 'assistant',
           status: 'failed',
           content: '',
           error: 'Provider failed',
-          sortOrder: 0,
+          sortOrder: 1,
           createdAt: 1,
           completedAt: 1
         }
@@ -1663,6 +2187,7 @@ describe('SendConversationMessageUseCase', () => {
       kind: 'general',
       title: 'Default',
       sortOrder: 1,
+      turns: [],
       messages: [],
       revision: 1,
       createdAt: 1,
@@ -1747,6 +2272,7 @@ describe('SendConversationMessageUseCase', () => {
       kind: 'general',
       title: 'Provider fallback',
       sortOrder: 1,
+      turns: [],
       messages: [],
       revision: 1,
       createdAt: 1,
@@ -1758,7 +2284,7 @@ describe('SendConversationMessageUseCase', () => {
         session = next
       }
     )
-    const rebindTurnRun = vi.spyOn(repository, 'rebindTurnRun')
+    const markTurnRetrying = vi.spyOn(repository, 'markTurnRetrying')
     const createRun = vi
       .fn()
       .mockResolvedValueOnce({ runId: 'run-deepseek' })
@@ -1806,7 +2332,7 @@ describe('SendConversationMessageUseCase', () => {
               .profile,
             id: 'profile-deepseek',
             providerId: 'provider-deepseek',
-            displayName: 'DeepSeek V4 Flash'
+            displayName: 'DeepSeek-V4.1-Flash'
           }
         }),
         resolveConversationFallbackModel: vi.fn().mockResolvedValue({
@@ -1839,7 +2365,7 @@ describe('SendConversationMessageUseCase', () => {
           modelId: profileId,
           displayName:
             profileId === 'profile-deepseek'
-              ? 'DeepSeek V4 Flash'
+              ? 'DeepSeek-V4.1-Flash'
               : 'Doubao Seed 2.1 Pro',
           timeoutMs: 120_000,
           maxRetries: 0,
@@ -1865,10 +2391,9 @@ describe('SendConversationMessageUseCase', () => {
     })
 
     expect(createRun).toHaveBeenCalledTimes(2)
-    expect(rebindTurnRun).toHaveBeenCalledWith(
+    expect(markTurnRetrying).toHaveBeenCalledWith(
       expect.objectContaining({
-        previousRunId: 'run-deepseek',
-        runId: 'run-volcengine',
+        runId: 'run-deepseek',
         modelName: 'Doubao Seed 2.1 Pro'
       })
     )
@@ -1889,7 +2414,7 @@ describe('SendConversationMessageUseCase', () => {
     expect(result.messages.at(-1)).toMatchObject({
       status: 'completed',
       content: 'Fallback answer',
-      runId: 'run-volcengine',
+      runId: 'run-deepseek',
       modelName: 'Doubao Seed 2.1 Pro'
     })
   })
@@ -1905,6 +2430,7 @@ describe('SendConversationMessageUseCase', () => {
           kind: 'general',
           title: 'Unavailable',
           sortOrder: 1,
+          turns: [],
           messages: [],
           revision: 1,
           createdAt: 1,
@@ -1912,12 +2438,16 @@ describe('SendConversationMessageUseCase', () => {
         }),
         listByWorkspace: async () => [],
         listByNodeRun: async () => [],
-        listRecent: async () => ({ conversations: [], folderPaths: [] }),
+        listRecent: async () => ({
+          conversations: [],
+          folderPaths: [],
+          totalCount: 0
+        }),
         delete: async () => false,
         save,
         beginTurn,
         bindTurnRun: vi.fn(),
-        rebindTurnRun: vi.fn(),
+        markTurnRetrying: vi.fn(),
         finishTurn: vi.fn(),
         recoverPendingTurns: vi.fn()
       },
@@ -1958,7 +2488,11 @@ function createTestRepository(
     get: async () => structuredClone(read()),
     listByWorkspace: async () => [],
     listByNodeRun: async () => [],
-    listRecent: async () => ({ conversations: [], folderPaths: [] }),
+    listRecent: async () => ({
+      conversations: [],
+      folderPaths: [],
+      totalCount: 0
+    }),
     delete: async () => false,
     save: async (entity, expectedRevision) => {
       const next = { ...entity, revision: expectedRevision + 1 }
@@ -1967,13 +2501,27 @@ function createTestRepository(
     },
     beginTurn: async (input) => {
       const current = { ...read(), ...input.session }
+      const turnId = `${input.userMessageId}:turn`
       const next: Revisioned<ChatSessionRecord> = {
         ...current,
         revision: current.revision + 1,
+        turns: [
+          ...current.turns,
+          {
+            id: turnId,
+            sessionId: current.id,
+            index: current.turns.length,
+            userMessageId: input.userMessageId,
+            assistantMessageId: input.assistantMessageId,
+            status: 'pending',
+            createdAt: input.createdAt
+          }
+        ],
         messages: [
           ...current.messages,
           {
             id: input.userMessageId,
+            turnId,
             role: 'user',
             status: 'completed',
             content: input.content,
@@ -1984,6 +2532,7 @@ function createTestRepository(
           },
           {
             id: input.assistantMessageId,
+            turnId,
             role: 'assistant',
             status: 'pending',
             content: '',
@@ -2001,6 +2550,11 @@ function createTestRepository(
       const next: Revisioned<ChatSessionRecord> = {
         ...current,
         revision: current.revision + 1,
+        turns: current.turns.map((turn) =>
+          turn.assistantMessageId === input.assistantMessageId
+            ? { ...turn, runId: input.runId, status: 'running' }
+            : turn
+        ),
         messages: current.messages.map((message) =>
           message.id === input.assistantMessageId
             ? { ...message, runId: input.runId }
@@ -2010,24 +2564,31 @@ function createTestRepository(
       write(next)
       return { status: 'updated', entity: structuredClone(next) }
     },
-    rebindTurnRun: async (input) => {
+    markTurnRetrying: async (input) => {
       const current = read()
       if (
         current.revision !== input.expectedRevision ||
         current.messages.find(
           (message) => message.id === input.assistantMessageId
-        )?.runId !== input.previousRunId
+        )?.runId !== input.runId
       ) {
         return { status: 'conflict', entity: structuredClone(current) }
       }
       const next: Revisioned<ChatSessionRecord> = {
         ...current,
         revision: current.revision + 1,
+        turns: current.turns.map((turn) =>
+          turn.assistantMessageId === input.assistantMessageId
+            ? {
+                ...turn,
+                status: 'retrying'
+              }
+            : turn
+        ),
         messages: current.messages.map((message) =>
           message.id === input.assistantMessageId
             ? {
                 ...message,
-                runId: input.runId,
                 modelName: input.modelName
               }
             : message
@@ -2041,6 +2602,15 @@ function createTestRepository(
       const next: Revisioned<ChatSessionRecord> = {
         ...current,
         revision: current.revision + 1,
+        turns: current.turns.map((turn) =>
+          turn.assistantMessageId === input.assistantMessageId
+            ? {
+                ...turn,
+                status: input.status,
+                completedAt: input.updatedAt
+              }
+            : turn
+        ),
         messages: current.messages.map((message) =>
           message.id === input.assistantMessageId
             ? {

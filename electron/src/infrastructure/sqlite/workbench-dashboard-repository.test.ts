@@ -120,7 +120,7 @@ function seedDashboard(target: RealmFlowDatabase): void {
     ) VALUES
       ('node-1', 'requirement-1', 'tool', 'Complete', '', '{}', 0, 0, 'completed', 1, 10, 1400),
       ('node-2', 'requirement-2', 'human_input', 'Answer', '', '{}', 0, 0, 'waiting_user', 1, 20, 1800),
-      ('node-3', 'requirement-3', 'tool', 'Legacy', '', '{}', 0, 0, 'completed', 1, 30, 1500),
+      ('node-3', 'requirement-3', 'tool', 'Review', '', '{}', 0, 0, 'completed', 1, 30, 1500),
       ('node-4', 'requirement-4', 'tool', 'Build', '', '{}', 0, 0, 'failed', 1, 40, 1700);
 
     INSERT INTO workflow_executions (

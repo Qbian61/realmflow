@@ -64,15 +64,6 @@ type AgentRuntimeContext = {
   }
 }
 
-export type StageContext = AgentRuntimeContext & {
-  requirementId: string
-  requirementTitle: string
-  stageId: RequirementStageId
-  workspaceId: string
-  workspaceName: string
-  existingArtifacts: Array<{ path: string; content: string }>
-}
-
 export type ConversationContext = AgentRuntimeContext & {
   conversationId: string
   messages: Array<{
@@ -84,7 +75,11 @@ export type ConversationContext = AgentRuntimeContext & {
   context?: string
   skill?: ToolDefinitionReference
   scheduleRunId?: string
-  connectorBindings?: unknown[]
+  connectorBindings?: Array<{
+    service: string
+    connectorId: string
+  }>
+  mcpServerIds?: string[]
   pipelineVersion?: string
   processing?: ConversationProcessingSnapshot
   attachmentContext?: ConversationAttachmentEnvelope
@@ -105,7 +100,7 @@ export type NodeExecutionContext = AgentRuntimeContext & {
   requirementId: string
   requirementTitle: string
   nodeId: string
-  nodeRunId?: string
+  nodeRunId: string
   workspaceId: string
   workspaceName: string
   prompt: string
@@ -117,7 +112,6 @@ export type NodeExecutionContext = AgentRuntimeContext & {
 }
 
 export type RunContext =
-  | StageContext
   | NodeExecutionContext
   | RequirementNodeConversationContext
   | ConversationContext
@@ -157,6 +151,92 @@ export interface AiRunGateway {
   resolveWaitingInputRun?: (runId: string) => Promise<void>
 }
 
+export type DshAcpMcpServer = {
+  name: string
+  command?: string
+  args?: string[]
+  env?: Array<{ name: string; value: string }>
+  type?: 'http'
+  url?: string
+  headers?: Array<{ name: string; value: string }>
+  [key: string]: unknown
+}
+
+export type DshAcpPromptBlock =
+  | {
+      type: 'text'
+      text: string
+    }
+  | {
+      type: string
+      [key: string]: unknown
+    }
+
+export type DshAcpSessionUpdate = {
+  sessionUpdate: string
+  [key: string]: unknown
+}
+
+export type DshAcpRuntimePort = {
+  start(): Promise<void>
+  syncModelCredentials?(model: ModelExecutionConfig): Promise<void>
+  newSession(params: {
+    cwd: string
+    mcpServers?: DshAcpMcpServer[]
+  }): Promise<{
+    sessionId: string
+    configOptions?: unknown[]
+  }>
+  resumeSession(params: {
+    sessionId: string
+    cwd: string
+    mcpServers?: DshAcpMcpServer[]
+  }): Promise<{
+    configOptions?: unknown[]
+  }>
+  closeSession(params: {
+    sessionId: string
+  }): Promise<Record<string, never>>
+  prompt(params: {
+    sessionId: string
+    prompt: DshAcpPromptBlock[]
+  }): Promise<{
+    stopReason: string
+  }>
+  cancel(params: { sessionId: string }): Promise<void>
+  listSessions?(params?: {
+    cwd?: string
+    cursor?: string
+  }): Promise<{
+    sessions: Array<{
+      sessionId: string
+      cwd: string
+    }>
+    nextCursor?: string
+  }>
+  setConfigOption?(params: {
+    sessionId: string
+    configId: string
+    value: unknown
+  }): Promise<unknown>
+  getSessionUpdateCursor?(params: {
+    sessionId: string
+  }): Promise<number>
+  readSessionUpdates?(params: {
+    sessionId: string
+    afterSequence: number
+    limit: number
+  }): Promise<{
+    updates: DshAcpSessionUpdate[]
+    nextAfterSequence: number
+    hasMore: boolean
+  }>
+  onSessionUpdate?(
+    sessionId: string,
+    handler: (update: DshAcpSessionUpdate) => void
+  ): () => void
+}
+
 export interface RunRepository {
   get: (runId: string) => Promise<AiRun | undefined>
   save: (run: AiRun) => Promise<void>
@@ -187,9 +267,6 @@ export interface AgentRuntimeRunRepository {
     updatedAt: number,
     error?: string
   ) => Promise<void>
-  getByProviderRunId: (
-    providerRunId: string
-  ) => Promise<AgentRuntimeRun | undefined>
   listByRootRunId: (rootRunId: string) => Promise<AgentRuntimeRun[]>
   listByParentRunId: (parentRunId: string) => Promise<AgentRuntimeRun[]>
   listUnfinished: () => Promise<AgentRuntimeRun[]>
@@ -210,11 +287,7 @@ export interface AgentProfileResolver {
   }): Promise<EffectiveAgentProfile>
 }
 
-export interface StageContextRepository {
-  load: (
-    requirementId: string,
-    stageId: RequirementStageId
-  ) => Promise<StageContext>
+export interface NodeContextRepository {
   loadNode: (input: {
     requirementId: string
     nodeId: string
@@ -229,8 +302,8 @@ export interface ArtifactRepository {
     runId: string
     requirementId: string
     stageId: RequirementStageId
-    nodeId?: string
-    legacyStageId?: RequirementStageId
+    nodeId: string
+    nodeRunId: string
     expectedArtifact: {
       relativePath: string
       kind: string

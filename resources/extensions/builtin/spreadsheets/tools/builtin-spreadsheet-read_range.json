@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.spreadsheet.read_range",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Read spreadsheet range",
   "description": "Read typed cells from a spreadsheet session.",
   "tags": [

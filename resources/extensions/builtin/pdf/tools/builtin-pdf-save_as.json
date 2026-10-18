@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.pdf.save_as",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "name": "Save PDF as",
   "description": "Save the current PDF editing session to an authorized new PDF path without overwriting the source file.",
   "tags": [

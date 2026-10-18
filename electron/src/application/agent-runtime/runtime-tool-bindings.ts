@@ -1,6 +1,6 @@
 import type { AgentRuntimeRun } from '../../../../domain/agent-runtime'
 import { cloneJsonObject, type JsonObject } from '../../../../domain/tool-protocol-validation'
-import type { ToolExecutionCommand } from '../tools/tool-execution-application-service'
+import type { ToolExecutionCommand } from '../tools/tool-execution-contract'
 import type { AgentRuntimeOrchestrator } from './agent-runtime-orchestrator'
 
 /** The resolver accepts runtime or provider IDs; only the returned Main-owned ID reaches business state. */

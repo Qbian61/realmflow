@@ -1,4 +1,3 @@
-import type { RequirementStageId } from './requirement'
 import type { ModelCapability } from './model'
 import type { ToolCapability } from './tool-definition'
 import type { WorkflowExecutionStatus } from './workflow-execution'
@@ -30,7 +29,6 @@ export type AiGenerateExecutorConfig = {
   context?: {
     attachments?: string[]
   }
-  legacyStageId?: RequirementStageId
 }
 
 export type WorkflowReasoningPolicy =

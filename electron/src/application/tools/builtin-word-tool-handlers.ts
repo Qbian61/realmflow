@@ -1,4 +1,4 @@
-import type { WordComputeOperation } from '../../sidecar/client'
+import type { WordComputeOperation } from '../files/private-python-worker-client'
 import type { JsonObject } from '../../../../domain/tool-protocol-validation'
 import type { LocalWordSessionService } from '../files/local-word-session-service'
 import { inspectLocalFileCapability } from '../files/local-file-capability-service'

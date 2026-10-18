@@ -65,9 +65,7 @@ describe('SqliteAgentRuntimeRunRepository', () => {
     expect(new SqliteAgentRuntimeRunRepository(database).getById('agent-run-1')?.snapshot.modelFacing)
       .toEqual(snapshot.modelFacing)
 
-    await expect(
-      repository.getByProviderRunId('provider-run-1')
-    ).resolves.toEqual({
+    expect(repository.getById('agent-run-1')).toEqual({
       id: 'agent-run-1',
       providerRunId: 'provider-run-1',
       status: 'running',
@@ -85,9 +83,7 @@ describe('SqliteAgentRuntimeRunRepository', () => {
         updatedAt: 100
       })
     ).rejects.toThrow('Agent Runtime Run already exists')
-    await expect(
-      repository.getByProviderRunId('provider-run-1')
-    ).resolves.toMatchObject({ snapshot })
+    expect(repository.getById('agent-run-1')).toMatchObject({ snapshot })
   })
 
   it('queries a persisted delegation tree by root and parent in ordinal order', async () => {
@@ -152,9 +148,7 @@ describe('SqliteAgentRuntimeRunRepository', () => {
       120
     )
 
-    await expect(
-      repository.getByProviderRunId('provider-attempt-2')
-    ).resolves.toMatchObject({
+    expect(repository.getById(item.runId)).toMatchObject({
       id: item.runId,
       providerRunId: 'provider-attempt-2'
     })

@@ -75,6 +75,7 @@ import {
   requireKnowledgeSearchQuery,
   requireKnowledgeSourceIdQuery,
   requireListRepositoryBranchesQuery,
+  requireListConversationTurnsQuery,
   requireListScheduleRunsQuery,
   requireManageKnowledgeSourceCommand,
   requireManageWorkflowNodeExecutionCommand,
@@ -748,6 +749,16 @@ export function registerBusinessIpc(options: {
     handlers.getConversation.execute(
       requireSessionIdCommand(value, IPC_QUERY_CHANNELS.conversationGet)
     )
+  )
+  ipcMain.handle(
+    IPC_QUERY_CHANNELS.conversationListTurns,
+    (_event, value) =>
+      handlers.listConversationTurns.execute(
+        requireListConversationTurnsQuery(
+          value,
+          IPC_QUERY_CHANNELS.conversationListTurns
+        )
+      )
   )
   ipcMain.handle(
     IPC_QUERY_CHANNELS.conversationContextDiagnosticsGet,

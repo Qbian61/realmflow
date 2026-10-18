@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import type { JsonObject } from '../../../../domain/tool-protocol-validation'
-import type { PresentationComputeOperation } from '../../sidecar/client'
+import type { PresentationComputeOperation } from '../files/private-python-worker-client'
 import type { LocalPresentationSessionService } from '../files/local-presentation-session-service'
 import { inspectLocalFileCapability } from '../files/local-file-capability-service'
 import type {

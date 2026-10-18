@@ -380,8 +380,7 @@ export class RollbackWorkflowToNodeUseCase {
           .filter((nodeRun) => nodeRun.nodeId === nodeId)
           .map((nodeRun) => nodeRun.id)
       ),
-      timestamp,
-      plan.affectedNodeIds
+      timestamp
     )
 
     const dispatches: Array<Revisioned<WorkflowDispatchRecord>> = []

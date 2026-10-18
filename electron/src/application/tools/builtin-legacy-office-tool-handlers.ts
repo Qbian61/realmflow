@@ -1,6 +1,6 @@
 import { extname } from 'node:path'
 import type { JsonObject } from '../../../../domain/tool-protocol-validation'
-import type { LegacyOfficeFormat } from '../../sidecar/client'
+import type { LegacyOfficeFormat } from '../files/private-python-worker-client'
 import type { LegacyOfficeImportService } from '../files/legacy-office-import-service'
 import { inspectLocalFileCapability } from '../files/local-file-capability-service'
 import type {

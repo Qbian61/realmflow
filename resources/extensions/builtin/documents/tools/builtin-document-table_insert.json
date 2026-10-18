@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.document.table_insert",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "name": "Insert document table",
   "description": "Insert a structured table after a document block.",
   "tags": [

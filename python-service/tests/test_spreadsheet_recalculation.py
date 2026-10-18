@@ -5,13 +5,12 @@ import zipfile
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 
-from app import create_app
 from app.services.spreadsheet_recalculation import (
     SpreadsheetRecalculationError,
     SpreadsheetRecalculationService,
 )
+from private_worker import realmflow_private_worker, run_worker
 
 
 def minimal_xlsx() -> bytes:
@@ -70,7 +69,7 @@ def test_recalculation_validates_and_returns_the_converted_workbook() -> None:
     assert asyncio.run(service.recalculate(source)) == source
 
 
-def test_recalculation_endpoint_returns_a_stable_unavailable_error(
+def test_private_worker_returns_a_stable_unavailable_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def unavailable(_document: bytes) -> bytes:
@@ -79,25 +78,22 @@ def test_recalculation_endpoint_returns_a_stable_unavailable_error(
             "LibreOffice recalculation is unavailable",
         )
 
-    from app.api import routes
-
     monkeypatch.setattr(
-        routes.spreadsheet_recalculation_service,
+        realmflow_private_worker.spreadsheet_recalculation_service,
         "recalculate",
         unavailable,
     )
-    response = TestClient(
-        create_app(auth_token="session-secret"),
-        headers={"Authorization": "Bearer session-secret"},
-    ).post(
-        "/api/v1/office/spreadsheets/recalculate",
-        json={
-            "format": "xlsx",
-            "documentBase64": base64.b64encode(minimal_xlsx()).decode("ascii"),
-        },
-    )
-
-    assert response.status_code == 503
-    assert response.json()["detail"]["code"] == (
-        "spreadsheet_recalculation_unavailable"
-    )
+    try:
+        run_worker(
+            "office.spreadsheet.recalculate",
+            {
+                "format": "xlsx",
+                "documentBase64": base64.b64encode(
+                    minimal_xlsx()
+                ).decode("ascii"),
+            },
+        )
+    except SpreadsheetRecalculationError as error:
+        assert error.code == "spreadsheet_recalculation_unavailable"
+    else:
+        raise AssertionError("unavailable recalculation was accepted")

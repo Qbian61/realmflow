@@ -4,7 +4,7 @@ import {
   type McpServerConfiguration
 } from '../../../../domain/mcp-server'
 import type { CredentialVault } from '../../models/credential-vault'
-import type { McpClientFactory } from './mcp-tool-adapter'
+import type { McpClientFactory } from './mcp-client-contract'
 import type { SyntheticMcpCatalog } from './mcp-discovery-service'
 import type {
   McpServerRecord,

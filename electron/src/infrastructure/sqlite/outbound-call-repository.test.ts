@@ -46,6 +46,20 @@ describe('SQLite outbound call repository', () => {
     ])
   })
 
+  it('persists MCP connection audits with an MCP server target', async () => {
+    const record = createOutboundCallRecord({
+      id: 'call-mcp-1',
+      idempotencyKey: 'mcp-connect:mcp.tc-p1-local:request-1',
+      callType: 'mcp',
+      target: { type: 'mcp_server', id: 'mcp.tc-p1-local' },
+      owner: { type: 'application', id: 'realmflow' },
+      startedAt: 100
+    })
+
+    await expect(repository.appendStarted(record)).resolves.toBe('appended')
+    await expect(repository.getById(record.id)).resolves.toEqual(record)
+  })
+
   it('allows only the first terminal transition', async () => {
     const started = startedCall()
     const failed = completeOutboundCallRecord(started, {

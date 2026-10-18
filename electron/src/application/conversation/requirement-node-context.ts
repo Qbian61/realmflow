@@ -103,7 +103,7 @@ export class RequirementNodeConversationContextAssembler {
       attachmentPaths: inputPolicy?.attachments ?? [],
       includeRequirementBody,
       predecessorArtifacts: inputPolicy?.predecessorArtifacts ?? 'direct',
-      includeSpaceKnowledge: inputPolicy?.includeSpaceKnowledge ?? true,
+      includeSpaceKnowledge: false,
       maxCharacters: Math.max(1, maxCharacters - pending.length)
     })
     return {

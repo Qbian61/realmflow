@@ -5,6 +5,7 @@ export type ContentExtractionStrategy =
   | 'presentation'
   | 'fixed_layout'
   | 'image_ocr'
+  | 'legacy_office'
   | 'office_convert'
   | 'office_sanitize'
   | 'archive'
@@ -141,9 +142,10 @@ const STRATEGY_BY_EXTENSION = new Map<
   ...entries(['ofd'], 'fixed_layout'),
   ...entries(['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'], 'image_ocr'),
   ...entries(
-    ['doc', 'dot', 'wps', 'wpt', 'xls', 'xlt', 'ppt', 'pps', 'pot'],
-    'office_convert'
+    ['doc', 'dot', 'xls', 'xlt', 'ppt', 'pps', 'pot'],
+    'legacy_office'
   ),
+  ...entries(['wps', 'wpt'], 'office_convert'),
   ...entries(
     [
       'docm', 'dotm', 'dotx', 'xlsm', 'xltm', 'xltx', 'pptm', 'ppsm',

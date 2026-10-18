@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { McpServerConfiguration } from '../../../../domain/mcp-server'
-import { calculateMcpToolSchemaDigest } from '../tools/mcp-tool-adapter'
+import { calculateMcpToolSchemaDigest } from '../tools/mcp-client-contract'
 import type { EffectiveConnectorSnapshot } from './connector-gateway'
 import { McpConnectorAdapter } from './mcp-connector-adapter'
 

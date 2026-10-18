@@ -1,13 +1,12 @@
 import {
   Blocks,
-  ChartNoAxesCombined,
   House,
   MessageCirclePlus,
   Workflow
 } from 'lucide-react'
 import type { Translator } from './localization/translate'
 
-export function getPrimaryNavigation(t: Translator) {
+export function getWorkspacePages(t: Translator) {
   return [
     {
       path: '/',
@@ -32,14 +31,13 @@ export function getPrimaryNavigation(t: Translator) {
       label: t('navigation.workflows'),
       description: t('navigation.workflowsDescription'),
       icon: Workflow
-    },
-    {
-      path: '/analytics',
-      label: t('navigation.analytics'),
-      description: t('navigation.analyticsDescription'),
-      icon: ChartNoAxesCombined
     }
   ] as const
+}
+
+export function getPrimaryNavigation(t: Translator) {
+  const [, newChat] = getWorkspacePages(t)
+  return [newChat] as const
 }
 
 export const spaces = [
@@ -52,6 +50,11 @@ export const spaces = [
 
 export function getUtilityPages(t: Translator) {
   return [
+    {
+      path: '/analytics',
+      label: t('navigation.analytics'),
+      description: t('navigation.analyticsDescription')
+    },
     {
       path: '/settings',
       label: t('navigation.settings'),

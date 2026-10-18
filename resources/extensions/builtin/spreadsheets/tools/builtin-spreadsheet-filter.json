@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.spreadsheet.filter",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Filter spreadsheet rows",
   "description": "Evaluate and persist a bounded spreadsheet filter.",
   "tags": [

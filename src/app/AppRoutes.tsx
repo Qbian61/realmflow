@@ -12,7 +12,7 @@ import type { ChatSession } from "../domain/chat-session";
 import type { WorkspaceRequirement, WorkspaceSpace } from "../domain/workspace";
 import { WorkspaceRouteCache } from "../features/navigation/WorkspaceRouteCache";
 import { useLocalization } from "../localization/LocalizationProvider";
-import { getPrimaryNavigation, getUtilityPages } from "../navigation";
+import { getUtilityPages, getWorkspacePages } from "../navigation";
 import AnalyticsPage from "../pages/AnalyticsPage";
 import CapabilitiesPage from "../pages/CapabilitiesPage";
 import ChatSessionPage from "../pages/ChatSessionPage";
@@ -20,7 +20,10 @@ import HelpPage from "../pages/HelpPage";
 import { NewChatPage } from "../pages/NewChatPage";
 import type { ReasoningPreference } from "../../domain/reasoning-router";
 import type { ConversationAttachmentSubmission } from "../../shared/conversation-attachments";
-import type { SendFollowUpSuggestionCommand } from "../../shared/business";
+import type {
+  ConversationCapabilitySelection,
+  SendFollowUpSuggestionCommand,
+} from "../../shared/business";
 import RequirementDetailPage from "../pages/RequirementDetailPage";
 import SettingsPage from "../pages/SettingsPage";
 import SpaceDetailPage from "../pages/SpaceDetailPage";
@@ -57,6 +60,7 @@ type AppRoutesProps = {
     reasoningMode?: ReasoningPreference,
     attachments?: ConversationAttachmentSubmission,
     approvalProfileId?: import("../../domain/approval-profile").ApprovalProfileId,
+    capabilities?: ConversationCapabilitySelection,
   ) => void | Promise<void>;
   onAppendMessage: (
     sessionId: string,
@@ -65,6 +69,8 @@ type AppRoutesProps = {
     reasoningMode?: ReasoningPreference,
     attachments?: ConversationAttachmentSubmission,
     approvalProfileId?: import("../../domain/approval-profile").ApprovalProfileId,
+    contextMode?: "auto" | "fresh" | "continuation",
+    capabilities?: ConversationCapabilitySelection,
   ) => void | Promise<void>;
   onSendFollowUpSuggestion?: (
     command: SendFollowUpSuggestionCommand,
@@ -85,7 +91,7 @@ export function AppRoutes({
 }: AppRoutesProps): JSX.Element {
   const { t } = useLocalization();
   const allPages = [
-    ...getPrimaryNavigation(t),
+    ...getWorkspacePages(t),
     ...spaces,
     ...getUtilityPages(t),
   ];

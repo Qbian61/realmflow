@@ -5,7 +5,6 @@ export {
   type ToolEventInput,
   type ToolEventStreamType
 } from './tool-domain-event'
-export { upcastToolDomainEvent } from './tool-event-upcaster'
 export {
   reduceToolExecutionEvent,
   replayToolExecution,

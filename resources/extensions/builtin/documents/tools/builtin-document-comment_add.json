@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "builtin.document.comment_add",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "name": "Add document comment",
   "description": "Attach a local Word comment to a paragraph.",
   "tags": [
